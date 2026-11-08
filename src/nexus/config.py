@@ -1,0 +1,118 @@
+import base64
+import binascii
+import re
+import socket
+from typing import Literal
+from urllib.parse import urlsplit
+
+from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+
+
+class RuntimeSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="NEXUS_", frozen=True, extra="ignore", hide_input_in_errors=True
+    )
+
+    environment: Literal["development", "test", "production"] = "development"
+    process_role: Literal["api", "worker"] = "api"
+    database_url: SecretStr
+    redis_url: SecretStr
+    encryption_key: SecretStr
+    host: str = "127.0.0.1"
+    port: int = Field(default=8000, ge=0, le=65535)
+    db_pool_size: int = Field(default=5, ge=1, le=50)
+    db_max_overflow: int = Field(default=0, ge=0, le=50)
+    dependency_timeout: float = Field(default=3.0, gt=0, le=30)
+    shutdown_timeout: int = Field(default=10, ge=1, le=60)
+    worker_id: str = Field(default_factory=socket.gethostname)
+    worker_interval: float = Field(default=5.0, ge=0.1, le=60)
+    worker_heartbeat_ttl: int = Field(default=30, ge=2, le=300)
+    redis_namespace: str = "nexus:v1"
+    log_level: Literal["debug", "info", "warning", "error"] = "info"
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, value: SecretStr) -> SecretStr:
+        try:
+            url = make_url(value.get_secret_value())
+            valid = (
+                url.drivername == "postgresql+psycopg"
+                and url.username in {"nexus_api", "nexus_worker"}
+                and bool(url.password and url.host and url.database)
+                and not ({"user", "password", "dbname", "service"} & url.query.keys())
+            )
+        except Exception:
+            valid = False
+        if not valid:
+            raise ValueError("a PostgreSQL psycopg URL with a runtime role is required")
+        return value
+
+    @field_validator("redis_url")
+    @classmethod
+    def validate_redis_url(cls, value: SecretStr) -> SecretStr:
+        try:
+            url = urlsplit(value.get_secret_value())
+            valid = url.scheme in {"redis", "rediss"} and bool(url.hostname and url.password)
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("an authenticated Redis URL is required")
+        return value
+
+    @field_validator("encryption_key")
+    @classmethod
+    def validate_key(cls, value: SecretStr) -> SecretStr:
+        try:
+            key = base64.b64decode(value.get_secret_value(), altchars=b"-_", validate=True)
+        except ValueError, binascii.Error:
+            raise ValueError("encryption key must encode 32 bytes") from None
+        if len(key) != 32:
+            raise ValueError("encryption key must encode 32 bytes")
+        return value
+
+    @field_validator("worker_id", "redis_namespace")
+    @classmethod
+    def validate_identifier(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9:_.-]{1,100}", value):
+            raise ValueError("invalid runtime identifier")
+        return value
+
+    @model_validator(mode="after")
+    def validate_runtime(self) -> RuntimeSettings:
+        url = make_url(self.database_url.get_secret_value())
+        if url.username != f"nexus_{self.process_role}":
+            raise ValueError("database role must match the process role")
+        if self.worker_heartbeat_ttl <= self.worker_interval + self.dependency_timeout:
+            raise ValueError("heartbeat TTL must exceed the polling interval plus probe timeout")
+        if self.environment == "production":
+            if url.query.get("sslmode") != "verify-full":
+                raise ValueError("production PostgreSQL requires sslmode=verify-full")
+            if urlsplit(self.redis_url.get_secret_value()).scheme != "rediss":
+                raise ValueError("production Redis requires TLS")
+        return self
+
+
+class MigrationSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="NEXUS_", frozen=True, extra="ignore", hide_input_in_errors=True
+    )
+    migration_database_url: SecretStr
+
+    @field_validator("migration_database_url")
+    @classmethod
+    def validate_migrator(cls, value: SecretStr) -> SecretStr:
+        try:
+            url = make_url(value.get_secret_value())
+            valid = (
+                url.drivername == "postgresql+psycopg"
+                and url.username == "nexus_migrator"
+                and bool(url.password and url.host and url.database)
+                and not ({"user", "password", "dbname", "service"} & url.query.keys())
+            )
+        except Exception:
+            valid = False
+        if not valid:
+            raise ValueError("a separate PostgreSQL migration role is required")
+        return value

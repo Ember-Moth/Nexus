@@ -2,7 +2,7 @@
 
 Nexus 是面向企业客户的 AI API 中转与计费平台。控制平面负责企业管理、配置发布、预付费账户、用量结算和审计；数据平面负责执行调用策略、转发 AI API 请求并报告用量。
 
-设计 v1.0 已于 2026-11-08 定稿，作为控制平面后续开发的正式基线。当前已完成设计，业务服务尚未实现。
+设计 v1.0 已于 2026-11-08 定稿。M1 工程与存储基础已实现：API/Worker 入口、五个业务边界、PostgreSQL/Redis 接入、迁移和初始管理员引导可运行。企业管理、计费和支付业务按后续阶段实现。
 
 ## 已确认的范围
 
@@ -25,6 +25,7 @@ Nexus 是面向企业客户的 AI API 中转与计费平台。控制平面负责
 | [两平面通信协议](docs/plane-protocol.md) | PostgreSQL 通信边界、Redis 用途、配置和用量事件契约 |
 | [管理 API](docs/management-api.md) | 认证、授权、资源、命令、幂等与错误约定 |
 | [实施计划](docs/implementation-plan.md) | 开发阶段、验收条件、风险验证和后续网关接入 |
+| [本机开发与验证](docs/development.md) | 原生 PostgreSQL/Redis 实例、启动命令、迁移、管理员引导与测试 |
 | [PPanel 设计参考](docs/ppanel-reference.md) | 本地源码依据、模块边界与支付设计的采用范围 |
 
 建议依次阅读产品范围、系统架构、计量与账务，再阅读数据模型和接口契约。
@@ -39,6 +40,6 @@ Nexus 是面向企业客户的 AI API 中转与计费平台。控制平面负责
 
 当前架构选择 PostgreSQL 保存账户、账本、预留、用量和配置版本，Redis 承担配置分发辅助与运行状态。首期不把 Redis Streams 作为收费记录的唯一入口。
 
-模块边界参考 PPanel：identity、catalog、billing、publication、reporting 各有数据属主，支付、定价、计量和钱包作为 billing 内部子域，跨模块通过窄门面与可靠事件协作。
+仅借鉴 PPanel 的模块化单体思想，目录按 Python/FastAPI 用例组织，不照搬其框架模板。模块边界为：identity、catalog、billing、publication、reporting 各有数据属主，支付、定价、计量和钱包作为 billing 内部子域，跨模块通过窄门面与可靠事件协作。
 
-设计版本：v1.0。定稿日期：2026-11-08。下一阶段：M1 工程与存储。
+设计版本：v1.0。定稿日期：2026-11-08。已完成阶段：M0、M1。下一阶段：M2 企业与目录。

@@ -2,6 +2,8 @@
 
 本文件定义首期逻辑模型和数据库必须维护的约束。具体迁移随实施阶段落地；逻辑实体可以在不削弱约束的前提下合并为物理表，不需要一次性创建所有表。
 
+M1 已迁移模块 schema 及管理员引导所需的 identity.users、identity.platform_role_bindings、identity.audit_events；其余表仍为后续阶段的逻辑设计。
+
 ## 模块与数据所有权
 
 参考 PPanel 的单域事务规则，每张业务表有唯一属主。下文表名为逻辑名称，物理表按 identity、catalog、billing、publication、reporting schema 归属；模块不能借共享数据库直接访问其他模块的仓储。

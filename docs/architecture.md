@@ -2,7 +2,7 @@
 
 控制平面采用模块化单体，API 和 Worker 共享领域代码、分别部署。PostgreSQL 保存权威业务状态；Redis 保存可重建的配置副本和有明确恢复策略的运行状态。数据平面通过受限、版本化的数据库接口协作，不读取控制平面的任意业务表。
 
-模块组织参考 PPanel 的模块门面、消费者定义依赖、单域事务和架构检查。来源与采用范围见 [PPanel 设计参考](ppanel-reference.md)。Nexus 保持 Python 技术栈，支付网关仍先定义通用接口。
+参考 PPanel 的模块化单体思想：公开业务接口、明确依赖、单一数据属主和单域事务。目录和抽象层次按 Python/FastAPI 的实际用例组织，不把 PPanel 的框架目录作为模板。来源与采用范围见 [PPanel 设计参考](ppanel-reference.md)。Nexus 保持 Python 技术栈，支付网关仍先定义通用接口。
 
 ## 总体结构
 
@@ -59,58 +59,48 @@ API 可通过多个进程或多个副本扩容。容器部署基线为一个服�
 
 每个模块拥有自己的审计、outbox 与必要的 inbox 记录，随本模块业务事务提交。reporting 通过只读门面或集成事件汇总审计；通用审计格式可以共享，跨模块的审计查询不能获得修改其他模块账表的能力。
 
-## 目录与组装根
+## Python 工程组织
 
-代码按以下布局组织，目录将在实现阶段创建：
+模块边界是业务和数据边界，不要求每个包都具有一套 Facade、Deps、contracts、internal 和 transport 目录。M1 使用直接的 Python 文件组织代码：
 
 ```text
 src/nexus/
-  app/                       唯一组装根、模块端口适配、启动和关闭
-  config/                    启动配置与类型校验
-  shared/                    Money、ID、时间、错误等基础类型
-  infrastructure/            连接池、HTTP 客户端、加密和任务执行设施
-  transport/
-    http/                    服务、中间件和路由挂载
-    tasks/                   通用任务执行壳，只调用模块门面
+  api.py                     FastAPI 应用、健康检查、业务路由挂载
+  worker.py                  Worker 生命周期和任务入口
+  bootstrap.py               连接资源与真实业务服务的依赖组装
+  commands.py                迁移、检查、管理员引导等 CLI 用例
+  cli.py                     命令行解析
+  config.py                  启动配置
+  infrastructure/            可复用的数据库、Redis 和密码基础能力
+  shared/                    基础类型与错误，不承载全局业务模型
   modules/
     identity/
-    catalog/
+      __init__.py            明确导出的业务 API
+      schemas.py             本模块的输入、结果等类型
+      service.py             已实现的管理员引导用例
+      ports.py               用例真正需要的事务和密码能力
+      repository.py          本模块的 ORM、仓储与事务
+    catalog/                 保留业务包，功能按阶段增加
     billing/
-      __init__.py            公开构造函数与门面
-      facade.py              对外命令、查询、支付通知等窄接口
-      contracts/             billing 自有输入、结果和只读快照
-      events.py              本模块事件载荷与主题常量
-      transport/http/        本模块的 FastAPI handlers
-      _internal/
-        pricing/
-        payments/
-          gateways/          Registry、业务网关接口与适配
-          protocols/         厂商协议或 SDK 封装，选定渠道后添加
-          checkout.py
-          callbacks.py
-          reconciliation.py
-        metering/
-        wallet/
-        budgets/
-        settlement/
-        persistence/         本模块 ORM、仓储与 Unit of Work
     publication/
     reporting/
 migrations/
 tests/architecture/
 ```
 
-其他模块采用相同的公开入口和内部实现边界，按需要建立子域，不为对称性创建空目录。业务 DTO 归属各模块的 contracts；shared 不承载全项目 DTO、ORM 模型或一个万能 ServiceContext。
+需要 HTTP 接口时，在相应业务包增加 api.py；需要支付协议适配时，代码归 billing，根据规模选择文件或子包。只有真实用例复杂度需要时才拆分目录，不为目录对称或与 PPanel 一致而增加转发层。
 
-只有进程入口加载 app。组装根调用各模块的 `create_module(deps)`，注入连接资源、时钟、HTTP 客户端和消费者声明的窄端口；模块构造函数自行组装自己的仓储与事务能力。业务代码拿不到整个应用对象或包含所有仓储的 Store。
+模块以 __init__.py 明确导出业务能力和可交换的数据类型。需要替换外部依赖、约束调用范围或隔离事务时才声明 Protocol，不为每个具体类重复声明同名接口。公开接口不要求独立的 facade.py 或统一的 Dependencies 类。
 
-模块核心不依赖 FastAPI，也不导入 app 或 transport。业务 HTTP handler 只转换输入、取得已认证上下文并调用本模块门面；重要授权和资金校验仍在模块服务执行。顶层路由只挂载 handler，共用认证中间件通过 identity 的公开能力验证身份。
+bootstrap.py 集中组装连接资源与已实现服务，业务代码不接收全局应用对象。M1 仅构造有真实用例的 identity 服务；五个 schema 的健康探测直接使用受限存储作用域，其他四个模块不为健康探测创建空业务服务。
 
-任务壳只解码载荷、调用模块和报告执行结果。认领任务与租约管理属于技术调度事务，业务数据事务由模块服务开启；任务壳不得自己拼接支付、钱包或账本 SQL。
+业务服务不依赖 FastAPI。业务包内的 api.py 负责参数与认证上下文转换，再调用该包的公开用例；重要授权和资金检查仍由业务服务执行。模块自己的 repository.py 或按需拆分的持久化代码负责数据库操作，不把 Session 暴露给其他模块或 HTTP 入口。
+
+Worker 负责调度和生命周期，业务事务由所属服务开启。任务入口不得自己拼接支付、钱包或账本 SQL。
 
 ## 模块交互与事务
 
-消费者定义其需要的 Protocol，例如 billing 的组织状态读取、publication 的模型快照读取。app 中的适配器调用生产方门面并转换成消费者的只读结果，不把生产方 ORM 对象或完整仓储传给消费者。模块间不导入对方的 `_internal` 或 contracts 子包，公开交换能力由门面及生产方事件出口提供。
+消费者定义其需要的 Protocol，例如 billing 的组织状态读取、publication 的模型快照读取。依赖组装时连接生产方的公开 API，必要时适配成消费者的只读结果，不把 ORM 对象或完整仓储传给消费者。模块间只能使用明确导出的公开能力和数据类型，不直接导入对方的 service、repository、models、schemas 等实现文件。
 
 业务表有唯一写入模块。普通同步协作通过门面；需要跨模块改变状态时，各模块提交自己的事务，再通过带幂等键的事件或可恢复流程协作。禁止在一个 Python Session 中写两个业务模块，也禁止跨模块 JOIN 或直接查询别人的表。跨模块报表读取门面或自己的投影。
 
@@ -126,9 +116,9 @@ PostgreSQL `gateway_v1` 是数据平面接入的特殊组合边界：允许在�
 
 启动配置包含连接、监听地址和根密钥来源，进程运行期间保持不变。运行时业务配置由各属主模块管理，按版本产生不可变快照；每次用例读取一致的配置版本，不在多个请求间修改共享可变字典。
 
-Python 的 `_internal` 是命名约定，不具备 Go 嵌套 internal 的编译器隔离。M1 建立 AST 导入检查和组装测试：限制 app 反向依赖、跨模块内部导入、中央 DTO、ORM 泄漏、全局 Store，以及核心对 FastAPI 的依赖。数据库桥接则使用公开 SQL 契约清单、角色权限和事务集成测试验证，不把 Python 导入检查当成 SQL 权限保障。
+Python 包不依赖 Go internal 式的目录隔离。M1 的 AST 检查验证依赖方向和公开导出：业务代码不反向依赖启动组装、其他模块只能导入公开 API、持久化与 HTTP 不侵入业务服务。测试约束这些原则，不要求复制 PPanel 的文件名和层数。当前存储角色和作用域事务通过真实 PostgreSQL 集成测试；后续数据库桥接需增加公开 SQL 契约清单与相应测试，不把 Python 导入检查当成 SQL 权限保障。
 
-导入规则和数据所有权表将在实现阶段随 CI 运行。新增模块、跨模块依赖或 SQL 契约需更新所有权声明与针对性测试；规则已随设计定稿，检查代码尚未实现。
+导入规则和组装检查已纳入 CI 配置。新增模块、跨模块依赖或 SQL 契约需更新所有权声明与针对性测试。
 
 ## PostgreSQL 与 Redis 的职责
 
@@ -189,7 +179,7 @@ FastAPI 进程内后台任务仅用于可丢弃的辅助工作，不承担配置
 
 ## 部署与运维基线
 
-开发环境规划为 API、Worker、PostgreSQL、Redis；生产环境分别部署并使用私网、TLS 和最小权限访问。当前没有部署脚本、镜像或 Kubernetes 资源。
+本机开发使用 API、Worker 和原生 PostgreSQL/Redis 专用实例，启动与清理脚本见[开发说明](development.md)，不配置 Docker。生产环境分别部署并使用私网、TLS 和最小权限访问，生产部署资源在后续阶段安排。
 
 数据库启用持久化提交、备份与恢复演练。复制模式、RPO、RTO 在生产部署前确定；默认异步复制不能被描述为故障切换零丢失。Redis 的限流和并发状态应使用不随意逐出的配置，与大量可淘汰缓存分开规划容量。
 

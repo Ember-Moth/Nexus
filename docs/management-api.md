@@ -2,11 +2,13 @@
 
 管理 API 服务平台运营、财务和企业客户的管理操作，统一前缀为 `/api/v1`。本文给出资源与行为契约，不表示路由已经实现；完整 OpenAPI 将在实现阶段由实际模型生成并校验。
 
+M1 当前只提供 `/health/live` 和 `/health/ready`，初始管理员通过 CLI 引导。下面的业务资源路由从 M2 起逐步实现。
+
 支付通知是独立的机器入口 `/webhooks/payments/{channel_id}`，不使用管理会话；按具体渠道声明允许 GET 或 POST，并使用该渠道规定的验签方式。所有其他表中路径仍相对于管理 API 前缀。
 
 网关的请求授权和用量提交通过 [gateway_v1 数据库契约](plane-protocol.md) 完成，不与管理 API 共用身份和权限。
 
-业务 handler 放在所属模块的 `transport/http`，只调用本模块公开门面，顶层 HTTP 层负责路由、中间件和异常映射。identity 拥有身份与授权接口，catalog 拥有模型和运行策略接口，billing 拥有价格、金额预算、支付、用量和资金接口，publication 拥有配置发布，reporting 拥有聚合查询与导出。handler 不获得全局 Store 或直接开启跨模块事务。
+业务 HTTP 接口按需放在所属业务包的 api.py，调用该包公开用例；进程级 api.py 负责应用生命周期和路由挂载。identity 拥有身份与授权接口，catalog 拥有模型和运行策略接口，billing 拥有价格、金额预算、支付、用量和资金接口，publication 拥有配置发布，reporting 拥有聚合查询与导出。handler 不获得全局 Store 或直接开启跨模块事务。
 
 ## 认证与授权
 

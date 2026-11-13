@@ -15,6 +15,25 @@ class Cache:
     async def check(self) -> None:
         await self._client.ping()
 
+    async def allow_auth_attempt(
+        self, subject: str, peer: str, account_limit: int, ip_limit: int, window: int
+    ) -> bool:
+        result = await self._client.eval(
+            "local a = tonumber(redis.call('GET', KEYS[1]) or '0'); "
+            "local b = tonumber(redis.call('GET', KEYS[2]) or '0'); "
+            "if a >= tonumber(ARGV[1]) or b >= tonumber(ARGV[2]) then return 0 end; "
+            "if redis.call('INCR', KEYS[1]) == 1 then redis.call('EXPIRE', KEYS[1], ARGV[3]) end; "
+            "if redis.call('INCR', KEYS[2]) == 1 then redis.call('EXPIRE', KEYS[2], ARGV[3]) end; "
+            "return 1",
+            2,
+            f"{self._namespace}:{{auth}}:account:{subject}",
+            f"{self._namespace}:{{auth}}:peer:{peer}",
+            account_limit,
+            ip_limit,
+            window,
+        )
+        return result == 1
+
     async def write_heartbeat(self, worker_id: str, payload: str, ttl: int) -> None:
         await self._client.set(f"{self._namespace}:workers:{worker_id}", payload, ex=ttl)
 

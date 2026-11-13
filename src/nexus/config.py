@@ -31,6 +31,11 @@ class RuntimeSettings(BaseSettings):
     worker_heartbeat_ttl: int = Field(default=30, ge=2, le=300)
     redis_namespace: str = "nexus:v1"
     log_level: Literal["debug", "info", "warning", "error"] = "info"
+    session_ttl_seconds: int = Field(default=28800, ge=60, le=86400)
+    password_setup_ttl_seconds: int = Field(default=86400, ge=60, le=86400)
+    login_window_seconds: int = Field(default=60, ge=1, le=3600)
+    login_per_account: int = Field(default=10, ge=1, le=1000)
+    login_per_ip: int = Field(default=60, ge=1, le=10000)
 
     @field_validator("database_url")
     @classmethod

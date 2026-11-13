@@ -56,6 +56,7 @@ def main() -> int:
                 log_level=settings.log_level,
                 timeout_graceful_shutdown=settings.shutdown_timeout,
                 access_log=False,
+                proxy_headers=False,
             )
         elif args.command == "worker":
             uvloop.run(serve_worker(settings))

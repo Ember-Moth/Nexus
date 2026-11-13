@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0001_m1_foundation"
+SCHEMA_REVISION = "0002_identity_access"

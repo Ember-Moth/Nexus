@@ -2,7 +2,7 @@
 
 本文件定义首期逻辑模型和数据库必须维护的约束。具体迁移随实施阶段落地；逻辑实体可以在不削弱约束的前提下合并为物理表，不需要一次性创建所有表。
 
-M1 已迁移模块 schema 及管理员引导所需的 identity.users、identity.platform_role_bindings、identity.audit_events；其余表仍为后续阶段的逻辑设计。
+M1 已迁移模块 schema 及管理员引导存储。M2 第一部分增加 identity.admin_sessions、password_setup_tokens、organizations、memberships 和 outbox，并扩展审计主体字段。其他业务表仍为后续阶段的逻辑设计。
 
 ## 模块与数据所有权
 
@@ -59,12 +59,15 @@ erDiagram
 | `users` | id、login、password_hash、status | 登录标识唯一，密码不以明文保存 |
 | `platform_role_bindings` | user_id、role | 平台角色独立于企业成员角色 |
 | `admin_sessions` | token_digest、user_id、expires_at、revoked_at | 令牌摘要唯一，可撤销，不能当企业调用 Key 使用 |
+| `password_setup_tokens` | token_digest、user_id、expires_at、revoked_at | 一次性使用；重发撤销原凭据；成功兑换撤销旧会话 |
 | `organizations` | id、name、status、version | provisioning、active、suspended、archived 状态明确；账户准备好后才能收费调用 |
 | `memberships` | organization_id、user_id、role、status | 同一用户与组织的成员关系唯一 |
 | `projects` | id、organization_id、name、status | 组织内名称或业务标识唯一 |
 | `project_grants` | organization_id、membership_id、project_id | 成员与项目必须属于同组织 |
 | `service_accounts` | id、organization_id、project_id、name、status | 项目和组织一致 |
 | `api_keys` | id、organization_id、project_id、service_account_id、digest、prefix、expires_at、revoked_at | 摘要唯一，关联身份在同一租户内 |
+
+用户可处于 pending、active 或 disabled；pending 用户通过一次性凭据设置密码后激活。组织内部保留 resume_status 支持暂停后恢复原状态，成员和组织使用 version 做条件更新。以上字段不会赋予客户端设置平台角色或绕过账户准备的能力。
 
 API Key 不保存明文。创建请求的幂等记录不能为了重放响应而持久化明文 Key；如果首次响应丢失，客户端查看资源标识后显式轮换，见[管理 API](management-api.md)。
 

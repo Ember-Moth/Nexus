@@ -41,4 +41,8 @@ def admin(service_directory):
 
 @pytest.fixture(autouse=True)
 def reset_identity(admin):
-    admin.execute("TRUNCATE identity.audit_events, identity.platform_role_bindings, identity.users")
+    admin.execute(
+        "TRUNCATE identity.outbox, identity.memberships, identity.organizations, "
+        "identity.admin_sessions, identity.password_setup_tokens, identity.audit_events, "
+        "identity.platform_role_bindings, identity.users"
+    )

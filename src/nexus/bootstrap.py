@@ -1,8 +1,10 @@
 """Wire resources and implemented use cases; never passed to business services."""
 
 import asyncio
+import base64
 
 from nexus.config import RuntimeSettings
+from nexus.infrastructure.auth_limits import RedisAuthLimits
 from nexus.infrastructure.cache import Cache
 from nexus.infrastructure.postgres import Database
 from nexus.modules import identity
@@ -25,7 +27,18 @@ class Application:
             namespace=settings.redis_namespace,
         )
         self._storage = {name.value: self.database.for_module(name) for name in ModuleName}
-        self.identity = identity.create_service(self._storage[ModuleName.IDENTITY.value])
+        self.identity = identity.create_service(
+            self._storage[ModuleName.IDENTITY.value],
+            RedisAuthLimits(
+                self.cache,
+                base64.urlsafe_b64decode(settings.encryption_key.get_secret_value()),
+                account_limit=settings.login_per_account,
+                ip_limit=settings.login_per_ip,
+                window=settings.login_window_seconds,
+            ),
+            session_ttl=settings.session_ttl_seconds,
+            setup_ttl=settings.password_setup_ttl_seconds,
+        )
 
     async def readiness(self) -> dict[str, str]:
         checks = {

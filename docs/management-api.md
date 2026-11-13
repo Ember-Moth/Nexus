@@ -2,7 +2,7 @@
 
 管理 API 服务平台运营、财务和企业客户的管理操作，统一前缀为 `/api/v1`。本文给出资源与行为契约，不表示路由已经实现；完整 OpenAPI 将在实现阶段由实际模型生成并校验。
 
-M1 当前只提供 `/health/live` 和 `/health/ready`，初始管理员通过 CLI 引导。下面的业务资源路由从 M2 起逐步实现。
+已提供健康检查，以及 M2 第一部分的登录、一次性密码设置、组织和成员 API；实际已实现清单见[登录与企业成员管理](identity-api.md)。下面其余业务资源按阶段实现。
 
 支付通知是独立的机器入口 `/webhooks/payments/{channel_id}`，不使用管理会话；按具体渠道声明允许 GET 或 POST，并使用该渠道规定的验签方式。所有其他表中路径仍相对于管理 API 前缀。
 
@@ -28,11 +28,14 @@ M1 当前只提供 `/health/live` 和 `/health/ready`，初始管理员通过 CL
 | --- | --- | --- |
 | 创建管理会话 | `POST /auth/sessions` | 验证登录凭据，返回有期限的令牌 |
 | 注销 | `DELETE /auth/sessions/current` | 撤销当前会话，重复执行无额外副作用 |
+| 设置密码 | `POST /auth/password` | 一次性凭据兑换；成功后撤销该用户原有会话 |
 | 当前身份 | `GET /me` | 返回当前用户和有效角色，不含凭据 |
 | 平台用户 | `GET/POST /users` | 平台管理员管理用户；密码设置使用独立的一次性流程 |
+| 重发密码凭据 | `POST /users/{id}/password-reset-tokens` | 平台管理员执行；令原有未用凭据失效 |
 | 企业组织 | `GET/POST /organizations` | 平台创建；查询受平台或成员范围限制 |
 | 组织状态 | `PATCH /organizations/{org}` | 平台控制冻结；企业修改资料不能改平台状态 |
 | 成员 | `GET/POST /organizations/{org}/members` | owner 或平台管理员管理，不得移除最后一个 owner |
+| 成员详情与变更 | `GET/PATCH/DELETE /organizations/{org}/members/{id}` | 路径限定租户；变更需 If-Match，DELETE 为停用 |
 | 项目 | `GET/POST /organizations/{org}/projects` | owner 创建，读取受项目权限限制 |
 | 项目授权 | `GET/POST /organizations/{org}/project-grants` | owner 管理，不能扩大成员组织角色权限 |
 | 服务账号 | `GET/POST /organizations/{org}/service-accounts` | 受项目权限限制 |

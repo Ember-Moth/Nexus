@@ -71,7 +71,7 @@ uv run nexus --env-file .env.api bootstrap-admin --login admin
 
 引导只创建第一个 `platform_admin`，不会隐式授予财务角色。相同登录名重复执行返回原用户且不重置密码；已有其他管理员时拒绝再次引导。并发引导通过数据库锁、唯一约束和 identity 内事务保证仅创建一次，并记录一条审计。
 
-M1 没有提供用户登录或其他管理业务 HTTP 接口；这部分属于 M2。
+M2 第一部分已提供登录、企业和成员管理 HTTP 接口，流程与权限见[登录与企业成员管理](identity-api.md)。初始管理员仍通过 CLI 引导，不开放公开注册入口。
 
 ## 存储权限与事务
 
@@ -86,7 +86,7 @@ M1 没有提供用户登录或其他管理业务 HTTP 接口；这部分属于 M
 
 运行登录身份可以读取 `nexus_meta.alembic_version`，不能修改它或执行迁移。`identity.audit_events` 只允许相应模块读取和追加。新函数默认不向 PUBLIC 授予 EXECUTE，未来 gateway_v1 能力需明确授权。
 
-M1 迁移创建五个模块 schema、迁移元数据、预留的 gateway_v1 schema，以及初始引导所需的 identity 用户、平台角色和审计表。其他业务表尚未实现，不能将设计文档的完整逻辑模型理解为现有数据库。
+M1 迁移创建五个模块 schema、迁移元数据、预留的 gateway_v1 schema 和管理员引导存储。M2 迁移增加会话、密码凭据、组织、成员及组织创建 outbox；项目、调用 Key 与财务等表尚未实现，不能将设计文档的完整逻辑模型理解为现有数据库。
 
 ## 检查与集成验证
 

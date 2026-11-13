@@ -19,7 +19,7 @@ def test_migration_round_trip_and_repeat_upgrade(migration_settings, admin):
         command.upgrade(config, "head")
     command.upgrade(config, "head")
     assert admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchall() == [
-        ("0001_m1_foundation",)
+        ("0002_identity_access",)
     ]
 
 
@@ -60,3 +60,34 @@ def test_runtime_cannot_migrate_and_functions_are_not_public(admin):
     finally:
         admin.execute("DROP FUNCTION IF EXISTS billing.test_private_function()")
         admin.execute("RESET ROLE")
+
+
+def test_m2_upgrade_preserves_m1_administrator(migration_settings, admin):
+    from uuid import uuid4
+
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.attributes["settings"] = migration_settings
+    user_id = uuid4()
+    try:
+        command.downgrade(config, "0001_m1_foundation")
+        admin.execute(
+            "INSERT INTO identity.users (id, login, password_hash) VALUES (%s,%s,%s)",
+            (user_id, "existing-admin", "existing-test-hash"),
+        )
+        admin.execute(
+            "INSERT INTO identity.platform_role_bindings (user_id,role) "
+            "VALUES (%s,'platform_admin')",
+            (user_id,),
+        )
+    finally:
+        command.upgrade(config, "head")
+    assert admin.execute(
+        "SELECT login,password_hash,status FROM identity.users WHERE id=%s",
+        (user_id,),
+    ).fetchone() == ("existing-admin", "existing-test-hash", "active")
+    assert (
+        admin.execute(
+            "SELECT role FROM identity.platform_role_bindings WHERE user_id=%s", (user_id,)
+        ).fetchone()[0]
+        == "platform_admin"
+    )

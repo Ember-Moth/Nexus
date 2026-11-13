@@ -25,3 +25,29 @@ async def test_liveness_does_not_claim_dependency_readiness():
         assert response.json()["status"] == "not_ready"
         assert (await client.get("/docs")).status_code == 404
         assert (await client.post("/api/v1/bootstrap-admin")).status_code == 404
+
+
+async def test_unexpected_errors_do_not_escape_or_echo_secrets(caplog):
+    @asynccontextmanager
+    async def lifespan(app):
+        yield
+
+    app = build_server(lifespan)
+
+    @app.get("/api/failure")
+    async def failure():
+        raise RuntimeError("sensitive-dependency-value")
+
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client,
+    ):
+        response = await client.get("/api/failure")
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_error"
+    assert "sensitive-dependency-value" not in response.text
+    assert "sensitive-dependency-value" not in caplog.text
+    assert response.headers["cache-control"] == "no-store"

@@ -4,7 +4,7 @@ from datetime import datetime
 from types import TracebackType
 from uuid import UUID, uuid4
 
-from sqlalchemy import exists, func, select, text, tuple_, update
+from sqlalchemy import delete, exists, func, select, text, tuple_, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,10 +12,11 @@ from nexus.infrastructure.postgres import ModuleDatabase
 
 from .application_repository import ApplicationRepository
 from .errors import IdentityError
-from .events import ORGANIZATION_CREATED
+from .events import ORGANIZATION_CREATED, ORGANIZATION_CREATED_VERSION
 from .models import (
     AdminSession,
     AuditEvent,
+    Inbox,
     Membership,
     Organization,
     OutboxEvent,
@@ -25,7 +26,14 @@ from .models import (
 )
 from .policy_repository import PolicyRepository
 from .ports import Actor, Cursor
-from .schemas import MemberView, OrganizationView, Page, UserView
+from .schemas import (
+    MemberView,
+    OrganizationCreated,
+    OrganizationView,
+    Page,
+    PlatformRolesView,
+    UserView,
+)
 
 
 def view(kind, row):
@@ -70,6 +78,103 @@ class DirectoryRepository:
         self._session.add(row)
         await self._session.flush()
         return view(UserView, row)
+
+    async def roles(self, user_id):
+        user = await self.user(user_id)
+        if user is None:
+            return None
+        roles = (
+            (
+                await self._session.execute(
+                    select(PlatformRole.role).where(PlatformRole.user_id == user_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return PlatformRolesView(user_id=user_id, version=user.version, roles=sorted(roles))
+
+    async def replace_roles(self, user_id, roles):
+        await self._session.execute(delete(PlatformRole).where(PlatformRole.user_id == user_id))
+        self._session.add_all(PlatformRole(user_id=user_id, role=role) for role in roles)
+        await self._session.execute(
+            update(User).where(User.id == user_id).values(version=User.version + 1)
+        )
+        await self._session.flush()
+        return await self.roles(user_id)
+
+    async def other_administrators(self, user_id):
+        return (
+            await self._session.execute(
+                select(func.count())
+                .select_from(PlatformRole)
+                .join(User, User.id == PlatformRole.user_id)
+                .where(
+                    PlatformRole.role == "platform_admin",
+                    User.status == "active",
+                    User.id != user_id,
+                )
+            )
+        ).scalar_one()
+
+    async def pending_organizations(self, limit):
+        rows = (
+            await self._session.execute(
+                select(OutboxEvent.id, OutboxEvent.aggregate_id, OutboxEvent.schema_version)
+                .join(Organization, Organization.id == OutboxEvent.aggregate_id)
+                .where(
+                    OutboxEvent.topic == ORGANIZATION_CREATED,
+                    Organization.billing_account_id.is_(None),
+                )
+                .order_by(OutboxEvent.created_at, OutboxEvent.id)
+                .limit(limit)
+            )
+        ).all()
+        return [
+            OrganizationCreated(event_id=row[0], organization_id=row[1], schema_version=row[2])
+            for row in rows
+        ]
+
+    async def account_ready(self, event_id, organization_id, account_id):
+        row = (
+            await self._session.execute(
+                select(Organization).where(Organization.id == organization_id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise IdentityError("not_found", "Organization not found", 404)
+        receipt = await self._session.get(Inbox, ("billing.account_ready", event_id))
+        if receipt:
+            if receipt.organization_id != organization_id or receipt.result_id != account_id:
+                raise IdentityError("event_conflict", "Conflicting account event", 409)
+            return
+        if row.billing_account_id is not None and row.billing_account_id != account_id:
+            raise IdentityError("account_conflict", "Organization already has an account", 409)
+        row.billing_account_id = account_id
+        if row.status == "provisioning":
+            row.status = "active"
+        elif row.status == "suspended" and row.resume_status == "provisioning":
+            row.resume_status = "active"
+        row.version += 1
+        self._session.add(
+            Inbox(
+                consumer="billing.account_ready",
+                event_id=event_id,
+                organization_id=organization_id,
+                result_id=account_id,
+            )
+        )
+        self._session.add(
+            AuditEvent(
+                id=uuid4(),
+                actor_type="system",
+                actor_id=None,
+                organization_id=organization_id,
+                action="organization.account_ready",
+                resource_id=organization_id,
+                details={"account_id": str(account_id), "event_id": str(event_id)},
+            )
+        )
 
     async def _page(self, statement, model, kind, limit: int, cursor: Cursor):
         if cursor:
@@ -222,7 +327,7 @@ class DirectoryRepository:
             OutboxEvent(
                 id=uuid4(),
                 topic=ORGANIZATION_CREATED,
-                schema_version=1,
+                schema_version=ORGANIZATION_CREATED_VERSION,
                 aggregate_id=row.id,
                 aggregate_version=1,
                 payload={"organization_id": str(row.id), "owner_user_id": str(owner_id)},

@@ -1,1 +1,2 @@
 ORGANIZATION_CREATED = "identity.organization_created"
+ORGANIZATION_CREATED_VERSION = 1

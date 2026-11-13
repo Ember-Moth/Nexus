@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from nexus.bootstrap import Application
 from nexus.config import RuntimeSettings
+from nexus.modules.billing import api as billing_api
 from nexus.modules.catalog import CatalogService
 from nexus.modules.catalog import api as catalog_api
 from nexus.modules.identity import IdentityService, ModelAccessService, ProjectService
@@ -102,6 +103,11 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         application = Application(settings)
         app.state.readiness = application.readiness
+        app.state.billing_service = application.billing
+        app.state.pricing_service = application.pricing
+        app.state.budget_service = application.budgets
+        app.state.reservations = application.reservations
+        app.state.process_billing = application.process_billing
         app.state.identity_service = application.identity
         app.state.project_service = application.projects
         app.state.catalog_service = application.catalog
@@ -123,9 +129,19 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     def get_model_access(request: Request) -> ModelAccessService:
         return request.app.state.model_access_service
 
+    def get_billing(request: Request):
+        return request.app.state.billing_service
+
+    def get_pricing(request: Request):
+        return request.app.state.pricing_service
+
+    def get_budgets(request: Request):
+        return request.app.state.budget_service
+
     app = build_server(lifespan, development=settings.environment != "production")
     app.include_router(identity_api.create_router(get_identity))
     app.include_router(identity_api.create_project_router(get_projects))
     app.include_router(identity_api.create_policy_router(get_model_access))
     app.include_router(catalog_api.create_router(get_catalog))
+    app.include_router(billing_api.create_router(get_billing, get_pricing, get_budgets))
     return app

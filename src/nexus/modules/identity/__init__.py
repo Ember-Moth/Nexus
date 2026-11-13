@@ -5,7 +5,7 @@ from nexus.infrastructure.postgres import ModuleDatabase
 from nexus.shared.storage import ModuleName
 
 from .applications import ProjectService
-from .events import ORGANIZATION_CREATED
+from .events import ORGANIZATION_CREATED, ORGANIZATION_CREATED_VERSION
 from .model_access import ModelAccessService
 from .ports import AuthLimits
 from .repository import IdentityUnitOfWork
@@ -23,6 +23,7 @@ __all__ = [
     "create_model_access_service",
     "api",
     "ORGANIZATION_CREATED",
+    "ORGANIZATION_CREATED_VERSION",
 ]
 
 

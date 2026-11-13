@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0004_catalog_and_access"
+SCHEMA_REVISION = "0006_pricing_reservations"

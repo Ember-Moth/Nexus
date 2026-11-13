@@ -1,0 +1,117 @@
+# 定价与预付费账户
+
+M3 提供 USD 账户、人工入账、独立售价与成本版本、组织折扣、金额预算、不可改写的资金流水、来源调整及账户对账。内部预留与结算原语使用同一套账务存储和锁顺序；外部调用授权、上游用量证据接收及自动归一化在 M4 接入。支付网关在 M3P 接入。
+
+## 升级与运行
+
+沿用[开发说明](development.md)生成独立配置，先迁移，再启动 API 和 Worker：
+
+```sh
+uv run nexus --env-file .env.migrate migrate
+uv run nexus --env-file .env.api api
+uv run nexus --env-file .env.worker worker
+```
+
+`0005_billing_accounts` 增加账户、收款账户、入账、流水、调整、财务幂等与审计，以及身份模块的角色版本和开户事件收件箱。`0006_pricing_reservations` 增加价格、折扣、预算期间、请求预留与尝试记录。两者保留 M2 的身份、目录和凭据数据。
+
+`NEXUS_BILLING_CURRENCY` 默认 `USD`，这是本次确定的首期运营币种。第一次账务事务（包括账务就绪检查）将币种写入 billing.settings。以后 API 与 Worker 配置必须与持久化币种一致，否则账务操作拒绝、`billing_currency` 就绪检查失败；修改配置不执行换汇。
+
+Worker 每 500 ms 检查一次开户事件和到期预留，有待处理数据时连续消费。组织创建仍先返回 provisioning；billing 幂等开户并发出 account_ready，identity 消费后进入 active。两侧事件均携带显式 schema_version；消费者只接受已支持版本，未知版本保留待处理且不确认、不开户或激活。中途停机可重放，暂停组织只更新恢复目标，归档组织不会被重新激活。到期预留只进入 review，金额仍保持 held。
+
+## 权限与财务操作
+
+所有路径以 `/api/v1` 为前缀，使用管理会话 Bearer 认证。
+
+| 角色 | M3 权限 |
+| --- | --- |
+| platform_admin | 维护价格、折扣和平台预算；读取账户；管理平台角色 |
+| platform_finance | 登记收款、过账、调整、对账；读取平台范围的账户与流水 |
+| org_owner | 读取本企业账务，管理本企业预算，不能修改平台预算 |
+| org_finance | 读取本企业账务；无直接入账、调整和预算写权限 |
+| org_developer | 可在模型权限范围内查询有效售价；无企业钱包和完整账务查询权限 |
+
+管理员不会隐式获得财务写权限。先读取 `GET /users/{id}/platform-roles`，再使用其 ETag 调用 `PATCH /users/{id}/platform-roles`，请求体例如 `{"roles":["platform_admin","platform_finance"]}`。此命令完整替换平台角色集合，要求目标用户已激活；不能移除最后一位有效平台管理员。所有角色变更有审计。
+
+财务只维护稳定的线下收款账户。`reference` 是同一真实收款账户的永久标识，限 1–70 个字母、数字或 `_.:-`；不能为同一真实账户创建多个 reference 以绕过收款去重。namespace 固定为 `manual:{reference}`，不能通过改名、停用或修改密钥改变。未来支付网关使用独立、受校验的来源。
+
+人工入账流程：
+
+1. `POST /receiving-accounts` 创建收款账户，填写 name、reference、currency。
+2. `POST /organizations/{org}/funding-records` 创建登记草稿，填写 receiving_account_id、external_reference、amount、currency、received_at 和 evidence。received_at 必须带时区，不能在未来；金额必须为正的十进制字符串。
+3. 确认外部真实到账后，携带草稿 ETag 和 Idempotency-Key 调用 `POST /organizations/{org}/funding-records/{id}/post`。余额、唯一 funding_credit、登记状态、幂等和审计在同一事务提交。
+4. `GET /organizations/{org}/account` 查看 balance、held_amount 和 available_balance；`GET /organizations/{org}/ledger` 查看流水。
+
+同一 namespace 内的 external_reference 全局唯一，不能给另一组织再次入账。未过账草稿可取消并重新登记；已过账收款不能释放这个唯一标识。收款账户停用后不接受新登记，已有真实收款草稿仍可过账。
+
+## 已实现接口
+
+`{org}`、`{id}` 为 UUID。列表使用 limit（1–100，默认 50）与 cursor 分页。
+
+| 接口 | 行为 |
+| --- | --- |
+| `GET/POST /receiving-accounts` | 财务查询或创建线下收款账户 |
+| `PATCH /receiving-accounts/{id}` | 改名或切换 active/disabled，不能改变 reference、币种和 namespace |
+| `GET /organizations/{org}/account` | 权威余额、在途预留、可用余额、状态和读取时间 |
+| `GET/POST /organizations/{org}/funding-records` | 查询或新建人工登记 |
+| `GET/PATCH /organizations/{org}/funding-records/{id}` | 查看或替换草稿可编辑内容 |
+| `POST /organizations/{org}/funding-records/{id}/post` | 幂等过账 |
+| `POST /organizations/{org}/funding-records/{id}/cancel` | 取消草稿 |
+| `GET/POST /sale-price-versions`、`GET/POST /cost-price-versions` | 管理员查询或创建价格草稿，列表可按 scope_id 筛选 |
+| `GET/PATCH /sale-price-versions/{id}`、`GET/PATCH /cost-price-versions/{id}` | 查看或替换价格草稿内容 |
+| `POST /sale-price-versions/{id}/publish`、`POST /cost-price-versions/{id}/publish` | 发布不可变价格版本 |
+| `GET/POST /organizations/{org}/discount-versions` | 查询或创建组织折扣草稿 |
+| `PATCH /organizations/{org}/discount-versions/{id}` | 修改未发布的 factor |
+| `POST /organizations/{org}/discount-versions/{id}/publish` | 发布不可变折扣版本 |
+| `GET /organizations/{org}/pricing?model_id={model}` | 当前基础售价、折扣、展示单价、版本与生效时间；可带 project_id、key_id |
+| `GET/POST /organizations/{org}/budget-policies` | 查询或新建固定日/月金额预算 |
+| `GET/PATCH /organizations/{org}/budget-policies/{id}` | 查看预算；仅修改 limit_amount 或 active/disabled 状态 |
+| `GET /organizations/{org}/budget-policies/{id}/periods` | UTC 期间、限额、spent、reserved 与 over_limit |
+| `GET/POST /organizations/{org}/adjustments` | 查询或创建来源调整草稿 |
+| `GET /organizations/{org}/adjustments/{id}` | 查看调整 |
+| `POST /organizations/{org}/adjustments/{id}/post` | 幂等执行反向资金调整 |
+| `GET /organizations/{org}/ledger`、`GET /organizations/{org}/ledger/{id}` | 只读资金流水 |
+| `GET /organizations/{org}/requests`、`GET /organizations/{org}/requests/{id}` | owner、企业财务及平台角色查看内部请求与预留状态 |
+| `POST /organizations/{org}/account/reconcile` | 财务核对账户、资金流水、预留、预算及单据关系；保存核对审计 |
+
+PATCH、发布、过账与草稿取消要求 `If-Match`。收款账户、入账、调整、价格和折扣的创建，以及发布和过账，还要求 `Idempotency-Key`。请求失败或响应丢失时，使用原键、原请求体及原 If-Match 重试；同键不同参数返回 409，过期版本返回 412，缺少必要头返回 428。
+
+入账和价格草稿的 PATCH 使用完整可编辑内容；归属组织、模型/部署、创建者等身份字段不可改变。所有已发布价格、折扣、已过账登记、调整及流水不可覆盖；数据库也拒绝修改这些历史事实。
+
+## 定价与精度
+
+售价创建接受 model_id；成本价创建接受 deployment_id。两者都带 currency、rates 和可选 enabled（默认 true）。rates 是按计量维度索引的映射：
+
+```json
+{
+  "input_uncached_tokens": {"unit_price": "2.000000000000", "unit_quantity": 1000000},
+  "output_tokens": {"unit_price": "8.000000000000", "unit_quantity": 1000000}
+}
+```
+
+维度必须与公开模型完整匹配，不能省略某个缓存维度或以缺失价格代替零。金额和单价最多 12 位小数，拒绝 JSON 浮点数、NaN、Infinity、越界值；价格单位只接受整数 1、1000、1000000。示例价格仅用于说明接口，不是运营报价。
+
+发布请求使用 `{}` 表示在服务器当前时间生效，也可提供带时区的 effective_at。相同作用域的发布起点必须严格递增且不得追溯；下一版本的起点构成上一版本的结束边界。未来版本一经发布也不能修改，计划发布时间需谨慎选择。停用通过发布 enabled=false 的新价格版本完成，历史授权仍使用原版本。
+
+折扣草稿仅接受 factor，范围 `0 < factor <= 1`、最多六位小数。每个无自定义折扣的组织都明确使用不可变的默认版本 `00000000-0000-0000-0000-000000000001`，系数为 1。恢复原价时发布 factor 为 1 的新版本。充值金额不使用折扣。
+
+预留时锁定售价与折扣，开始每次尝试时锁定成本版本。客户费用先用基础价格与折扣计算各维度未舍入金额，再对总和执行一次 ROUND_HALF_UP 到 12 位小数；预留上限向上舍入。pricing 返回的 discounted_unit_price 仅供展示，不能作为再次计价的输入。客户接口不返回上游成本。
+
+## 预算、调整与核对
+
+预算的 layer 为 platform 或 organization，scope_type 为 organization、project 或 key，非组织作用域必须给出 scope_id。所有命中的平台与企业预算共同限制请求，企业自建预算不能覆盖平台上限。scope、周期和归属创建后不可修改。预算策略、期间、请求和占用使用包含组织 ID 的复合外键，预留请求的企业、项目和服务账号也必须与引用的 Key 一致；这些引用约束不授予 billing 读取 identity 私有表的权限。
+
+预算按 UTC 固定日或月计算，使用 spent + reserved 限制消费。中途新增或恢复预算会计入本期间已有消费和在途请求；降低额度不会清空已有占用，超过新限额后拒绝新预留。充值不会增加预算限额。
+
+调整须引用原 funding_credit 或 usage_debit 的 source_entry_id，并填写正数 amount、currency、reason、evidence。原充值对应反向扣减，原消费对应退费；不能引用另一条调整继续叠加反向链。并发调整总额不能超过原金额，充值撤销不得使用已被预留的资金。消费退费同步减少原授权期间的净消费，即使已经跨月也不影响当前期间的预算。
+
+对账返回 consistent、issues 和 as_of，并保存审计。发现差异不会用投影覆盖流水或自动改余额。当前是按账户的同步核对入口；大规模历史核对、周期报表、成本账单导入、异常处理工作台与导出属于 M5。
+
+## 内部资金原语与后续边界
+
+ReservationService 供同一控制平面内部使用，不暴露为管理 HTTP 路由。Admission 是调用方已经确认的身份与上界事实；它本身不鉴别企业 API Key，不代表对外可用的请求授权协议。M4 必须完成 gateway_v1 身份校验、授权锁、协议上界验证与持久化用量收件箱，才能连接真实调用。
+
+原语已支持预留、尝试意图与成本快照、可信归一化用量结算、零费用释放、幂等重试和超时核对。上游失败不向客户收费，已确认的尝试成本独立保留；客户取消且存在可信用量时按实际用量收费。存在尝试意图后，单凭“未开始”的报告不能释放资金。成本未确认不阻止事实完整的客户费用结算。
+
+用量超出授权上界时保留预留和证据、冻结账户的新预留与新尝试，不截断用量、不透支。未知结果、缺失用量和到期预留也保留 held 状态。此阶段没有任意修改余额、自动清除异常或人工解除冻结的接口；异常处理命令随后续核对流程补齐。
+
+本机集成验证使用隔离的真实 PostgreSQL/Redis，覆盖 16 路预留竞争、重复收款/过账、提交后响应丢失、事务失败回滚、调价与折扣快照、多次尝试成本、预算回填、跨月退费、退款上限、超时、独立 Worker 开户及数据库历史保护。真实上游计量、支付渠道、近实时结算延迟和生产负载仍需对应阶段验收。

@@ -7,7 +7,14 @@ from .repository import transaction
 from .schemas import Visibility
 from .service import CatalogService
 
-__all__ = ["CatalogService", "Visibility", "create_service", "create_model_lookup", "api"]
+__all__ = [
+    "CatalogService",
+    "Visibility",
+    "create_service",
+    "create_model_lookup",
+    "create_pricing_lookup",
+    "api",
+]
 
 
 def create_model_lookup(database: ModuleDatabase):
@@ -23,3 +30,15 @@ def create_model_lookup(database: ModuleDatabase):
 def create_service(database: ModuleDatabase, access, cipher) -> CatalogService:
     database.require_module(ModuleName.CATALOG)
     return CatalogService(lambda: transaction(database), access, cipher)
+
+
+def create_pricing_lookup(database: ModuleDatabase, versions):
+    database.require_module(ModuleName.CATALOG)
+
+    async def lookup(kind, resource_id):
+        async with transaction(database) as repo:
+            if kind == "model":
+                return await repo.model(resource_id, versions)
+            return await repo.deployment(resource_id, versions)
+
+    return lookup

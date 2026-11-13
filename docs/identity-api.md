@@ -24,7 +24,7 @@ uv run nexus --env-file .env.api api
 5. 企业 owner 使用自己的账号登录，调用 `POST /organizations/{org}/members` 关联已激活用户，指定 org_owner、org_developer 或 org_finance。
 6. 成员通过 `GET /me` 查询自己的身份、平台角色与有效成员关系；`GET /organizations` 只返回其可访问的企业。
 
-新企业保持 provisioning，创建组织、首位 owner 与 `identity.organization_created` outbox 事件在同一事务中提交。组织管理可以使用，但不会伪造计费账户已准备完成；普通管理接口不能直接把 provisioning 改为 active。后续账户事件消费和收费能力由后续阶段接入。
+新企业首先进入 provisioning，创建组织、首位 owner 与 `identity.organization_created` outbox 事件在同一事务中提交。组织管理可以使用，但不会伪造计费账户已准备完成；普通管理接口不能直接把 provisioning 改为 active。M3 Worker 已消费账户事件并将准备完成的组织激活；收费网关接入仍在 M4。详见[定价与预付费账户](billing-api.md)。
 
 ## 已实现接口
 
@@ -47,7 +47,7 @@ uv run nexus --env-file .env.api api
 
 平台管理员管理用户与企业，但不会隐式获得 platform_finance。平台财务可以读取企业基本信息，不因此拥有用户创建或企业管理权限。企业 owner 管理本企业资料和成员，开发者及企业财务不具有成员管理权限。
 
-企业之外的资源以及不匹配该企业路径的成员 ID 返回 404。每次请求重新查询会话、用户状态、平台角色及相应成员关系；移除成员或撤销角色后，同一旧会话不能继续使用失去的权限。用户停用时会话也不能继续认证，但全局用户停用和平台角色分配的管理接口不属于本次切片。
+企业之外的资源以及不匹配该企业路径的成员 ID 返回 404。每次请求重新查询会话、用户状态、平台角色及相应成员关系；移除成员或撤销角色后，同一旧会话不能继续使用失去的权限。用户停用时会话也不能继续认证，全局用户停用仍未提供管理入口；平台角色查询与条件更新已在 M3 提供 GET/PATCH /users/{id}/platform-roles，并保护最后一名管理员。
 
 成员变更锁定组织行并重新检查调用者权限，防止并发操作移除最后一名有效 owner。每个组织与用户最多一条成员关系；已停用关系可使用 PATCH 恢复。归档组织不再接受资料或成员变更。
 

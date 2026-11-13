@@ -6,11 +6,12 @@ from uuid import UUID, uuid4
 from nexus.shared.errors import BootstrapRejected
 
 from .authorization import AccessControl
-from .errors import IdentityError, missing, unauthorized
+from .errors import IdentityError, forbidden, missing, unauthorized
 from .ports import AuthLimits, Cursor, Passwords, TransactionFactory
 from .schemas import (
     BootstrapResult,
     CurrentUser,
+    FinancialAccess,
     MemberCreate,
     MemberPatch,
     OrganizationCreate,
@@ -31,6 +32,102 @@ def normalize_login(login: str) -> str:
 
 
 class IdentityService:
+    async def platform_roles(self, token, user_id):
+        async with self._access.authenticated(token) as (tx, actor):
+            self._access.platform_admin(actor)
+            result = await tx.directory.roles(user_id)
+            if result is None:
+                raise missing(user_id)
+            return result
+
+    async def update_platform_roles(self, token, user_id, body, version):
+        async with self._access.authenticated(token) as (tx, actor):
+            await tx.administrators.lock_bootstrap()
+            actor = await self._access._actor(tx, digest_token(token, "nxs_"))
+            self._access.platform_admin(actor)
+            user = await tx.directory.user(user_id, lock=True)
+            if user is None:
+                raise missing(user_id)
+            self._access.version(user.version, version)
+            current = await tx.directory.roles(user_id)
+            if body.roles and user.status != "active":
+                raise IdentityError("user_inactive", "Active user required", 409)
+            if (
+                "platform_admin" in current.roles
+                and "platform_admin" not in body.roles
+                and not await tx.directory.other_administrators(user_id)
+            ):
+                raise IdentityError(
+                    "last_administrator", "Cannot remove the last active administrator", 409
+                )
+            result = await tx.directory.replace_roles(user_id, body.roles)
+            await tx.audit.record(
+                actor.user.id,
+                "user.platform_roles_changed",
+                user_id,
+                details={"before": current.roles, "after": result.roles},
+            )
+            return result
+
+    async def financial_access(
+        self,
+        token,
+        organization_id=None,
+        *,
+        operation="read",
+        scope_type="organization",
+        scope_id=None,
+        layer="organization",
+    ):
+        async with self._access.authenticated(token) as (tx, actor):
+            if operation == "finance" and "platform_finance" not in actor.platform_roles:
+                raise forbidden()
+            if operation == "pricing" or (operation == "budget" and layer == "platform"):
+                self._access.platform_admin(actor)
+            if organization_id is None:
+                if operation not in {"finance", "pricing"}:
+                    raise forbidden()
+                return actor.user.id
+            org = await self._access.organization(tx, actor, organization_id, finance_read=True)
+            member = await tx.directory.membership_for_user(organization_id, actor.user.id)
+            role = member.role if member and member.status == "active" else None
+            platform = bool(actor.platform_roles & {"platform_admin", "platform_finance"})
+            if operation == "budget":
+                if "platform_admin" not in actor.platform_roles and role != "org_owner":
+                    raise forbidden(organization_id)
+                if org.status not in {"active", "provisioning"}:
+                    raise IdentityError(
+                        "organization_inactive", "Organization does not allow budget changes", 409
+                    )
+            elif operation == "read" and not platform and role not in {"org_owner", "org_finance"}:
+                raise forbidden(organization_id)
+            project_id = key_id = None
+            if scope_type == "organization":
+                if scope_id is not None and scope_id != organization_id:
+                    raise missing(scope_id)
+            elif scope_type == "project":
+                if await tx.applications.project(organization_id, scope_id) is None:
+                    raise missing(scope_id)
+                project_id = scope_id
+            else:
+                key = await tx.applications.key(organization_id, scope_id)
+                if key is None:
+                    raise missing(scope_id)
+                project_id, key_id = key.project_id, key.id
+            return FinancialAccess(actor.user.id, organization_id, org.status, project_id, key_id)
+
+    async def pending_organizations(self, limit=100):
+        async with self._transactions() as tx:
+            return await tx.directory.pending_organizations(limit)
+
+    async def account_ready(self, event_id, organization_id, account_id, *, schema_version):
+        if schema_version != 1:
+            raise IdentityError(
+                "unsupported_event_version", "Unsupported account event version", 422
+            )
+        async with self._transactions() as tx:
+            await tx.directory.account_ready(event_id, organization_id, account_id)
+
     def __init__(
         self,
         transactions: TransactionFactory,

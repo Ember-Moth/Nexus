@@ -91,3 +91,42 @@ def test_worker_process_heartbeat_and_graceful_shutdown(service_directory):
             process.kill()
             process.wait(timeout=5)
         client.close()
+
+
+async def test_worker_process_consumes_account_events(http, service_directory, admin):
+    import asyncio
+
+    from test_identity_api import auth, create_org
+
+    client, root, _, _ = http
+    org = await create_org(client, root, "Worker provisioned business")
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "nexus.cli",
+        "--env-file",
+        str(service_directory / ".env.worker"),
+        "worker",
+        env=dict(os.environ, NEXUS_WORKER_ID="billing-worker"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        for _ in range(100):
+            response = await client.get(f"/api/v1/organizations/{org['id']}", headers=auth(root))
+            if response.json()["status"] == "active":
+                break
+            await asyncio.sleep(0.05)
+        assert response.json()["status"] == "active"
+        assert (
+            admin.execute(
+                "SELECT count(*) FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+            ).fetchone()[0]
+            == 1
+        )
+        process.terminate()
+        assert await asyncio.wait_for(process.wait(), timeout=10) == 0
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await asyncio.wait_for(process.wait(), timeout=5)

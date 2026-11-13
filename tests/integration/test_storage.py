@@ -10,7 +10,7 @@ from sqlalchemy.exc import DBAPIError
 from nexus.bootstrap import Application
 from nexus.commands import bootstrap
 from nexus.shared.errors import BootstrapRejected
-from nexus.shared.storage import ModuleName
+from nexus.shared.storage import SCHEMA_REVISION, ModuleName
 
 pytestmark = pytest.mark.integration
 
@@ -24,7 +24,7 @@ async def test_readiness_and_schema_mismatch(runtime_settings, admin):
             assert (await application.readiness())["postgres"] == "unavailable"
         finally:
             admin.execute(
-                "UPDATE nexus_meta.alembic_version SET version_num = '0004_catalog_and_access'"
+                "UPDATE nexus_meta.alembic_version SET version_num = %s", (SCHEMA_REVISION,)
             )
     finally:
         await application.close()

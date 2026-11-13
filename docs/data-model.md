@@ -95,6 +95,8 @@ API Key 记录 version、prefix、expires_at、revoked_at、rotated_at 和 rotat
 
 ## 价格与账户
 
+M3 物理实现使用 billing.accounts、receiving_accounts、funding_records、ledger_entries、adjustments、price_versions、discount_versions、budget_policies、budget_periods、budget_holds、request_runs 和 request_attempts。price_versions 以 kind 区分售价与成本；request_runs 同时保存预留状态与结算结果。用量收件箱与支付表将在后续迁移加入。
+
 | 实体 | 主要字段 | 约束 |
 | --- | --- | --- |
 | `sale_price_versions` | id、version、currency、status、effective_from | 统一售价版本，发布后不可变，同作用域生效起点唯一 |
@@ -108,7 +110,7 @@ API Key 记录 version、prefix、expires_at、revoked_at、rotated_at 和 rotat
 | `adjustments` | id、account_id、source_id、reason、evidence、amount、status、actor_id | 引用原记录，过账后不可变，限制累计调整金额 |
 | `budget_policies` | organization_id、layer、scope、currency、limit_amount、period、version | billing 拥有金额预算策略，不与 catalog 的速率策略共表 |
 
-金额预算的实现实体为 `budget_periods` 和 `budget_holds`。前者保存策略版本、作用域、UTC 期间、上限、已消费与预留；后者保存请求对某期间的占用。唯一键至少覆盖 `(policy_id, period_start)` 和 `(request_id, budget_period_id)`。
+金额预算的实现实体为 `budget_periods` 和 `budget_holds`。前者保存策略版本、作用域、UTC 期间、上限、已消费与预留；后者保存请求对某期间的占用。唯一键至少覆盖 `(policy_id, period_start)` 和 `(request_id, budget_period_id)`。物理 budget_holds 另携带 organization_id，通过复合外键保证请求、预算期间与策略属于同一组织；request_runs 的企业、项目、服务账号与 Key 归属也由复合外键约束。
 
 价格与折扣的 `effective_until` 在查询时由下一已发布版本派生，使用左闭右开的生效区间；发布后不改原价格内容或生效起点。默认折扣作用域与特定组织作用域分开约束，授权函数校验所用折扣确实适用于请求组织。
 

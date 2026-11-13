@@ -19,7 +19,7 @@ def test_migration_round_trip_and_repeat_upgrade(migration_settings, admin):
         command.upgrade(config, "head")
     command.upgrade(config, "head")
     assert admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchall() == [
-        ("0004_catalog_and_access",)
+        ("0006_pricing_reservations",)
     ]
 
 
@@ -91,3 +91,54 @@ def test_m2_upgrade_preserves_m1_administrator(migration_settings, admin):
         ).fetchone()[0]
         == "platform_admin"
     )
+
+
+def test_m3_upgrade_preserves_and_provisions_existing_m2_organization(
+    migration_settings, runtime_settings, admin
+):
+    import asyncio
+    from uuid import uuid4
+
+    from nexus.bootstrap import Application
+
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.attributes["settings"] = migration_settings
+    user_id, org_id, event_id = uuid4(), uuid4(), uuid4()
+    try:
+        command.downgrade(config, "0004_catalog_and_access")
+        admin.execute(
+            "INSERT INTO identity.users(id,login,password_hash) VALUES(%s,%s,%s)",
+            (user_id, "m2-preserved", "m2-password-hash"),
+        )
+        admin.execute(
+            "INSERT INTO identity.organizations(id,name) VALUES(%s,%s)",
+            (org_id, "Existing M2 organization"),
+        )
+        admin.execute(
+            "INSERT INTO identity.outbox(id,topic,schema_version,"
+            "aggregate_id,aggregate_version,payload) "
+            "VALUES(%s,'identity.organization_created',1,%s,1,'{}'::jsonb)",
+            (event_id, org_id),
+        )
+    finally:
+        command.upgrade(config, "head")
+    assert admin.execute(
+        "SELECT password_hash,version FROM identity.users WHERE id=%s", (user_id,)
+    ).fetchone() == ("m2-password-hash", 1)
+    assert admin.execute(
+        "SELECT status,billing_account_id FROM identity.organizations WHERE id=%s", (org_id,)
+    ).fetchone() == ("provisioning", None)
+
+    async def consume():
+        application = Application(runtime_settings)
+        try:
+            await application.process_billing()
+        finally:
+            await application.close()
+
+    asyncio.run(consume())
+    assert admin.execute(
+        "SELECT o.status,a.currency FROM identity.organizations o "
+        "JOIN billing.accounts a ON a.id=o.billing_account_id WHERE o.id=%s",
+        (org_id,),
+    ).fetchone() == ("active", "USD")

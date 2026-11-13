@@ -1,15 +1,13 @@
 """Management HTTP API; authorization and transactions stay in identity services."""
 
-import re
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
-from nexus.http import credentials, cursor_value, expected_version
+from nexus.http import credentials, cursor_value, expected_version, idempotency_key
 
 from .applications import ProjectService
-from .errors import IdentityError
 from .model_access import ModelAccessService
 from .schemas import (
     AccessPolicyCreate,
@@ -32,6 +30,8 @@ from .schemas import (
     OrganizationView,
     Page,
     PasswordSetup,
+    PlatformRolesPatch,
+    PlatformRolesView,
     ProjectCreate,
     ProjectPatch,
     ProjectView,
@@ -97,6 +97,25 @@ def create_router(get_service) -> APIRouter:
         body: OrganizationCreate, response: Response, token: Token, service: Service
     ):
         result = await service.create_organization(token, body)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.get("/users/{user_id}/platform-roles", response_model=PlatformRolesView)
+    async def platform_roles(user_id: UUID, response: Response, token: Token, service: Service):
+        result = await service.platform_roles(token, user_id)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.patch("/users/{user_id}/platform-roles", response_model=PlatformRolesView)
+    async def update_platform_roles(
+        user_id: UUID,
+        body: PlatformRolesPatch,
+        response: Response,
+        version: Version,
+        token: Token,
+        service: Service,
+    ):
+        result = await service.update_platform_roles(token, user_id, body, version)
         response.headers["ETag"] = f'"{result.version}"'
         return result
 
@@ -182,14 +201,6 @@ def create_router(get_service) -> APIRouter:
         )
 
     return router
-
-
-def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
-    if value is None:
-        raise IdentityError("precondition_required", "Idempotency-Key is required", 428)
-    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
-        raise IdentityError("invalid_idempotency_key", "Invalid Idempotency-Key", 422)
-    return value
 
 
 def create_project_router(get_service) -> APIRouter:

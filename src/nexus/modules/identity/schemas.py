@@ -47,6 +47,7 @@ class UserView(Schema):
     login: str
     status: str
     created_at: datetime
+    version: int
 
 
 class SessionCreated(Schema):
@@ -310,3 +311,36 @@ class AccessPolicyView(Schema):
 class ModelVisibility:
     actor_id: UUID
     allowed_models: frozenset[UUID] | None
+
+
+class PlatformRolesPatch(Schema):
+    roles: list[Literal["platform_admin", "platform_finance"]] = Field(max_length=2)
+
+    @field_validator("roles")
+    @classmethod
+    def distinct(cls, values):
+        if len(values) != len(set(values)):
+            raise ValueError("duplicate roles are not allowed")
+        return sorted(values)
+
+
+class PlatformRolesView(Schema):
+    user_id: UUID
+    version: int
+    roles: list[str]
+
+
+@dataclass(frozen=True)
+class OrganizationCreated:
+    event_id: UUID
+    organization_id: UUID
+    schema_version: int
+
+
+@dataclass(frozen=True)
+class FinancialAccess:
+    actor_id: UUID
+    organization_id: UUID
+    organization_status: str
+    project_id: UUID | None = None
+    key_id: UUID | None = None

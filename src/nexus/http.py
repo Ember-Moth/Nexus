@@ -51,3 +51,11 @@ def cursor_value(cursor: str | None):
         return at, UUID(values[1])
     except ValueError, TypeError, binascii.Error:
         raise ServiceError("invalid_cursor", "Invalid pagination cursor", 422) from None
+
+
+def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
+    if value is None:
+        raise ServiceError("precondition_required", "Idempotency-Key is required", 428)
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
+        raise ServiceError("invalid_idempotency_key", "Invalid Idempotency-Key", 422)
+    return value

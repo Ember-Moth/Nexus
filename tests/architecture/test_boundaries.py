@@ -80,7 +80,25 @@ def violations(source: str, module: str, is_package: bool = False) -> list[str]:
             ("sqlalchemy", "psycopg", "nexus.infrastructure.postgres")
         ):
             failures.append("entry point opens business storage")
-        if owner and kind == "schemas" and target.startswith(("sqlalchemy", "nexus.modules")):
+        if (
+            owner
+            and kind == "schemas"
+            and (
+                target.startswith("sqlalchemy")
+                or (
+                    target.startswith("nexus.modules.")
+                    and (
+                        target.split(".")[2] != owner
+                        or target.startswith(
+                            (
+                                f"nexus.modules.{owner}.models",
+                                f"nexus.modules.{owner}.repository",
+                            )
+                        )
+                    )
+                )
+            )
+        ):
             failures.append("schema exposes another module or ORM")
     for node in ast.walk(ast.parse(source)):
         if owner and isinstance(node, ast.Call):
@@ -113,6 +131,7 @@ def test_source_boundaries():
             "from nexus.modules.identity.schemas import BootstrapResult",
         ),
         ("nexus.modules.billing.service", "from fastapi import Depends"),
+        ("nexus.modules.billing.schemas", "from .models import Account"),
         ("nexus.modules.billing.service", "from sqlalchemy import select"),
         ("nexus.infrastructure.cache", "from nexus.modules import billing"),
         ("nexus.worker", "from sqlalchemy import text"),
@@ -131,6 +150,7 @@ def test_guard_rejects_invalid_dependencies(module, source):
         ("nexus.modules.billing.service", "from nexus.modules.identity import BootstrapResult"),
         ("nexus.modules.identity.api", "from fastapi import APIRouter"),
         ("nexus.modules.identity.repository", "from sqlalchemy import select"),
+        ("nexus.modules.billing.schemas", "from .money import Money"),
     ],
 )
 def test_public_interfaces_and_local_layers_are_allowed(module, source):

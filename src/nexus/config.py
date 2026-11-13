@@ -38,6 +38,7 @@ class RuntimeSettings(BaseSettings):
     login_window_seconds: int = Field(default=60, ge=1, le=3600)
     login_per_account: int = Field(default=10, ge=1, le=1000)
     login_per_ip: int = Field(default=60, ge=1, le=10000)
+    billing_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
 
     @field_validator("database_url")
     @classmethod

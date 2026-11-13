@@ -45,7 +45,13 @@ def admin(service_directory):
 @pytest.fixture(autouse=True)
 def reset_identity(admin):
     admin.execute(
-        "TRUNCATE catalog.audit_events, catalog.deployments, catalog.upstream_credentials, "
+        "TRUNCATE billing.request_attempts, billing.budget_holds, billing.request_runs, "
+        "billing.budget_periods, billing.budget_policies, billing.price_versions, "
+        "billing.discount_versions, billing.audit_events, billing.idempotency_records, "
+        "billing.adjustments, billing.ledger_entries, billing.funding_records, "
+        "billing.receiving_accounts, billing.outbox, billing.inbox, billing.accounts, "
+        "billing.settings, identity.inbox, catalog.audit_events, catalog.deployments, "
+        "catalog.upstream_credentials, "
         "catalog.upstreams, catalog.models, identity.access_policy_models, "
         "identity.access_policies, "
         "identity.idempotency_records, identity.api_keys, identity.service_accounts, "
@@ -53,6 +59,12 @@ def reset_identity(admin):
         "identity.memberships, identity.organizations, "
         "identity.admin_sessions, identity.password_setup_tokens, identity.audit_events, "
         "identity.platform_role_bindings, identity.users"
+    )
+
+    admin.execute(
+        "INSERT INTO billing.discount_versions (id,factor,state,effective_at,published_at) "
+        "VALUES ('00000000-0000-0000-0000-000000000001',1,'published', "
+        "'1970-01-01T00:00:00Z',clock_timestamp())"
     )
 
 

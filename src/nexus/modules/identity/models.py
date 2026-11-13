@@ -17,6 +17,7 @@ class User(Base):
     login: Mapped[str] = mapped_column(String(254), unique=True)
     password_hash: Mapped[str | None] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(20), default="active")
+    version: Mapped[int] = mapped_column(default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -70,6 +71,7 @@ class Organization(Base):
     status: Mapped[str] = mapped_column(String(20), default="provisioning")
     resume_status: Mapped[str | None] = mapped_column(String(20))
     version: Mapped[int] = mapped_column(default=1)
+    billing_account_id: Mapped[UUID | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -96,6 +98,16 @@ class OutboxEvent(Base):
     payload: Mapped[dict] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Inbox(Base):
+    __tablename__ = "inbox"
+    __table_args__ = {"schema": "identity"}
+    consumer: Mapped[str] = mapped_column(String(80), primary_key=True)
+    event_id: Mapped[UUID] = mapped_column(primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column()
+    result_id: Mapped[UUID] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ScopedResource:

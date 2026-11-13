@@ -2,7 +2,7 @@
 
 M1 已实现 Python 工程、五个业务边界与依赖组装、存储作用域、迁移、API/Worker 生命周期和初始管理员引导。本机开发直接使用原生 PostgreSQL 和 Redis，不依赖 Docker，也不配置系统服务管理器。
 
-identity 已提供账户组织管理与项目凭据服务，授权检查在同模块复用。其他模块保留业务包和数据库作用域。API、Worker 与组装分别位于 api.py、worker.py、bootstrap.py，没有统一的 Facade/Deps/_internal 模板。
+identity 已提供身份、项目凭据和模型策略，catalog 提供模型与上游管理。跨模块依赖由 bootstrap.py 连接公开能力，不共享仓储。API 和 Worker 分别位于 api.py、worker.py，没有统一的 Facade/Deps/_internal 模板。
 
 ## 环境要求
 
@@ -71,7 +71,7 @@ uv run nexus --env-file .env.api bootstrap-admin --login admin
 
 引导只创建第一个 `platform_admin`，不会隐式授予财务角色。相同登录名重复执行返回原用户且不重置密码；已有其他管理员时拒绝再次引导。并发引导通过数据库锁、唯一约束和 identity 内事务保证仅创建一次，并记录一条审计。
 
-M2 已提供登录、企业成员和项目凭据 API，流程见[登录与企业成员管理](identity-api.md)、[项目与应用凭据](project-credentials.md)。初始管理员仍通过 CLI 引导，不开放公开注册入口。
+M2 的接口流程见[登录与企业成员管理](identity-api.md)、[项目与应用凭据](project-credentials.md)和[模型与上游目录](catalog-api.md)。初始管理员仍通过 CLI 引导，不开放公开注册入口。
 
 ## 存储权限与事务
 
@@ -86,7 +86,7 @@ M2 已提供登录、企业成员和项目凭据 API，流程见[登录与企业
 
 运行登录身份可以读取 `nexus_meta.alembic_version`，不能修改它或执行迁移。`identity.audit_events` 只允许相应模块读取和追加。新函数默认不向 PUBLIC 授予 EXECUTE，未来 gateway_v1 能力需明确授权。
 
-M1 迁移创建五个模块 schema、迁移元数据、预留的 gateway_v1 schema 和管理员引导存储。M2 的 0002 迁移增加会话、组织成员及 outbox，0003 增加项目、项目授权、服务账号、API Key 和幂等记录。模型目录与财务等表尚未实现，不能将设计文档的完整逻辑模型理解为现有数据库。
+M1 迁移创建五个模块 schema、迁移元数据、预留的 gateway_v1 schema 和管理员引导存储。M2 的 0002 增加身份管理，0003 增加项目凭据，0004 增加目录、加密凭据、部署映射与模型策略。财务和配置发布等表尚未实现，不能将完整逻辑模型理解为现有数据库。
 
 ## 检查与集成验证
 
@@ -98,7 +98,7 @@ uv run python scripts/run_integration.py -q
 uv build
 ```
 
-集成脚本新建专用临时目录、随机本地端口和 `nexus_test_` 数据库，运行迁移与测试，最后停止进程并删除临时数据。它不使用开发实例的 `.env.api` 或业务数据。只运行普通 pytest 时，集成测试会明确跳过。
+集成脚本新建专用临时目录、随机本地端口和 `nexus_test_` 数据库，运行迁移与测试，最后停止进程并删除临时数据。迁移和测试子进程会移除外部 NEXUS_* 环境变量，只使用测试生成的配置，防止已导出的开发或生产凭据覆盖测试连接。只运行普通 pytest 时，集成测试会明确跳过。
 
 部分受限执行环境禁止 PostgreSQL 创建共享内存。这种情况下需要给该集成脚本相应执行权限，而不是改用 SQLite 或跳过数据库权限验证。
 

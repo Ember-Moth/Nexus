@@ -153,3 +153,20 @@ class IdempotencyRecord(Base):
     request_digest: Mapped[str] = mapped_column(String(64))
     resource_id: Mapped[UUID] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AccessPolicy(ScopedResource, Base):
+    __tablename__ = "access_policies"
+    __table_args__ = {"schema": "identity"}
+    layer: Mapped[str] = mapped_column(String(20))
+    scope_type: Mapped[str] = mapped_column(String(20))
+    scope_id: Mapped[UUID] = mapped_column()
+    project_id: Mapped[UUID | None] = mapped_column()
+    api_key_id: Mapped[UUID | None] = mapped_column()
+
+
+class AccessPolicyModel(Base):
+    __tablename__ = "access_policy_models"
+    __table_args__ = {"schema": "identity"}
+    policy_id: Mapped[UUID] = mapped_column(primary_key=True)
+    model_id: Mapped[UUID] = mapped_column(primary_key=True)

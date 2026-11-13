@@ -265,3 +265,48 @@ class ApplicationIdentity(Schema):
     project_id: UUID
     service_account_id: UUID
     key_id: UUID
+
+
+class AccessPolicyCreate(Schema):
+    layer: Literal["platform", "customer"]
+    scope_type: Literal["organization", "project", "key"]
+    scope_id: UUID | None = None
+    allowed_models: list[UUID] = Field(max_length=1000)
+
+    @model_validator(mode="after")
+    def valid_scope(self):
+        if self.scope_type != "organization" and self.scope_id is None:
+            raise ValueError("scope_id is required")
+        if len(self.allowed_models) != len(set(self.allowed_models)):
+            raise ValueError("duplicate models are not allowed")
+        return self
+
+
+class AccessPolicyPatch(Schema):
+    allowed_models: list[UUID] = Field(max_length=1000)
+
+    @field_validator("allowed_models")
+    @classmethod
+    def unique_models(cls, values):
+        if len(values) != len(set(values)):
+            raise ValueError("duplicate models are not allowed")
+        return values
+
+
+class AccessPolicyView(Schema):
+    id: UUID
+    organization_id: UUID
+    layer: str
+    scope_type: str
+    scope_id: UUID
+    project_id: UUID | None
+    api_key_id: UUID | None
+    allowed_models: list[UUID]
+    version: int
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class ModelVisibility:
+    actor_id: UUID
+    allowed_models: frozenset[UUID] | None

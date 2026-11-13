@@ -2,7 +2,7 @@
 
 管理 API 服务平台运营、财务和企业客户的管理操作，统一前缀为 `/api/v1`。本文给出资源与行为契约，不表示路由已经实现；完整 OpenAPI 将在实现阶段由实际模型生成并校验。
 
-已提供健康检查、登录和组织成员 API，以及项目、授权、服务账号与 Key 生命周期。实际清单见[登录与企业成员管理](identity-api.md)和[项目与应用凭据](project-credentials.md)。模型与财务等其余资源按阶段实现。
+已提供身份、企业成员、项目凭据、模型与上游目录及模型访问策略，实际清单见[登录与企业成员管理](identity-api.md)、[项目与应用凭据](project-credentials.md)和[模型与上游目录](catalog-api.md)。财务、配置发布与执行层按后续阶段实现。
 
 支付通知是独立的机器入口 `/webhooks/payments/{channel_id}`，不使用管理会话；按具体渠道声明允许 GET 或 POST，并使用该渠道规定的验签方式。所有其他表中路径仍相对于管理 API 前缀。
 
@@ -47,12 +47,17 @@
 | 撤销 Key | `POST /organizations/{org}/api-keys/{id}/revoke` | 不影响历史费用归属 |
 | 轮换 Key | `POST /organizations/{org}/api-keys/{id}/rotate` | 创建新 Key，明确旧 Key 的重叠有效期 |
 | 模型访问策略 | `GET/POST /organizations/{org}/access-policies` | 平台设置上限，企业在其范围内收紧限制 |
+| 访问策略详情与修改 | `GET/PATCH /organizations/{org}/access-policies/{id}` | 作用域与层级不可改，只能在权限范围内更新模型集合 |
 | 运行限额策略 | `GET/POST /organizations/{org}/quota-policies` | catalog 管理速率与并发，不能突破平台上限 |
 | 金额预算策略 | `GET/POST /organizations/{org}/budget-policies` | billing 管理金额与周期预算，与资金预留在同域执行 |
 | 公开模型 | `GET /models` | 返回调用者有权看到的模型与计量能力 |
+| 模型详情 | `GET /models/{id}` | 客户带组织及可选项目/Key 上下文，拒绝不可见模型 |
 | 模型管理 | `POST /models`、`PATCH /models/{id}` | 平台管理员维护公开模型定义 |
 | 上游与部署 | `GET/POST /upstreams`、`GET/POST /deployments` | 平台管理员维护，读取不泄露密钥 |
+| 上游与部署详情 | `GET/PATCH /upstreams/{id}`、`GET/PATCH /deployments/{id}` | If-Match 条件更新，校验父级状态、协议与凭据归属 |
 | 上游凭据 | `POST /upstreams/{id}/credentials` | 接收并加密保存，查询接口不回传明文 |
+| 凭据元数据 | `GET /upstreams/{id}/credentials`、`GET /upstreams/{id}/credentials/{credential_id}` | 不返回 secret、密文或根密钥 |
+| 撤销凭据 | `POST /upstreams/{id}/credentials/{credential_id}/revoke` | 需要 If-Match，影响关联部署的 configured 状态 |
 | 路由策略 | `GET/POST /route-policies` | 平台管理员维护并进行发布校验 |
 | 售价版本 | `GET/POST /sale-price-versions` | 平台维护统一售价表和计价维度 |
 | 成本版本 | `GET/POST /cost-price-versions` | 平台维护按部署划分的采购成本表 |
@@ -94,7 +99,7 @@
 
 Key 和一次性令牌的明文仅首次响应返回，幂等存储不保存这些秘密。重试可以返回已创建资源 ID 和 `secret_unavailable` 状态；首次响应丢失后必须显式轮换，不能用创建重试生成多个有效 Key。
 
-已实现的 Key 签发与轮换首次成功返回 201，重试返回 200、secret 为 null、secret_status 为 secret_unavailable。轮换要求 If-Match 与 Idempotency-Key，重试保留原版本和请求体。默认立即撤销旧 Key，可显式设置最多 3600 秒重叠期，且不延长旧 Key 原有到期时间。模型访问策略尚未接入，当前只提供凭据身份生命周期。
+已实现的 Key 签发与轮换首次成功返回 201，重试返回 200、secret 为 null、secret_status 为 secret_unavailable。轮换要求 If-Match 与 Idempotency-Key，重试保留原版本和请求体。默认立即撤销旧 Key，可显式设置最多 3600 秒重叠期，且不延长旧 Key 原有到期时间。控制平面现已管理模型访问策略，实际调用仍需后续网关与账务授权接入。
 
 财务业务来源的唯一约束不随 HTTP 幂等记录清理而消失。管理员改变幂等键也不能对同一外部收款参考号重复入账。
 

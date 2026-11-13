@@ -78,8 +78,9 @@ def main() -> int:
             print(json.dumps(uvloop.run(bootstrap(settings, args.login, password))))
         return 0
     except ValidationError as exc:
+        # Nested dictionary keys can themselves contain mistakenly pasted secret material.
         fields = ", ".join(
-            ".".join(str(part) for part in item["loc"]) or "settings" for item in exc.errors()
+            sorted({str(item["loc"][0]) if item["loc"] else "settings" for item in exc.errors()})
         )
         print(
             f"Invalid configuration fields: {fields}. Check the selected profile.", file=sys.stderr

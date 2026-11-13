@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from types import TracebackType
@@ -185,11 +185,32 @@ class Applications(Protocol):
     async def authenticate(self, digest: str) -> ApplicationIdentity | None: ...
 
 
+type ModelLookup = Callable[[frozenset[UUID]], Awaitable[frozenset[UUID]]]
+
+
+class Policies(Protocol):
+    async def get(self, org_id: UUID, policy_id: UUID): ...
+    async def applicable(self, org_id: UUID, project_id: UUID | None, key_id: UUID | None): ...
+    async def list(self, org_id: UUID, membership_id: UUID | None, limit: int, cursor: Cursor): ...
+    async def create(
+        self,
+        org_id: UUID,
+        layer: str,
+        scope_type: str,
+        scope_id: UUID,
+        project_id: UUID | None,
+        key_id: UUID | None,
+        models: frozenset[UUID],
+    ): ...
+    async def replace(self, org_id: UUID, policy_id: UUID, models: frozenset[UUID]): ...
+
+
 class IdentityTransaction(Protocol):
     administrators: Administrators
     audit: Audit
     directory: Directory
     applications: Applications
+    policies: Policies
 
     async def __aenter__(self) -> Self: ...
 

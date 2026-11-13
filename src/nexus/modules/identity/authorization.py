@@ -73,3 +73,58 @@ class AccessControl:
     def version(actual: int, expected: int):
         if actual != expected:
             raise IdentityError("version_conflict", "Resource version has changed", 412)
+
+    async def project_scope(
+        self, tx, actor, org_id, *, write=False, credentials=False, owner=False, emergency=False
+    ):
+        org = await self.organization(
+            tx, actor, org_id, lock=write, finance_read=not credentials and not owner
+        )
+        is_admin = "platform_admin" in actor.platform_roles
+        member = await tx.directory.membership_for_user(org_id, actor.user.id)
+        role = member.role if member and member.status == "active" else None
+        if owner and not (is_admin or role == "org_owner"):
+            raise forbidden(org_id)
+        if credentials and not (is_admin or role in {"org_owner", "org_developer"}):
+            raise forbidden(org_id)
+        if write and org.status not in {"provisioning", "active"} and not (emergency and is_admin):
+            raise IdentityError(
+                "organization_inactive", "Organization does not allow this operation", 409
+            )
+        finance_metadata = (
+            not credentials and not owner and "platform_finance" in actor.platform_roles
+        )
+        return (
+            member.id if role == "org_developer" and not is_admin and not finance_metadata else None
+        )
+
+    async def project(
+        self,
+        tx,
+        actor,
+        org_id,
+        project_id,
+        *,
+        write=False,
+        credentials=False,
+        owner=False,
+        require_active=False,
+        emergency=False,
+    ):
+        membership_id = await self.project_scope(
+            tx,
+            actor,
+            org_id,
+            write=write,
+            credentials=credentials,
+            owner=owner,
+            emergency=emergency,
+        )
+        project = await tx.applications.project(org_id, project_id)
+        if project is None or (
+            membership_id and not await tx.applications.has_grant(org_id, project_id, membership_id)
+        ):
+            raise missing(project_id)
+        if require_active and project.status != "active":
+            raise IdentityError("project_inactive", "Project does not allow this operation", 409)
+        return project

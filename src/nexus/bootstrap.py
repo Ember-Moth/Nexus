@@ -6,9 +6,23 @@ import base64
 from nexus.config import RuntimeSettings
 from nexus.infrastructure.auth_limits import RedisAuthLimits
 from nexus.infrastructure.cache import Cache
+from nexus.infrastructure.credential_cipher import CredentialCipher
 from nexus.infrastructure.postgres import Database
-from nexus.modules import identity
+from nexus.modules import catalog, identity
 from nexus.shared.storage import ModuleName
+
+
+class CatalogAccess:
+    def __init__(self, managers, policies):
+        self._managers = managers
+        self._policies = policies
+
+    async def administrator(self, token):
+        return await self._managers.require_platform_admin(token)
+
+    async def visibility(self, token, organization_id, project_id, key_id):
+        scope = await self._policies.visibility(token, organization_id, project_id, key_id)
+        return catalog.Visibility(scope.actor_id, scope.allowed_models)
 
 
 class Application:
@@ -40,6 +54,22 @@ class Application:
             setup_ttl=settings.password_setup_ttl_seconds,
         )
         self.projects = identity.create_project_service(self._storage[ModuleName.IDENTITY.value])
+        self.model_access = identity.create_model_access_service(
+            self._storage[ModuleName.IDENTITY.value],
+            catalog.create_model_lookup(self._storage[ModuleName.CATALOG.value]),
+        )
+        roots = {
+            version: base64.urlsafe_b64decode(secret.get_secret_value())
+            for version, secret in settings.previous_encryption_keys.items()
+        }
+        roots[settings.encryption_key_version] = base64.urlsafe_b64decode(
+            settings.encryption_key.get_secret_value()
+        )
+        self.catalog = catalog.create_service(
+            self._storage[ModuleName.CATALOG.value],
+            CatalogAccess(self.identity, self.model_access),
+            CredentialCipher(settings.encryption_key_version, roots),
+        )
 
     async def readiness(self) -> dict[str, str]:
         checks = {

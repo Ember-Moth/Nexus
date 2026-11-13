@@ -103,6 +103,11 @@ class IdentityService:
                 memberships=await tx.directory.my_memberships(actor.user.id),
             )
 
+    async def require_platform_admin(self, token: str) -> UUID:
+        async with self._access.authenticated(token) as (_, actor):
+            self._access.platform_admin(actor)
+            return actor.user.id
+
     async def list_users(self, token: str, limit: int, cursor: Cursor):
         async with self._access.authenticated(token) as (tx, actor):
             self._access.platform_admin(actor)

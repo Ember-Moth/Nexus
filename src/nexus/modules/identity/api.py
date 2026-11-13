@@ -1,19 +1,20 @@
 """Management HTTP API; authorization and transactions stay in identity services."""
 
-import base64
-import binascii
-import json
 import re
-from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from nexus.http import credentials, cursor_value, expected_version
 
 from .applications import ProjectService
-from .errors import IdentityError, unauthorized
+from .errors import IdentityError
+from .model_access import ModelAccessService
 from .schemas import (
+    AccessPolicyCreate,
+    AccessPolicyPatch,
+    AccessPolicyView,
     CurrentUser,
     GrantCreate,
     GrantPatch,
@@ -43,45 +44,6 @@ from .schemas import (
     UserView,
 )
 from .service import IdentityService
-
-bearer = HTTPBearer(auto_error=False)
-
-
-def credentials(
-    request: Request, value: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]
-) -> str:
-    if value is None or len(request.headers.getlist("authorization")) != 1:
-        raise unauthorized()
-    return value.credentials
-
-
-def expected_version(if_match: Annotated[str | None, Header()] = None) -> int:
-    if if_match is None:
-        raise IdentityError("precondition_required", "If-Match is required", 428)
-    if not re.fullmatch(r'"[1-9][0-9]{0,9}"', if_match):
-        raise IdentityError(
-            "invalid_version", "If-Match must contain a quoted resource version", 422
-        )
-    return int(if_match[1:-1])
-
-
-def cursor_value(cursor: str | None):
-    if cursor is None:
-        return None
-    try:
-        values = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
-        if (
-            not isinstance(values, list)
-            or len(values) != 2
-            or not all(isinstance(value, str) for value in values)
-        ):
-            raise ValueError
-        at = datetime.fromisoformat(values[0])
-        if at.tzinfo is None:
-            raise ValueError
-        return at, UUID(values[1])
-    except ValueError, TypeError, binascii.Error:
-        raise IdentityError("invalid_cursor", "Invalid pagination cursor", 422) from None
 
 
 def create_router(get_service) -> APIRouter:
@@ -436,6 +398,63 @@ def create_project_router(get_service) -> APIRouter:
     ):
         return issued(
             response, await service.rotate_key(token, organization_id, key_id, body, version, idem)
+        )
+
+    return router
+
+
+def create_policy_router(get_service):
+    router = APIRouter(
+        prefix="/api/v1/organizations/{organization_id}/access-policies", tags=["model access"]
+    )
+    Service = Annotated[ModelAccessService, Depends(get_service)]
+    Token = Annotated[str, Depends(credentials)]
+    Version = Annotated[int, Depends(expected_version)]
+    Limit = Annotated[int, Query(ge=1, le=100)]
+    Cursor = Annotated[str | None, Query(max_length=512)]
+
+    def tagged(response, result):
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.get("", response_model=Page[AccessPolicyView])
+    async def policies(
+        organization_id: UUID,
+        token: Token,
+        service: Service,
+        limit: Limit = 50,
+        cursor: Cursor = None,
+    ):
+        return await service.list_policies(token, organization_id, limit, cursor_value(cursor))
+
+    @router.get("/{policy_id}", response_model=AccessPolicyView)
+    async def policy(
+        organization_id: UUID, policy_id: UUID, response: Response, token: Token, service: Service
+    ):
+        return tagged(response, await service.get_policy(token, organization_id, policy_id))
+
+    @router.post("", response_model=AccessPolicyView, status_code=201)
+    async def create_policy(
+        organization_id: UUID,
+        body: AccessPolicyCreate,
+        response: Response,
+        token: Token,
+        service: Service,
+    ):
+        return tagged(response, await service.create_policy(token, organization_id, body))
+
+    @router.patch("/{policy_id}", response_model=AccessPolicyView)
+    async def update_policy(
+        organization_id: UUID,
+        policy_id: UUID,
+        body: AccessPolicyPatch,
+        response: Response,
+        version: Version,
+        token: Token,
+        service: Service,
+    ):
+        return tagged(
+            response, await service.update_policy(token, organization_id, policy_id, body, version)
         )
 
     return router

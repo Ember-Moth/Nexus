@@ -23,6 +23,7 @@ from .models import (
     PlatformRole,
     User,
 )
+from .policy_repository import PolicyRepository
 from .ports import Actor, Cursor
 from .schemas import MemberView, OrganizationView, Page, UserView
 
@@ -414,6 +415,7 @@ class IdentityUnitOfWork:
         self.audit = AuditRepository(session)
         self.directory = DirectoryRepository(session)
         self.applications = ApplicationRepository(session)
+        self.policies = PolicyRepository(session)
         return self
 
     async def __aexit__(

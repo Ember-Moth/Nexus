@@ -6,6 +6,7 @@ from nexus.shared.storage import ModuleName
 
 from .applications import ProjectService
 from .events import ORGANIZATION_CREATED
+from .model_access import ModelAccessService
 from .ports import AuthLimits
 from .repository import IdentityUnitOfWork
 from .schemas import BootstrapResult
@@ -16,8 +17,10 @@ __all__ = [
     "BootstrapResult",
     "IdentityService",
     "ProjectService",
+    "ModelAccessService",
     "create_service",
     "create_project_service",
+    "create_model_access_service",
     "api",
     "ORGANIZATION_CREATED",
 ]
@@ -39,3 +42,8 @@ def create_service(
 def create_project_service(database: ModuleDatabase) -> ProjectService:
     database.require_module(ModuleName.IDENTITY)
     return ProjectService(lambda: IdentityUnitOfWork(database))
+
+
+def create_model_access_service(database: ModuleDatabase, models) -> ModelAccessService:
+    database.require_module(ModuleName.IDENTITY)
+    return ModelAccessService(lambda: IdentityUnitOfWork(database), models)

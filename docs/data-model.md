@@ -2,7 +2,7 @@
 
 本文件定义首期逻辑模型和数据库必须维护的约束。具体迁移随实施阶段落地；逻辑实体可以在不削弱约束的前提下合并为物理表，不需要一次性创建所有表。
 
-M1 已迁移模块 schema 及管理员引导存储。M2 已增加会话、密码凭据、组织、成员、outbox、项目、项目授权、服务账号、API Key 和 Key 操作幂等记录。目录、计费和发布等其余业务表仍为后续阶段的逻辑设计。
+M1 已迁移模块 schema 及管理员引导存储。M2 已实现身份与项目凭据存储，并增加 catalog 的模型、上游、加密凭据、部署与审计，以及 identity 的访问策略和模型关联表。计费和配置发布等其余表仍为后续阶段的逻辑设计。
 
 ## 模块与数据所有权
 
@@ -86,6 +86,8 @@ API Key 记录 version、prefix、expires_at、revoked_at、rotated_at 和 rotat
 | `access_policies` | organization_id、layer、scope_type、scope_id、allowed_models、version | layer 区分平台约束与客户约束；作用域属于该组织 |
 | `route_policies` | scope、model_id、candidates、priority、weight、version | 候选引用有效部署，首期无成本或延迟自动优化 |
 | `quota_policies` | organization_id、layer、scope、metric、limit、period、version | catalog 拥有，只含 RPM、TPM 和并发；平台和客户限制共同生效 |
+
+访问策略实际使用 access_policies 与 access_policy_models 分表存储，后者以外键关联 catalog.models，只维护引用，不授予 identity 对目录私有表的读取权限。项目与 Key 作用域使用复合外键约束租户关系。上游凭据使用带记录绑定信息的 AEAD 密文，key_version 指向部署配置中的根密钥版本；明文及根密钥不进数据库。
 
 `scope` 只允许组织、项目或 Key 等受控类型。实现时可使用独立关联表或显式可空外键加互斥约束，不使用无法验证归属的任意字符串外键。
 

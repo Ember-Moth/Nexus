@@ -68,7 +68,9 @@ def violations(source: str, module: str, is_package: bool = False) -> list[str]:
         if owner:
             if target.startswith(("nexus.api", "nexus.worker", "nexus.commands", "nexus.cli")):
                 failures.append("module depends on process entry point")
-            if not http_entry and target.startswith(("fastapi", "starlette", "uvicorn")):
+            if not http_entry and target.startswith(
+                ("fastapi", "starlette", "uvicorn", "nexus.http")
+            ):
                 failures.append("business core depends on HTTP framework")
             if target.startswith(("sqlalchemy", "psycopg", "redis")) and not persistence:
                 failures.append("business core bypasses its persistence boundary")

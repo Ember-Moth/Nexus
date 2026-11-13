@@ -7,7 +7,7 @@ import secrets
 from datetime import timedelta
 
 from .authorization import AccessControl
-from .errors import IdentityError, forbidden, missing, unauthorized
+from .errors import IdentityError, missing, unauthorized
 from .ports import TransactionFactory
 from .schemas import KeyIssued
 from .tokens import digest_token
@@ -18,73 +18,18 @@ class ProjectService:
         self._transactions = transactions
         self._access = AccessControl(transactions)
 
-    async def _scope(
-        self, tx, actor, org_id, *, write=False, credentials=False, owner=False, emergency=False
-    ):
-        org = await self._access.organization(
-            tx, actor, org_id, lock=write, finance_read=not credentials and not owner
-        )
-        is_admin = "platform_admin" in actor.platform_roles
-        member = await tx.directory.membership_for_user(org_id, actor.user.id)
-        role = member.role if member and member.status == "active" else None
-        if owner and not (is_admin or role == "org_owner"):
-            raise forbidden(org_id)
-        if credentials and not (is_admin or role in {"org_owner", "org_developer"}):
-            raise forbidden(org_id)
-        if write and org.status not in {"provisioning", "active"} and not (emergency and is_admin):
-            raise IdentityError(
-                "organization_inactive", "Organization does not allow this operation", 409
-            )
-        finance_metadata = (
-            not credentials and not owner and "platform_finance" in actor.platform_roles
-        )
-        return (
-            member.id if role == "org_developer" and not is_admin and not finance_metadata else None
-        )
-
-    async def _project(
-        self,
-        tx,
-        actor,
-        org_id,
-        project_id,
-        *,
-        write=False,
-        credentials=False,
-        owner=False,
-        require_active=False,
-        emergency=False,
-    ):
-        membership_id = await self._scope(
-            tx,
-            actor,
-            org_id,
-            write=write,
-            credentials=credentials,
-            owner=owner,
-            emergency=emergency,
-        )
-        project = await tx.applications.project(org_id, project_id)
-        if project is None or (
-            membership_id and not await tx.applications.has_grant(org_id, project_id, membership_id)
-        ):
-            raise missing(project_id)
-        if require_active and project.status != "active":
-            raise IdentityError("project_inactive", "Project does not allow this operation", 409)
-        return project
-
     async def list_projects(self, token, org_id, limit, cursor):
         async with self._access.authenticated(token) as (tx, actor):
-            member_id = await self._scope(tx, actor, org_id)
+            member_id = await self._access.project_scope(tx, actor, org_id)
             return await tx.applications.projects(org_id, member_id, limit, cursor)
 
     async def get_project(self, token, org_id, project_id):
         async with self._access.authenticated(token) as (tx, actor):
-            return await self._project(tx, actor, org_id, project_id)
+            return await self._access.project(tx, actor, org_id, project_id)
 
     async def create_project(self, token, org_id, body):
         async with self._access.authenticated(token) as (tx, actor):
-            await self._scope(tx, actor, org_id, write=True, owner=True)
+            await self._access.project_scope(tx, actor, org_id, write=True, owner=True)
             result = await tx.applications.create_project(org_id, body.name)
             await tx.audit.record(
                 actor.user.id, "project.created", result.id, organization_id=org_id
@@ -93,7 +38,9 @@ class ProjectService:
 
     async def update_project(self, token, org_id, project_id, body, version):
         async with self._access.authenticated(token) as (tx, actor):
-            project = await self._project(tx, actor, org_id, project_id, write=True, owner=True)
+            project = await self._access.project(
+                tx, actor, org_id, project_id, write=True, owner=True
+            )
             self._access.version(project.version, version)
             if project.status == "archived":
                 raise IdentityError("project_archived", "Archived projects cannot be modified", 409)
@@ -112,19 +59,19 @@ class ProjectService:
 
     async def list_grants(self, token, org_id, limit, cursor):
         async with self._access.authenticated(token) as (tx, actor):
-            await self._scope(tx, actor, org_id, owner=True)
+            await self._access.project_scope(tx, actor, org_id, owner=True)
             return await tx.applications.grants(org_id, limit, cursor)
 
     async def get_grant(self, token, org_id, grant_id):
         async with self._access.authenticated(token) as (tx, actor):
-            await self._scope(tx, actor, org_id, owner=True)
+            await self._access.project_scope(tx, actor, org_id, owner=True)
             grant = await tx.applications.grant(org_id, grant_id)
             if grant is None:
                 raise missing(grant_id)
             return grant
 
     async def _grant_target(self, tx, actor, org_id, project_id, membership_id):
-        await self._project(
+        await self._access.project(
             tx, actor, org_id, project_id, write=True, owner=True, require_active=True
         )
         member = await tx.directory.membership(org_id, membership_id)
@@ -149,7 +96,7 @@ class ProjectService:
 
     async def update_grant(self, token, org_id, grant_id, body, version):
         async with self._access.authenticated(token) as (tx, actor):
-            await self._scope(tx, actor, org_id, write=True, owner=True)
+            await self._access.project_scope(tx, actor, org_id, write=True, owner=True)
             grant = await tx.applications.grant(org_id, grant_id)
             if grant is None:
                 raise missing(grant_id)
@@ -178,11 +125,13 @@ class ProjectService:
         emergency=False,
     ):
         # Scope checks precede resource lookup, and again under the organization lock for writes.
-        await self._scope(tx, actor, org_id, write=write, credentials=True, emergency=emergency)
+        await self._access.project_scope(
+            tx, actor, org_id, write=write, credentials=True, emergency=emergency
+        )
         account = await tx.applications.service_account(org_id, service_account_id)
         if account is None:
             raise missing(service_account_id)
-        await self._project(
+        await self._access.project(
             tx,
             actor,
             org_id,
@@ -198,9 +147,9 @@ class ProjectService:
 
     async def list_service_accounts(self, token, org_id, project_id, limit, cursor):
         async with self._access.authenticated(token) as (tx, actor):
-            member_id = await self._scope(tx, actor, org_id, credentials=True)
+            member_id = await self._access.project_scope(tx, actor, org_id, credentials=True)
             if project_id:
-                await self._project(tx, actor, org_id, project_id, credentials=True)
+                await self._access.project(tx, actor, org_id, project_id, credentials=True)
             return await tx.applications.service_accounts(
                 org_id, member_id, project_id, limit, cursor
             )
@@ -211,7 +160,7 @@ class ProjectService:
 
     async def create_service_account(self, token, org_id, body):
         async with self._access.authenticated(token) as (tx, actor):
-            await self._project(
+            await self._access.project(
                 tx,
                 actor,
                 org_id,
@@ -231,7 +180,7 @@ class ProjectService:
     async def update_service_account(self, token, org_id, account_id, body, version):
         async with self._access.authenticated(token) as (tx, actor):
             account = await self._account(tx, actor, org_id, account_id, write=True)
-            await self._project(
+            await self._access.project(
                 tx, actor, org_id, account.project_id, credentials=True, require_active=True
             )
             self._access.version(account.version, version)
@@ -249,20 +198,22 @@ class ProjectService:
             return result
 
     async def _key(self, tx, actor, org_id, key_id, *, write=False, emergency=False):
-        await self._scope(tx, actor, org_id, write=write, credentials=True, emergency=emergency)
+        await self._access.project_scope(
+            tx, actor, org_id, write=write, credentials=True, emergency=emergency
+        )
         key = await tx.applications.key(org_id, key_id)
         if key is None:
             raise missing(key_id)
-        await self._project(
+        await self._access.project(
             tx, actor, org_id, key.project_id, write=write, credentials=True, emergency=emergency
         )
         return key
 
     async def list_keys(self, token, org_id, project_id, account_id, limit, cursor):
         async with self._access.authenticated(token) as (tx, actor):
-            member_id = await self._scope(tx, actor, org_id, credentials=True)
+            member_id = await self._access.project_scope(tx, actor, org_id, credentials=True)
             if project_id:
-                await self._project(tx, actor, org_id, project_id, credentials=True)
+                await self._access.project(tx, actor, org_id, project_id, credentials=True)
             if account_id:
                 account = await self._account(tx, actor, org_id, account_id)
                 if project_id and account.project_id != project_id:

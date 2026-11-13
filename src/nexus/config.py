@@ -20,6 +20,8 @@ class RuntimeSettings(BaseSettings):
     database_url: SecretStr
     redis_url: SecretStr
     encryption_key: SecretStr
+    encryption_key_version: int = Field(default=1, ge=1, le=2147483647)
+    previous_encryption_keys: dict[int, SecretStr] = Field(default_factory=dict)
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=0, le=65535)
     db_pool_size: int = Field(default=5, ge=1, le=50)
@@ -77,6 +79,15 @@ class RuntimeSettings(BaseSettings):
             raise ValueError("encryption key must encode 32 bytes")
         return value
 
+    @field_validator("previous_encryption_keys")
+    @classmethod
+    def validate_previous_keys(cls, values):
+        for version, secret in values.items():
+            if not 1 <= version <= 2147483647:
+                raise ValueError("invalid encryption key version")
+            cls.validate_key(secret)
+        return values
+
     @field_validator("worker_id", "redis_namespace")
     @classmethod
     def validate_identifier(cls, value: str) -> str:
@@ -86,6 +97,8 @@ class RuntimeSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime(self) -> RuntimeSettings:
+        if self.encryption_key_version in self.previous_encryption_keys:
+            raise ValueError("current encryption key version cannot also be historical")
         url = make_url(self.database_url.get_secret_value())
         if url.username != f"nexus_{self.process_role}":
             raise ValueError("database role must match the process role")

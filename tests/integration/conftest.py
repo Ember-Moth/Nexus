@@ -45,7 +45,10 @@ def admin(service_directory):
 @pytest.fixture(autouse=True)
 def reset_identity(admin):
     admin.execute(
-        "TRUNCATE identity.idempotency_records, identity.api_keys, identity.service_accounts, "
+        "TRUNCATE catalog.audit_events, catalog.deployments, catalog.upstream_credentials, "
+        "catalog.upstreams, catalog.models, identity.access_policy_models, "
+        "identity.access_policies, "
+        "identity.idempotency_records, identity.api_keys, identity.service_accounts, "
         "identity.project_grants, identity.projects, identity.outbox, "
         "identity.memberships, identity.organizations, "
         "identity.admin_sessions, identity.password_setup_tokens, identity.audit_events, "

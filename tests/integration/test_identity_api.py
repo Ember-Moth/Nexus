@@ -52,19 +52,6 @@ async def create_org(client, root_token, name, owner_id=None):
     return response.json()
 
 
-@pytest.fixture
-async def http(runtime_settings):
-    settings = runtime_settings.model_copy(update={"redis_namespace": "nexus:test:" + uuid4().hex})
-    app = create_app(settings)
-    async with app.router.lifespan_context(app):
-        await app.state.identity_service.bootstrap_admin("root-admin", PASSWORD)
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
-            base_url="http://test",
-        ) as client:
-            yield client, await login(client), app, settings
-
-
 async def test_full_admin_organization_member_flow(http, admin):
     client, root, _, _ = http
     owner = await create_user(client, root, "enterprise-owner")

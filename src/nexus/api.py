@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from nexus.bootstrap import Application
 from nexus.config import RuntimeSettings
-from nexus.modules.identity import IdentityService
+from nexus.modules.identity import IdentityService, ProjectService
 from nexus.modules.identity import api as identity_api
 from nexus.shared.errors import ServiceError
 
@@ -101,6 +101,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
         application = Application(settings)
         app.state.readiness = application.readiness
         app.state.identity_service = application.identity
+        app.state.project_service = application.projects
         try:
             yield
         finally:
@@ -109,6 +110,10 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     def get_identity(request: Request) -> IdentityService:
         return request.app.state.identity_service
 
+    def get_projects(request: Request) -> ProjectService:
+        return request.app.state.project_service
+
     app = build_server(lifespan, development=settings.environment != "production")
     app.include_router(identity_api.create_router(get_identity))
+    app.include_router(identity_api.create_project_router(get_projects))
     return app

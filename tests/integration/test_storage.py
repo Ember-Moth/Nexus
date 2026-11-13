@@ -24,7 +24,7 @@ async def test_readiness_and_schema_mismatch(runtime_settings, admin):
             assert (await application.readiness())["postgres"] == "unavailable"
         finally:
             admin.execute(
-                "UPDATE nexus_meta.alembic_version SET version_num = '0002_identity_access'"
+                "UPDATE nexus_meta.alembic_version SET version_num = '0003_project_credentials'"
             )
     finally:
         await application.close()

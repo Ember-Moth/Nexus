@@ -2,7 +2,7 @@
 
 本文件定义首期逻辑模型和数据库必须维护的约束。具体迁移随实施阶段落地；逻辑实体可以在不削弱约束的前提下合并为物理表，不需要一次性创建所有表。
 
-M1 已迁移模块 schema 及管理员引导存储。M2 第一部分增加 identity.admin_sessions、password_setup_tokens、organizations、memberships 和 outbox，并扩展审计主体字段。其他业务表仍为后续阶段的逻辑设计。
+M1 已迁移模块 schema 及管理员引导存储。M2 已增加会话、密码凭据、组织、成员、outbox、项目、项目授权、服务账号、API Key 和 Key 操作幂等记录。目录、计费和发布等其余业务表仍为后续阶段的逻辑设计。
 
 ## 模块与数据所有权
 
@@ -70,6 +70,8 @@ erDiagram
 用户可处于 pending、active 或 disabled；pending 用户通过一次性凭据设置密码后激活。组织内部保留 resume_status 支持暂停后恢复原状态，成员和组织使用 version 做条件更新。以上字段不会赋予客户端设置平台角色或绕过账户准备的能力。
 
 API Key 不保存明文。创建请求的幂等记录不能为了重放响应而持久化明文 Key；如果首次响应丢失，客户端查看资源标识后显式轮换，见[管理 API](management-api.md)。
+
+API Key 记录 version、prefix、expires_at、revoked_at、rotated_at 和 rotated_from_id；轮换关系受同组织、项目和服务账号的复合外键与唯一约束保护。项目授权记录 active/revoked 状态，项目与服务账号状态也参与凭据校验。Key 操作幂等记录当前保存 actor_id、operation、key_digest、request_digest 和 resource_id，只引用结果资源，不保存响应明文，也不自动过期。
 
 “至少一个有效 owner”等跨行规则由受控事务与组织锁维护。项目授权、成员停用和 Key 撤销均记录审计。
 

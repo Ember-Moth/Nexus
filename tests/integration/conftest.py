@@ -1,10 +1,13 @@
 import json
 import os
 from pathlib import Path
+from uuid import uuid4
 
+import httpx
 import psycopg
 import pytest
 
+from nexus.api import create_app
 from nexus.config import MigrationSettings, RuntimeSettings
 
 
@@ -42,7 +45,29 @@ def admin(service_directory):
 @pytest.fixture(autouse=True)
 def reset_identity(admin):
     admin.execute(
-        "TRUNCATE identity.outbox, identity.memberships, identity.organizations, "
+        "TRUNCATE identity.idempotency_records, identity.api_keys, identity.service_accounts, "
+        "identity.project_grants, identity.projects, identity.outbox, "
+        "identity.memberships, identity.organizations, "
         "identity.admin_sessions, identity.password_setup_tokens, identity.audit_events, "
         "identity.platform_role_bindings, identity.users"
     )
+
+
+@pytest.fixture
+async def http(runtime_settings):
+    settings = runtime_settings.model_copy(update={"redis_namespace": "nexus:test:" + uuid4().hex})
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        await app.state.identity_service.bootstrap_admin(
+            "root-admin", "integration-password-with-entropy"
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/v1/auth/sessions",
+                json={"login": "root-admin", "password": "integration-password-with-entropy"},
+            )
+            assert response.status_code == 201, response.text
+            yield client, response.json()["access_token"], app, settings

@@ -96,3 +96,60 @@ class OutboxEvent(Base):
     payload: Mapped[dict] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ScopedResource:
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column()
+    version: Mapped[int] = mapped_column(default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Project(ScopedResource, Base):
+    __tablename__ = "projects"
+    __table_args__ = {"schema": "identity"}
+    name: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(20), default="active")
+
+
+class ProjectGrant(ScopedResource, Base):
+    __tablename__ = "project_grants"
+    __table_args__ = {"schema": "identity"}
+    project_id: Mapped[UUID] = mapped_column()
+    membership_id: Mapped[UUID] = mapped_column()
+    status: Mapped[str] = mapped_column(String(20), default="active")
+
+
+class ServiceAccount(ScopedResource, Base):
+    __tablename__ = "service_accounts"
+    __table_args__ = {"schema": "identity"}
+    project_id: Mapped[UUID] = mapped_column()
+    name: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(20), default="active")
+
+
+class ApiKey(ScopedResource, Base):
+    __tablename__ = "api_keys"
+    __table_args__ = {"schema": "identity"}
+    project_id: Mapped[UUID] = mapped_column()
+    service_account_id: Mapped[UUID] = mapped_column()
+    name: Mapped[str] = mapped_column(String(200))
+    digest: Mapped[str] = mapped_column(String(64))
+    prefix: Mapped[str] = mapped_column(String(16))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rotated_from_id: Mapped[UUID | None] = mapped_column()
+
+
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_records"
+    __table_args__ = {"schema": "identity"}
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column()
+    actor_id: Mapped[UUID] = mapped_column()
+    operation: Mapped[str] = mapped_column(String(40))
+    key_digest: Mapped[str] = mapped_column(String(64))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    resource_id: Mapped[UUID] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

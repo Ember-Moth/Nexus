@@ -48,7 +48,7 @@ def violations(source: str, module: str, is_package: bool = False) -> list[str]:
     owner = parts[2] if module.startswith("nexus.modules.") else None
     kind = parts[-1]
     http_entry = kind in {"api", "routes"}
-    persistence = kind in {"repository", "models"}
+    persistence = kind in {"repository", "models"} or kind.endswith("_repository")
     for target in imports(source, module, is_package):
         if target.startswith("nexus.bootstrap") and module not in ENTRY_POINTS:
             failures.append("business code depends on process assembly")

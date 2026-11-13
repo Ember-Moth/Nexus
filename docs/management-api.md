@@ -2,7 +2,7 @@
 
 管理 API 服务平台运营、财务和企业客户的管理操作，统一前缀为 `/api/v1`。本文给出资源与行为契约，不表示路由已经实现；完整 OpenAPI 将在实现阶段由实际模型生成并校验。
 
-已提供健康检查，以及 M2 第一部分的登录、一次性密码设置、组织和成员 API；实际已实现清单见[登录与企业成员管理](identity-api.md)。下面其余业务资源按阶段实现。
+已提供健康检查、登录和组织成员 API，以及项目、授权、服务账号与 Key 生命周期。实际清单见[登录与企业成员管理](identity-api.md)和[项目与应用凭据](project-credentials.md)。模型与财务等其余资源按阶段实现。
 
 支付通知是独立的机器入口 `/webhooks/payments/{channel_id}`，不使用管理会话；按具体渠道声明允许 GET 或 POST，并使用该渠道规定的验签方式。所有其他表中路径仍相对于管理 API 前缀。
 
@@ -37,9 +37,13 @@
 | 成员 | `GET/POST /organizations/{org}/members` | owner 或平台管理员管理，不得移除最后一个 owner |
 | 成员详情与变更 | `GET/PATCH/DELETE /organizations/{org}/members/{id}` | 路径限定租户；变更需 If-Match，DELETE 为停用 |
 | 项目 | `GET/POST /organizations/{org}/projects` | owner 创建，读取受项目权限限制 |
+| 项目详情与状态 | `GET/PATCH /organizations/{org}/projects/{id}` | owner 或平台管理员改名、停用、恢复或归档 |
 | 项目授权 | `GET/POST /organizations/{org}/project-grants` | owner 管理，不能扩大成员组织角色权限 |
+| 授权变更 | `GET/PATCH/DELETE /organizations/{org}/project-grants/{id}` | 有效 developer 的项目授权；撤销保留记录 |
 | 服务账号 | `GET/POST /organizations/{org}/service-accounts` | 受项目权限限制 |
+| 服务账号详情与状态 | `GET/PATCH /organizations/{org}/service-accounts/{id}` | 所属项目不可更改；可停用或恢复 |
 | 调用 Key | `GET/POST /organizations/{org}/api-keys` | 创建时返回一次明文，查询只返回标识和策略 |
+| Key 详情 | `GET /organizations/{org}/api-keys/{id}` | 返回状态、版本与时间，不返回明文或摘要 |
 | 撤销 Key | `POST /organizations/{org}/api-keys/{id}/revoke` | 不影响历史费用归属 |
 | 轮换 Key | `POST /organizations/{org}/api-keys/{id}/rotate` | 创建新 Key，明确旧 Key 的重叠有效期 |
 | 模型访问策略 | `GET/POST /organizations/{org}/access-policies` | 平台设置上限，企业在其范围内收紧限制 |
@@ -89,6 +93,8 @@
 充值订单创建、人工入账、过账、调整、发布、Key 创建及轮换使用 `Idempotency-Key`。幂等范围包含调用身份、组织和操作类型，记录规范化参数摘要与结果引用。同键同参数返回原结果；同键不同参数返回 409。
 
 Key 和一次性令牌的明文仅首次响应返回，幂等存储不保存这些秘密。重试可以返回已创建资源 ID 和 `secret_unavailable` 状态；首次响应丢失后必须显式轮换，不能用创建重试生成多个有效 Key。
+
+已实现的 Key 签发与轮换首次成功返回 201，重试返回 200、secret 为 null、secret_status 为 secret_unavailable。轮换要求 If-Match 与 Idempotency-Key，重试保留原版本和请求体。默认立即撤销旧 Key，可显式设置最多 3600 秒重叠期，且不延长旧 Key 原有到期时间。模型访问策略尚未接入，当前只提供凭据身份生命周期。
 
 财务业务来源的唯一约束不随 HTTP 幂等记录清理而消失。管理员改变幂等键也不能对同一外部收款参考号重复入账。
 

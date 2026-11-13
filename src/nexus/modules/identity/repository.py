@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.infrastructure.postgres import ModuleDatabase
 
+from .application_repository import ApplicationRepository
 from .errors import IdentityError
 from .events import ORGANIZATION_CREATED
 from .models import (
@@ -412,6 +413,7 @@ class IdentityUnitOfWork:
         self.administrators = AdministratorRepository(session)
         self.audit = AuditRepository(session)
         self.directory = DirectoryRepository(session)
+        self.applications = ApplicationRepository(session)
         return self
 
     async def __aexit__(

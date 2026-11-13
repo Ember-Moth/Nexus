@@ -5,7 +5,17 @@ from types import TracebackType
 from typing import Protocol, Self
 from uuid import UUID
 
-from .schemas import MemberView, OrganizationView, Page, UserView
+from .schemas import (
+    ApplicationIdentity,
+    GrantView,
+    KeyView,
+    MemberView,
+    OrganizationView,
+    Page,
+    ProjectView,
+    ServiceAccountView,
+    UserView,
+)
 
 type Cursor = tuple[datetime, UUID] | None
 
@@ -91,10 +101,95 @@ class Directory(Protocol):
     async def active_owner_count(self, organization_id: UUID) -> int: ...
 
 
+class Applications(Protocol):
+    async def has_grant(
+        self, organization_id: UUID, project_id: UUID, membership_id: UUID
+    ) -> bool: ...
+    async def projects(
+        self, organization_id: UUID, membership_id: UUID | None, limit: int, cursor: Cursor
+    ) -> Page[ProjectView]: ...
+    async def project(self, organization_id: UUID, project_id: UUID) -> ProjectView | None: ...
+    async def create_project(self, organization_id: UUID, name: str) -> ProjectView: ...
+    async def update_project(
+        self, organization_id: UUID, project_id: UUID, changes: dict
+    ) -> ProjectView: ...
+    async def grants(
+        self, organization_id: UUID, limit: int, cursor: Cursor
+    ) -> Page[GrantView]: ...
+    async def grant(self, organization_id: UUID, grant_id: UUID) -> GrantView | None: ...
+    async def create_grant(
+        self, organization_id: UUID, project_id: UUID, membership_id: UUID
+    ) -> GrantView: ...
+    async def update_grant(
+        self, organization_id: UUID, grant_id: UUID, status: str
+    ) -> GrantView: ...
+    async def service_account(
+        self, organization_id: UUID, service_account_id: UUID
+    ) -> ServiceAccountView | None: ...
+    async def service_accounts(
+        self,
+        organization_id: UUID,
+        membership_id: UUID | None,
+        project_id: UUID | None,
+        limit: int,
+        cursor: Cursor,
+    ) -> Page[ServiceAccountView]: ...
+    async def create_service_account(
+        self, organization_id: UUID, project_id: UUID, name: str
+    ) -> ServiceAccountView: ...
+    async def update_service_account(
+        self, organization_id: UUID, service_account_id: UUID, changes: dict
+    ) -> ServiceAccountView: ...
+    async def key(self, organization_id: UUID, key_id: UUID) -> KeyView | None: ...
+    async def keys(
+        self,
+        organization_id: UUID,
+        membership_id: UUID | None,
+        project_id: UUID | None,
+        service_account_id: UUID | None,
+        limit: int,
+        cursor: Cursor,
+    ) -> Page[KeyView]: ...
+    async def create_key(
+        self,
+        organization_id: UUID,
+        project_id: UUID,
+        service_account_id: UUID,
+        name: str,
+        digest: str,
+        prefix: str,
+        expires_at: datetime | None,
+        rotated_from_id: UUID | None = None,
+    ) -> KeyView: ...
+    async def revoke_key(self, organization_id: UUID, key_id: UUID, at: datetime) -> KeyView: ...
+    async def retire_key(
+        self,
+        organization_id: UUID,
+        key_id: UUID,
+        at: datetime,
+        expires_at: datetime | None,
+        immediate: bool,
+    ) -> None: ...
+    async def replay(
+        self, organization_id: UUID, actor_id: UUID, operation: str, key_digest: str
+    ) -> tuple[str, UUID] | None: ...
+    async def remember(
+        self,
+        organization_id: UUID,
+        actor_id: UUID,
+        operation: str,
+        key_digest: str,
+        request_digest: str,
+        resource_id: UUID,
+    ) -> None: ...
+    async def authenticate(self, digest: str) -> ApplicationIdentity | None: ...
+
+
 class IdentityTransaction(Protocol):
     administrators: Administrators
     audit: Audit
     directory: Directory
+    applications: Applications
 
     async def __aenter__(self) -> Self: ...
 

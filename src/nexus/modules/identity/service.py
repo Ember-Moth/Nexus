@@ -1,14 +1,12 @@
 import asyncio
-import hashlib
-import re
 import secrets
-from contextlib import asynccontextmanager
 from datetime import timedelta
 from uuid import UUID, uuid4
 
 from nexus.shared.errors import BootstrapRejected
 
-from .errors import IdentityError, forbidden, missing, unauthorized
+from .authorization import AccessControl
+from .errors import IdentityError, missing, unauthorized
 from .ports import AuthLimits, Cursor, Passwords, TransactionFactory
 from .schemas import (
     BootstrapResult,
@@ -20,12 +18,7 @@ from .schemas import (
     SessionCreated,
     SetupIssued,
 )
-
-
-def digest_token(token: str, prefix: str) -> str:
-    if not re.fullmatch(re.escape(prefix) + r"[A-Za-z0-9_-]{43}", token):
-        raise unauthorized()
-    return hashlib.sha256(token.encode()).hexdigest()
+from .tokens import digest_token
 
 
 def normalize_login(login: str) -> str:
@@ -48,6 +41,7 @@ class IdentityService:
         setup_ttl: int,
     ) -> None:
         self._transactions = transactions
+        self._access = AccessControl(transactions)
         self._passwords = passwords
         self._auth_limits = auth_limits
         self._session_ttl = session_ttl
@@ -69,70 +63,6 @@ class IdentityService:
             ) from None
         if not allowed:
             raise IdentityError("rate_limited", "Too many authentication attempts", 429)
-
-    async def _actor(self, tx, token_digest: str):
-        actor = await tx.directory.actor(token_digest)
-        if actor is None:
-            raise unauthorized()
-        return actor
-
-    @asynccontextmanager
-    async def _authenticated(self, token: str):
-        token_digest = digest_token(token, "nxs_")
-        actor = None
-        try:
-            async with self._transactions() as tx:
-                actor = await self._actor(tx, token_digest)
-                yield tx, actor
-        except IdentityError as error:
-            if actor is not None and error.status in {403, 404}:
-                # Persist denial evidence after rolling back the rejected business transaction.
-                async with self._transactions() as audit_tx:
-                    await audit_tx.audit.record(
-                        actor.user.id,
-                        "access.denied",
-                        error.resource_id or actor.user.id,
-                        details={"reason": error.reason},
-                    )
-            raise
-
-    @staticmethod
-    def _platform_admin(actor):
-        if "platform_admin" not in actor.platform_roles:
-            raise forbidden()
-
-    async def _organization(
-        self, tx, actor, organization_id: UUID, *, manage=False, lock=False, finance_read=False
-    ):
-        is_admin = "platform_admin" in actor.platform_roles
-        global_reader = finance_read and "platform_finance" in actor.platform_roles
-        if not is_admin and not global_reader:
-            member = await tx.directory.membership_for_user(organization_id, actor.user.id)
-            if member is None or member.status != "active":
-                raise IdentityError(
-                    "not_found",
-                    "Resource not found",
-                    404,
-                    resource_id=organization_id,
-                    reason="organization_outside_access_scope",
-                )
-        organization = await tx.directory.organization(organization_id, lock=lock)
-        if organization is None:
-            raise missing(organization_id)
-        if not is_admin and not global_reader:
-            member = await tx.directory.membership_for_user(organization_id, actor.user.id)
-            if member is None or member.status != "active":
-                raise missing(organization_id)
-            if manage and (
-                member.role != "org_owner" or organization.status not in {"active", "provisioning"}
-            ):
-                raise forbidden(organization_id)
-        return organization
-
-    @staticmethod
-    def _version(actual: int, expected: int):
-        if actual != expected:
-            raise IdentityError("version_conflict", "Resource version has changed", 412)
 
     async def login(self, login: str, password: str, peer: str) -> SessionCreated:
         login = normalize_login(login)
@@ -166,7 +96,7 @@ class IdentityService:
                 await tx.audit.record(user_id, "session.revoked", user_id)
 
     async def me(self, token: str) -> CurrentUser:
-        async with self._authenticated(token) as (tx, actor):
+        async with self._access.authenticated(token) as (tx, actor):
             return CurrentUser(
                 user=actor.user,
                 platform_roles=sorted(actor.platform_roles),
@@ -174,8 +104,8 @@ class IdentityService:
             )
 
     async def list_users(self, token: str, limit: int, cursor: Cursor):
-        async with self._authenticated(token) as (tx, actor):
-            self._platform_admin(actor)
+        async with self._access.authenticated(token) as (tx, actor):
+            self._access.platform_admin(actor)
             return await tx.directory.users(limit, cursor)
 
     async def _issue_setup(self, tx, actor, user):
@@ -190,15 +120,15 @@ class IdentityService:
         return SetupIssued(user=user, setup_token=token, expires_at=expires)
 
     async def create_user(self, token: str, login: str):
-        async with self._authenticated(token) as (tx, actor):
-            self._platform_admin(actor)
+        async with self._access.authenticated(token) as (tx, actor):
+            self._access.platform_admin(actor)
             user = await tx.directory.create_user(normalize_login(login))
             await tx.audit.record(actor.user.id, "user.created", user.id)
             return await self._issue_setup(tx, actor, user)
 
     async def issue_password_setup(self, token: str, user_id: UUID):
-        async with self._authenticated(token) as (tx, actor):
-            self._platform_admin(actor)
+        async with self._access.authenticated(token) as (tx, actor):
+            self._access.platform_admin(actor)
             user = await tx.directory.user(user_id, lock=True)
             if user is None:
                 raise missing(user_id)
@@ -223,19 +153,19 @@ class IdentityService:
             await tx.audit.record(user.id, "user.password_set", user.id)
 
     async def list_organizations(self, token: str, limit: int, cursor: Cursor):
-        async with self._authenticated(token) as (tx, actor):
+        async with self._access.authenticated(token) as (tx, actor):
             global_reader = bool(actor.platform_roles & {"platform_admin", "platform_finance"})
             return await tx.directory.organizations(
                 None if global_reader else actor.user.id, limit, cursor
             )
 
     async def get_organization(self, token: str, organization_id: UUID):
-        async with self._authenticated(token) as (tx, actor):
-            return await self._organization(tx, actor, organization_id, finance_read=True)
+        async with self._access.authenticated(token) as (tx, actor):
+            return await self._access.organization(tx, actor, organization_id, finance_read=True)
 
     async def create_organization(self, token: str, request: OrganizationCreate):
-        async with self._authenticated(token) as (tx, actor):
-            self._platform_admin(actor)
+        async with self._access.authenticated(token) as (tx, actor):
+            self._access.platform_admin(actor)
             owner_id = request.owner_user_id or actor.user.id
             owner = await tx.directory.user(owner_id, lock=True)
             if owner is None:
@@ -255,17 +185,17 @@ class IdentityService:
     async def update_organization(
         self, token: str, organization_id: UUID, request: OrganizationPatch, version: int
     ):
-        async with self._authenticated(token) as (tx, actor):
-            organization = await self._organization(
+        async with self._access.authenticated(token) as (tx, actor):
+            organization = await self._access.organization(
                 tx, actor, organization_id, manage=True, lock=True
             )
-            self._version(organization.version, version)
+            self._access.version(organization.version, version)
             if organization.status == "archived":
                 raise IdentityError(
                     "organization_archived", "Archived organizations cannot be modified", 409
                 )
             if request.status is not None:
-                self._platform_admin(actor)
+                self._access.platform_admin(actor)
             result = await tx.directory.update_organization(
                 organization_id, request.name, request.status
             )
@@ -279,21 +209,21 @@ class IdentityService:
             return result
 
     async def list_members(self, token: str, organization_id: UUID, limit: int, cursor: Cursor):
-        async with self._authenticated(token) as (tx, actor):
-            await self._organization(tx, actor, organization_id, manage=True)
+        async with self._access.authenticated(token) as (tx, actor):
+            await self._access.organization(tx, actor, organization_id, manage=True)
             return await tx.directory.members(organization_id, limit, cursor)
 
     async def get_member(self, token: str, organization_id: UUID, member_id: UUID):
-        async with self._authenticated(token) as (tx, actor):
-            await self._organization(tx, actor, organization_id, manage=True)
+        async with self._access.authenticated(token) as (tx, actor):
+            await self._access.organization(tx, actor, organization_id, manage=True)
             member = await tx.directory.membership(organization_id, member_id)
             if member is None:
                 raise missing(member_id)
             return member
 
     async def add_member(self, token: str, organization_id: UUID, request: MemberCreate):
-        async with self._authenticated(token) as (tx, actor):
-            organization = await self._organization(
+        async with self._access.authenticated(token) as (tx, actor):
+            organization = await self._access.organization(
                 tx, actor, organization_id, manage=True, lock=True
             )
             if organization.status == "archived":
@@ -318,8 +248,8 @@ class IdentityService:
     async def update_member(
         self, token: str, organization_id: UUID, member_id: UUID, request: MemberPatch, version: int
     ):
-        async with self._authenticated(token) as (tx, actor):
-            organization = await self._organization(
+        async with self._access.authenticated(token) as (tx, actor):
+            organization = await self._access.organization(
                 tx, actor, organization_id, manage=True, lock=True
             )
             if organization.status == "archived":
@@ -329,7 +259,7 @@ class IdentityService:
             member = await tx.directory.membership(organization_id, member_id)
             if member is None:
                 raise missing(member_id)
-            self._version(member.version, version)
+            self._access.version(member.version, version)
             role, status = request.role or member.role, request.status or member.status
             if role == "org_owner" and status == "active":
                 user = await tx.directory.user(member.user_id, lock=True)

@@ -1,9 +1,17 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,3 +133,135 @@ class CurrentUser(Schema):
     user: UserView
     platform_roles: list[str]
     memberships: list[MemberView]
+
+
+class NamedResource(Schema):
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def nonblank(cls, value):
+        if not value.strip():
+            raise ValueError("name cannot be blank")
+        return value.strip()
+
+
+class ProjectCreate(NamedResource):
+    pass
+
+
+class ProjectPatch(Schema):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    status: Literal["active", "disabled", "archived"] | None = None
+
+    @model_validator(mode="after")
+    def nonempty(self):
+        if not self.model_fields_set or any(
+            getattr(self, key) is None for key in self.model_fields_set
+        ):
+            raise ValueError("supply at least one non-null change")
+        if self.name is not None and not self.name.strip():
+            raise ValueError("name cannot be blank")
+        return self
+
+
+class ProjectView(Schema):
+    id: UUID
+    organization_id: UUID
+    name: str
+    status: str
+    version: int
+    created_at: datetime
+
+
+class GrantCreate(Schema):
+    project_id: UUID
+    membership_id: UUID
+
+
+class GrantPatch(Schema):
+    status: Literal["active", "revoked"]
+
+
+class GrantView(Schema):
+    id: UUID
+    organization_id: UUID
+    project_id: UUID
+    membership_id: UUID
+    status: str
+    version: int
+    created_at: datetime
+
+
+class ServiceAccountCreate(NamedResource):
+    project_id: UUID
+
+
+class ServiceAccountPatch(ProjectPatch):
+    status: Literal["active", "disabled"] | None = None
+
+
+class ServiceAccountView(ProjectView):
+    project_id: UUID
+
+
+class KeyCreate(NamedResource):
+    service_account_id: UUID
+    expires_at: AwareDatetime | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def utc_expiry(cls, value):
+        try:
+            return value.astimezone(UTC) if value else None
+        except OverflowError:
+            raise ValueError("expiry is outside the supported range") from None
+
+
+class KeyRotate(Schema):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    expires_at: AwareDatetime | None = None
+    grace_seconds: int = Field(default=0, ge=0, le=3600, strict=True)
+
+    @field_validator("name")
+    @classmethod
+    def nonblank(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("name cannot be blank")
+        return value.strip() if value else None
+
+    @field_validator("expires_at")
+    @classmethod
+    def utc_expiry(cls, value):
+        try:
+            return value.astimezone(UTC) if value else None
+        except OverflowError:
+            raise ValueError("expiry is outside the supported range") from None
+
+
+class KeyView(Schema):
+    id: UUID
+    organization_id: UUID
+    project_id: UUID
+    service_account_id: UUID
+    name: str
+    prefix: str
+    expires_at: datetime | None
+    revoked_at: datetime | None
+    rotated_at: datetime | None
+    rotated_from_id: UUID | None
+    version: int
+    created_at: datetime
+
+
+class KeyIssued(Schema):
+    key: KeyView
+    secret: str | None = Field(default=None, repr=False)
+    secret_status: Literal["available", "secret_unavailable"]
+
+
+class ApplicationIdentity(Schema):
+    organization_id: UUID
+    project_id: UUID
+    service_account_id: UUID
+    key_id: UUID

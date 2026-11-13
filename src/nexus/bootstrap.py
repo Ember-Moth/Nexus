@@ -39,6 +39,7 @@ class Application:
             session_ttl=settings.session_ttl_seconds,
             setup_ttl=settings.password_setup_ttl_seconds,
         )
+        self.projects = identity.create_project_service(self._storage[ModuleName.IDENTITY.value])
 
     async def readiness(self) -> dict[str, str]:
         checks = {

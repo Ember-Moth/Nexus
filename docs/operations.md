@@ -93,6 +93,8 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 - `outcome`：前四个值即 `request.closed` 上报的交付结果 `succeeded`、`upstream_failed`、`client_cancelled`、`unknown`；`rejected` 表示在发起上游尝试之前被拒绝，原因包括 Key、请求参数、限额、预算、节点容量和依赖不可用。尝试开始前客户端离开计为 `client_cancelled`，WebSocket 上游握手失败计为 `upstream_failed`
 - `dependency` 与 `operation`：`database` 的操作名是 `gateway_v1` 函数名；`redis` 为 `acquire`、`renew`、`finish`、`heartbeat`、`subscribe`
 - `kind`：`rejected` 表示网关契约返回了业务错误码（SQLSTATE P0001，例如余额不足），`unavailable` 表示连接、超时或协议失败
+- 故障转移的 `reason`：被证明未执行的原因，`connect`（DNS、TCP、TLS 或连接超时）、`signing`（Bedrock 签名失败），或上游拒绝的状态码 `status_429`、`status_502`、`status_503`、`status_529`
+- 故障转移的 `result`：之后的处理。`switched` 换到另一部署并提交了新尝试；`no_candidate` 快照内没有符合冻结上界的其他候选；`credential_unavailable` 候选的凭据包无法打开；`start_failed` 续租或 `start_attempt` 失败，新尝试未能提交；`attempt_limit` 已达 `NEXUS_RELAY_MAX_ATTEMPTS`；`budget_exhausted` 已超过 `NEXUS_RELAY_FAILOVER_BUDGET_MS`；`client_gone` 客户端已离开。除 `switched` 外，客户端都收到这次失败的结果
 
 | 指标 | 类型 | 标签 | 含义 |
 | --- | --- | --- | --- |
@@ -106,12 +108,14 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 | `nexus_relay_snapshot_revision` | gauge | | 节点已安装的配置修订，首次加载前为 0 |
 | `nexus_relay_control_plane_healthy` | gauge | | 最近一次快照刷新和心跳成功时为 1 |
 | `nexus_relay_draining` | gauge | | 开始排空后为 1 |
-| `nexus_relay_completion_events_pending` | gauge | | 完成事件尚未被网关确认的请求 |
+| `nexus_relay_failover_decisions_total` | counter | reason、result | HTTP 和 SSE 尝试被证明未执行的次数，按原因和后续处理划分；`result="switched"` 之和即重试次数 |
+| `nexus_relay_request_attempts` | histogram | endpoint、transport | 每个请求开始的上游尝试数（桶 1 至 4），在开始过尝试的请求关闭时记录；WebSocket 轮次恒为 1 |
+| `nexus_relay_completion_events_pending` | gauge | | 尚未被网关确认的完成上报：失败尝试的 `attempt.finished`，或请求最后的尝试结束与关闭事件 |
 | `nexus_relay_completion_event_replays_total` | counter | | 提交失败或结果未知后重放完成事件的次数 |
 | `nexus_relay_completion_events_abandoned_total` | counter | reason | 因冲突（`conflict`）或 60 秒重放期限（`deadline`）放弃的完成事件，需要核对 |
 | `nexus_relay_capacity_in_use`、`nexus_relay_capacity_limit` | gauge | | 节点并发信号量的占用数与上限（`NEXUS_RELAY_CONCURRENCY`），占用包括在途请求、轮次和待上报任务 |
 
-建议告警：`nexus_relay_control_plane_healthy == 0` 持续一分钟；`completion_events_abandoned_total` 增加；`completion_events_pending` 持续上升；`capacity_in_use / capacity_limit` 接近 1；`requests_total` 中 `unknown` 或 `upstream_failed` 的比例上升。
+建议告警：`nexus_relay_control_plane_healthy == 0` 持续一分钟；`completion_events_abandoned_total` 增加；`completion_events_pending` 持续上升；`capacity_in_use / capacity_limit` 接近 1；`requests_total` 中 `unknown` 或 `upstream_failed` 的比例上升；`failover_decisions_total` 中 `switched` 的速率突增，说明某个部署持续拒绝请求；`result` 为 `no_candidate`、`credential_unavailable` 或 `start_failed` 的计数增加。
 
 ### 日志
 
@@ -120,7 +124,8 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 | 字段 | 内容 |
 | --- | --- |
 | `request_id`、`attempt_id` | 与 billing 中请求和尝试一致的 UUID |
-| `deployment_id`、`cluster_id`、`node_id`、`session_id` | 部署、集群、节点 UUID 和 WebSocket 会话的随机 UUID |
+| `attempt`、`attempts` | 当前尝试的序号（与 `start_attempt` 的序号一致）、请求开始的尝试总数 |
+| `deployment_id`、`next_deployment_id`、`cluster_id`、`node_id`、`session_id` | 部署、故障转移选中的下一部署、集群、节点 UUID 和 WebSocket 会话的随机 UUID |
 | `endpoint`、`transport`、`outcome`、`delivery`、`event_type` | 与指标相同的枚举、尝试结果、交付结果、完成事件类型 |
 | `reason`、`error` | 固定原因码、网关契约错误码或错误类型的固定描述，不含驱动或上游返回的正文 |
 | `revision`、`elapsed_ms`、`replays`、`turns`、`in_flight`、`reused`、`reusable` | 修订号、耗时、计数和布尔值 |
@@ -133,7 +138,9 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 | `relay starting`、`relay listening`、`metrics listening` | info | 启动，含 `cluster_id`、`version`、`listen` |
 | `configuration snapshot applied` / `configuration snapshot rejected` | info / warn | 确认新快照，或以 `unsupported_capability`、`invalid_resources`、`credential_unavailable` 拒绝；被拒的快照在每次刷新重试时再记一次 |
 | `control-plane refresh failed` / `control-plane refresh recovered` | warn / info | 每次刷新失败，`reason=heartbeat` 表示 Redis 心跳失败；恢复后的首次成功 |
-| `request finished` | info | 每个开始了上游尝试的请求或轮次结束，含交付结果和耗时 |
+| `request finished` | info | 每个开始了上游尝试的请求或轮次结束，含最后一次尝试的部署、交付结果、尝试数和耗时 |
+| `upstream attempt declined` | warn | 故障转移决策点：一次尝试被证明未执行。含 `request_id`、`attempt`、原部署 `deployment_id`、`reason` 和 `outcome`（取值同指标 `result`）；选出候选时另含 `next_deployment_id` |
+| `attempt set unresolved; request close withheld for review` | warn | 新尝试的提交结果和是否存在都无法确认，请求不提交关闭事件，留待预留到期后核对 |
 | `upstream request failed`、`upstream response rejected`、`upstream stream interrupted`、`upstream request interrupted`、`upstream websocket handshake failed`、`upstream websocket turn interrupted` | warn | 上游失败，含 `request_id`、`deployment_id` 和原因 |
 | `completion event replay scheduled` / `completion event accepted after replay` | warn / info | 完成事件第一次提交失败开始重放，以及重放后被接受 |
 | `completion event conflicts with recorded facts`、`completion event abandoned after replay deadline` | error | 放弃上报，请求需进入核对 |

@@ -8,7 +8,9 @@ use crate::{
         database::Gateway,
         snapshot::{Index, Rejection, Selection},
     },
-    metrics::{Outcome, RequestTally, Transport, UpstreamTimer},
+    metrics::{
+        self, FailoverReason, FailoverResult, Outcome, RequestTally, Transport, UpstreamTimer,
+    },
     protocol::{
         Endpoint,
         convert::{self, Exchange},
@@ -120,6 +122,27 @@ impl Trace {
             "upstream response rejected"
         );
     }
+    /// Count and log what followed an attempt that provably did not execute.
+    fn failover(
+        self,
+        attempt: usize,
+        next: Option<Uuid>,
+        reason: FailoverReason,
+        result: FailoverResult,
+    ) {
+        metrics::failover(reason, result);
+        warn!(
+            request_id = %self.request,
+            attempt = attempt as u64,
+            deployment_id = %self.deployment,
+            next_deployment_id = next.map(tracing::field::display),
+            endpoint = self.endpoint.as_str(),
+            transport = self.transport.as_str(),
+            reason = reason.as_str(),
+            outcome = result.as_str(),
+            "upstream attempt declined"
+        );
+    }
     fn interrupted(self, client_gone: bool) {
         if client_gone {
             info!(
@@ -157,7 +180,7 @@ enum Opened {
     Answer(reqwest::Response),
     /// The upstream provably did not execute the generation. A declined status keeps its
     /// buffered reply as cost evidence and as the client's error if no attempt follows.
-    Declined(Option<Reply>),
+    Declined(Option<Reply>, FailoverReason),
     /// No usable answer; the generation may have executed or the client has left.
     Lost,
 }
@@ -210,7 +233,13 @@ async fn open(
     let failover = node.max_attempts > 1;
     let response = match opened {
         Ok(Some(Ok(response))) => response,
-        Ok(Some(Err(error))) if failover && error.unsent() => return Opened::Declined(None),
+        Ok(Some(Err(error))) if failover && error.unsent() => {
+            let reason = match error {
+                UpstreamError::Signing => FailoverReason::Signing,
+                _ => FailoverReason::Connect,
+            };
+            return Opened::Declined(None, reason);
+        }
         opened => {
             trace.not_answered(&opened);
             return Opened::Lost;
@@ -220,6 +249,7 @@ async fn open(
     if !failover || !crate::upstream::declined(response.status()) {
         return Opened::Answer(response);
     }
+    let reason = FailoverReason::declined(response.status().as_u16());
     let rid = run.reservation.id.to_string();
     let limit = node.upstream.response_limit();
     let reply = run
@@ -233,13 +263,16 @@ async fn open(
             }
         }))
         .await;
-    Opened::Declined(match reply {
-        Ok(Ok(Ok(mut reply))) => {
-            reply.outcome = "failed";
-            Some(reply)
-        }
-        _ => None,
-    })
+    Opened::Declined(
+        match reply {
+            Ok(Ok(Ok(mut reply))) => {
+                reply.outcome = "failed";
+                Some(reply)
+            }
+            _ => None,
+        },
+        reason,
+    )
 }
 
 pub async fn run(
@@ -326,15 +359,28 @@ pub async fn run(
                 run.ended(None, false).await;
                 return;
             }
-            Opened::Declined(reply) => {
+            Opened::Declined(reply, reason) => {
                 failed.push(dep.id);
+                let attempt = run.attempts();
                 // Nothing has been written to the client. Another candidate from the same
                 // snapshot, within the frozen bounds, gets a newly committed attempt.
-                let next = (run.attempts() < node.max_attempts
-                    && Instant::now() < deadline
-                    && !sender.is_closed())
-                .then(|| index.fallback(&secret, &request, &failed, frozen))
-                .flatten();
+                // The gate checks the same conditions in the same order and names the one
+                // that stopped failover.
+                let gate = if run.attempts() >= node.max_attempts {
+                    Some(FailoverResult::AttemptLimit)
+                } else if Instant::now() >= deadline {
+                    Some(FailoverResult::BudgetExhausted)
+                } else if sender.is_closed() {
+                    Some(FailoverResult::ClientGone)
+                } else {
+                    None
+                };
+                let next = gate
+                    .is_none()
+                    .then(|| index.fallback(&secret, &request, &failed, frozen))
+                    .flatten();
+                let candidate = next.as_ref().map(|n| n.deployment.id);
+                let mut result = gate.unwrap_or(FailoverResult::NoCandidate);
                 if let Some(next) = next
                     && let Ok(key) = lifecycle::credential(&node, &index, next.deployment).await
                 {
@@ -353,14 +399,21 @@ pub async fn run(
                     let response_id = reply.as_ref().and_then(|r| r.response_id.as_deref());
                     match run.fail_over(target, evidence, response_id).await {
                         Ok(following) => {
+                            trace.failover(attempt, candidate, reason, FailoverResult::Switched);
                             run = following;
                             selected = next;
                             credential = key;
                             continue;
                         }
-                        Err(current) => run = current,
+                        Err(current) => {
+                            result = FailoverResult::StartFailed;
+                            run = current
+                        }
                     }
+                } else if candidate.is_some() {
+                    result = FailoverResult::CredentialUnavailable;
                 }
+                trace.failover(attempt, candidate, reason, result);
                 // The last declined attempt is the client's answer; nothing was executed.
                 match reply {
                     Some(reply) => deliver(run, sender, reply, exchange, limit, trace).await,

@@ -74,6 +74,43 @@ impl Outcome {
     }
 }
 label!(
+    /// Why an HTTP or SSE attempt provably did not execute: the request never left the node
+    /// (`connect`, `signing`) or the upstream declined it with a status before executing it.
+    FailoverReason {
+        Connect => "connect",
+        Signing => "signing",
+        Status429 => "status_429",
+        Status502 => "status_502",
+        Status503 => "status_503",
+        Status529 => "status_529",
+        OtherStatus => "status_other",
+    }
+);
+impl FailoverReason {
+    pub fn declined(status: u16) -> Self {
+        match status {
+            429 => Self::Status429,
+            502 => Self::Status502,
+            503 => Self::Status503,
+            529 => Self::Status529,
+            _ => Self::OtherStatus,
+        }
+    }
+}
+label!(
+    /// What followed an attempt that provably did not execute. Only `Switched` sends
+    /// another attempt; the others answer the client with the last declined result.
+    FailoverResult {
+        Switched => "switched",
+        NoCandidate => "no_candidate",
+        CredentialUnavailable => "credential_unavailable",
+        StartFailed => "start_failed",
+        AttemptLimit => "attempt_limit",
+        BudgetExhausted => "budget_exhausted",
+        ClientGone => "client_gone",
+    }
+);
+label!(
     /// A control-plane dependency of the node.
     Dependency { Database => "database", Redis => "redis" }
 );
@@ -127,10 +164,21 @@ struct AbandonLabels {
     reason: Abandoned,
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct FailoverLabels {
+    reason: FailoverReason,
+    result: FailoverResult,
+}
+
 type Histograms = Family<ExchangeLabels, Histogram, fn() -> Histogram>;
 
 fn first_byte_histogram() -> Histogram {
     Histogram::new([0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0])
+}
+
+fn attempts_histogram() -> Histogram {
+    // NEXUS_RELAY_MAX_ATTEMPTS is at most 4.
+    Histogram::new([1.0, 2.0, 3.0, 4.0])
 }
 
 fn duration_histogram() -> Histogram {
@@ -167,6 +215,8 @@ pub struct Metrics {
     completions_abandoned: Family<AbandonLabels, Counter>,
     capacity_in_use: Gauge,
     capacity_limit: Gauge,
+    failovers: Family<FailoverLabels, Counter>,
+    attempts: Histograms,
 }
 
 impl Default for Metrics {
@@ -194,6 +244,8 @@ impl Metrics {
             completions_abandoned: Family::default(),
             capacity_in_use: Gauge::default(),
             capacity_limit: Gauge::default(),
+            failovers: Family::default(),
+            attempts: Family::new_with_constructor(attempts_histogram),
             registry: Registry::default(),
         };
         // Create every bounded series up front so rates start from zero.
@@ -212,6 +264,7 @@ impl Metrics {
             };
             drop(metrics.first_byte.get_or_create(&labels));
             drop(metrics.duration.get_or_create(&labels));
+            drop(metrics.attempts.get_or_create(&labels));
         }
         for &reason in Abandoned::ALL {
             drop(
@@ -286,6 +339,16 @@ impl Metrics {
             metrics.completions_abandoned.clone(),
         );
         registry.register(
+            "failover_decisions",
+            "HTTP and SSE attempts that provably did not execute, by cause and by what followed; result=switched counts retries on another deployment",
+            metrics.failovers.clone(),
+        );
+        registry.register(
+            "request_attempts",
+            "Upstream attempts per request, observed when a request that started at least one closes",
+            metrics.attempts.clone(),
+        );
+        registry.register(
             "capacity_in_use",
             "Node concurrency permits held by requests, turns and pending reports",
             metrics.capacity_in_use.clone(),
@@ -344,6 +407,13 @@ pub fn control_error(dependency: Dependency, operation: &'static str, kind: Erro
         kind,
     };
     global().control_errors.get_or_create(&labels).inc();
+}
+
+pub fn failover(reason: FailoverReason, result: FailoverResult) {
+    global()
+        .failovers
+        .get_or_create(&FailoverLabels { reason, result })
+        .inc();
 }
 
 pub fn completion_replay() {
@@ -425,6 +495,19 @@ impl RequestTally {
     }
     pub fn transport(&self) -> Option<&'static str> {
         self.labels.map(|(_, transport)| transport.as_str())
+    }
+    /// Observe how many attempts the request started, once, when it closes.
+    pub fn observe_attempts(&self, attempts: usize) {
+        if let Some((endpoint, transport)) = self.labels {
+            let labels = ExchangeLabels {
+                endpoint,
+                transport,
+            };
+            global()
+                .attempts
+                .get_or_create(&labels)
+                .observe(attempts as f64);
+        }
     }
     /// Record the outcome. Only the first call counts.
     pub fn record(&self, outcome: Outcome) {
@@ -575,6 +658,16 @@ mod tests {
         };
         metrics.control_errors.get_or_create(&labels).inc();
         metrics.completion_replays.inc();
+        let failover = FailoverLabels {
+            reason: FailoverReason::declined(503),
+            result: FailoverResult::Switched,
+        };
+        metrics.failovers.get_or_create(&failover).inc();
+        let labels = ExchangeLabels {
+            endpoint: Endpoint::AnthropicMessages,
+            transport: Transport::Http,
+        };
+        metrics.attempts.get_or_create(&labels).observe(2.0);
         let text = metrics.render(&sample());
         for expected in [
             "# TYPE nexus_relay_requests_total counter",
@@ -596,6 +689,11 @@ mod tests {
             "nexus_relay_completion_events_pending 0",
             "nexus_relay_completion_event_replays_total 1",
             r#"nexus_relay_completion_events_abandoned_total{reason="deadline"} 0"#,
+            r#"nexus_relay_failover_decisions_total{reason="status_503",result="switched"} 1"#,
+            "# TYPE nexus_relay_request_attempts histogram",
+            r#"nexus_relay_request_attempts_bucket{endpoint="anthropic_messages",transport="http",le="1"} 0"#,
+            r#"nexus_relay_request_attempts_bucket{endpoint="anthropic_messages",transport="http",le="2"} 1"#,
+            r#"nexus_relay_request_attempts_sum{endpoint="anthropic_messages",transport="http"} 2.0"#,
         ] {
             assert!(text.contains(expected), "missing {expected} in\n{text}");
         }
@@ -604,9 +702,9 @@ mod tests {
         // Recording more traffic adds no series: labels come from closed sets only.
         let series = |t: &str| t.lines().filter(|l| !l.starts_with('#')).count();
         assert_eq!(
-            series(&before) + 1,
+            series(&before) + 2,
             series(&text),
-            "only the new control error"
+            "only the new control error and failover decision"
         );
         let allowed: BTreeSet<String> = Outcome::ALL
             .iter()
@@ -615,6 +713,8 @@ mod tests {
             .chain(Dependency::ALL.iter().map(|d| d.as_str()))
             .chain(ErrorKind::ALL.iter().map(|k| k.as_str()))
             .chain(Abandoned::ALL.iter().map(|a| a.as_str()))
+            .chain(FailoverReason::ALL.iter().map(|r| r.as_str()))
+            .chain(FailoverResult::ALL.iter().map(|r| r.as_str()))
             .chain(["anthropic_messages", "openai_responses", "reserve"])
             .map(str::to_owned)
             .collect();

@@ -67,15 +67,18 @@ impl Attempt {
         response_id: Option<&str>,
         usage: UsageEvidence,
     ) {
+        let attempts = self.others.len() + 1;
         self.tally.record(Outcome::from_delivery(delivery));
+        self.tally.observe_attempts(attempts);
         info!(
             request_id = %self.request,
             attempt_id = %self.attempt,
-            deployment_id = self.tally.deployment.map(display),
+            deployment_id = self.tally.deployment.map(tracing::field::display),
             endpoint = self.tally.endpoint(),
             transport = self.tally.transport(),
             outcome,
             delivery,
+            attempts = attempts as u64,
             elapsed_ms = self.started.elapsed().as_millis() as u64,
             "request finished"
         );

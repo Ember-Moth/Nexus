@@ -13,7 +13,14 @@ from test_billing import headers, make_budget, publish_price
 from test_catalog import make_deployment, make_upstream
 from test_identity_api import auth
 from test_plane import provision_plane
-from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F401
+from test_relay import (  # noqa: F401
+    relay_binary,
+    relay_logs,
+    relay_metrics,
+    running_relay,
+    tls,
+    wait_events,
+)
 from test_relay_streams import events
 
 pytestmark = pytest.mark.integration
@@ -430,6 +437,46 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             assert ledger.debits(rid) == [(Decimal(-5),)]
             assert len(first_upstream.received) == before
             assert second_upstream.count("refused-stream") == 1
+
+            # busy and fail switched after a 503, refused and refused-stream after a refused
+            # connection; fail's backup then declined with 529 at the attempt limit.
+            samples = await relay_metrics(client)
+            decisions = {
+                name: value
+                for name, value in samples.items()
+                if name.startswith("nexus_relay_failover_decisions_total")
+            }
+            label = 'nexus_relay_failover_decisions_total{{reason="{}",result="{}"}}'
+            assert decisions == {
+                label.format("status_503", "switched"): 2,
+                label.format("connect", "switched"): 2,
+                label.format("status_529", "attempt_limit"): 1,
+            }
+            # HTTP: hang 1, busy 2, fail 2, refused 2. SSE: stall 1, drop 1, refused-stream 2.
+            for transport, count, total in [("http", 4, 7), ("sse", 3, 4)]:
+                series = f'endpoint="anthropic_messages",transport="{transport}"'
+                assert samples[f"nexus_relay_request_attempts_count{{{series}}}"] == count
+                assert samples[f"nexus_relay_request_attempts_sum{{{series}}}"] == total
+            declined = [
+                r for r in relay_logs(client) if r["message"] == "upstream attempt declined"
+            ]
+            switched = [r for r in declined if r["outcome"] == "switched"]
+            assert len(declined) == 5 and len(switched) == 4
+            assert {
+                (r["attempt"], r["deployment_id"], r["next_deployment_id"]) for r in switched
+            } == {(1, str(first), str(second))}
+            (limit,) = [r for r in declined if r["outcome"] == "attempt_limit"]
+            assert (limit["attempt"], limit["deployment_id"], limit["reason"]) == (
+                2,
+                str(second),
+                "status_529",
+            )
+            assert "next_deployment_id" not in limit
+            finished = [r for r in relay_logs(client) if r["message"] == "request finished"]
+            assert sorted(r["attempts"] for r in finished) == [1, 1, 1, 2, 2, 2, 2]
+            logs = client.relay_log.read_text()
+            for secret in [BACKUP_SECRET, "provider-secret-do-not-echo", token]:
+                assert secret not in logs
 
         # One attempt keeps the previous single-attempt report for the same failure.
         monkeypatch.setenv("NEXUS_RELAY_MAX_ATTEMPTS", "1")

@@ -33,7 +33,7 @@ def create_router(get_service):
         return {"items": await service.list_routes(token)}
 
     @router.post(
-        "/organizations/{org}/quota-policies",
+        "/organizations/{organization_id}/quota-policies",
         response_model=QuotaPolicyResult,
         responses={
             201: {"model": QuotaPolicyResult, "description": "Created"},
@@ -41,15 +41,20 @@ def create_router(get_service):
         },
     )
     async def quota(
-        org: UUID, body: Quota, token: Token, service: Service, version: Version, response: Response
+        organization_id: UUID,
+        body: Quota,
+        token: Token,
+        service: Service,
+        version: Version,
+        response: Response,
     ):
-        result = await service.quota(token, org, body, version)
+        result = await service.quota(token, organization_id, body, version)
         response.headers["ETag"] = f'"{result["version"]}"'
         response.status_code = 201 if result["version"] == 1 else 200
         return result
 
-    @router.get("/organizations/{org}/quota-policies")
-    async def quotas(org: UUID, token: Token, service: Service):
-        return {"items": await service.list_quotas(token, org)}
+    @router.get("/organizations/{organization_id}/quota-policies")
+    async def quotas(organization_id: UUID, token: Token, service: Service):
+        return {"items": await service.list_quotas(token, organization_id)}
 
     return router

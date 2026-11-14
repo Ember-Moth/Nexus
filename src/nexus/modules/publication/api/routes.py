@@ -35,37 +35,39 @@ def create_router(get_service):
         response.headers["ETag"] = f'"{result["version"]}"'
         return result
 
-    @router.patch("/{cid}", response_model=ClusterView, responses=CONFLICT)
+    @router.patch("/{cluster_id}", response_model=ClusterView, responses=CONFLICT)
     async def update(
-        cid: UUID,
+        cluster_id: UUID,
         body: ClusterUpdate,
         response: Response,
         token: Token,
         version: Annotated[int, Depends(expected_version)],
         service: Service,
     ):
-        result = await service.update(token, cid, body, version)
+        result = await service.update(token, cluster_id, body, version)
         response.headers["ETag"] = f'"{result["version"]}"'
         return result
 
-    @router.put("/{cid}/principals/{node_id}", response_model=Principal, responses=CONFLICT)
-    async def principal(cid: UUID, node_id: UUID, body: Principal, token: Token, service: Service):
+    @router.put("/{cluster_id}/principals/{node_id}", response_model=Principal, responses=CONFLICT)
+    async def principal(
+        cluster_id: UUID, node_id: UUID, body: Principal, token: Token, service: Service
+    ):
         if node_id != body.node_id:
             raise ServiceError("node_mismatch", "Node identifiers differ", 422)
-        return await service.principal(token, cid, body)
+        return await service.principal(token, cluster_id, body)
 
-    @router.post("/{cid}/releases", status_code=202, response_model=ReleaseAccepted)
+    @router.post("/{cluster_id}/releases", status_code=202, response_model=ReleaseAccepted)
     async def release(
-        cid: UUID,
+        cluster_id: UUID,
         body: Release,
         token: Token,
         key: Annotated[str, Depends(idempotency_key)],
         service: Service,
     ):
-        return await service.release(token, cid, body, key)
+        return await service.release(token, cluster_id, body, key)
 
-    @router.get("/{cid}/releases/{revision}", response_model=ReleaseStatus)
-    async def status(cid: UUID, revision: int, token: Token, service: Service):
-        return await service.status(token, cid, revision)
+    @router.get("/{cluster_id}/releases/{revision}", response_model=ReleaseStatus)
+    async def status(cluster_id: UUID, revision: int, token: Token, service: Service):
+        return await service.status(token, cluster_id, revision)
 
     return router

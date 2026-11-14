@@ -167,12 +167,10 @@ async def failover_plane(http, admin, ports):
                 json={"relay_profile": profile},
             )
             assert r.status_code == 200, r.text
-        r = await client.post(
-            "/api/v1/route-policies",
+        r = await client.put(
+            f"/api/v1/route-policies/{org['id']}/{model['id']}",
             headers=auth(root, 1),
             json={
-                "organization_id": org["id"],
-                "model_id": model["id"],
                 "candidates": [
                     {"deployment_id": first["id"], "priority": 0},
                     {"deployment_id": second["id"], "priority": 1},

@@ -23,7 +23,7 @@
 
 分别提供 API、Worker、数据库迁移和初始管理员引导入口。迁移使用独立高权限角色，运行服务不携带迁移权限。以单一部署可运行的模块化单体起步，保持 API 与 Worker 可独立扩容。
 
-模块骨架采用[系统架构](architecture.md)的五个数据所有权边界，参考依据记录在 [PPanel 设计参考](ppanel-reference.md)。HTTP 接口按需放在业务包的 api.py；bootstrap.py 组装真实依赖，业务服务不反向依赖启动入口。目录按 Python 用例组织，不复制 PPanel 框架模板。pricing、payments、metering、wallet 和 settlement 作为 billing 子域一起维护资金不变量。
+模块骨架采用[系统架构](architecture.md)的五个数据所有权边界，参考依据记录在 [PPanel 设计参考](ppanel-reference.md)。各模块以 `api/`、`application/` 和 `persistence/` 区分 HTTP、用例和存储，独立规则与厂商适配器按需置于 `domain/` 和 `providers/`。进程依赖由 bootstrap.py 组装。pricing、payments、metering、wallet 和 settlement 作为 billing 子域一起维护资金不变量。
 
 本阶段建立必要的测试设施：真实 PostgreSQL 事务与迁移测试、Redis 原子行为测试、API 鉴权测试。不能用 SQLite 替代 PostgreSQL 验证锁、数值、函数权限和并发资金约束。
 

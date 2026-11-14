@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from nexus.modules.identity import api
+from nexus.http import cursor_value
 from nexus.shared.errors import ServiceError
 
 
@@ -19,5 +19,5 @@ from nexus.shared.errors import ServiceError
 def test_malformed_cursor_is_a_client_error(value):
     cursor = base64.urlsafe_b64encode(json.dumps(value).encode()).decode()
     with pytest.raises(ServiceError) as raised:
-        api.cursor_value(cursor)
+        cursor_value(cursor)
     assert raised.value.status == 422

@@ -87,17 +87,21 @@ class GatewaySimulator:
                         raise GatewayOutcomeUnknown(operation, args) from reconnect_error
 
     async def _call_once(self, operation, args):
-        if self.connection.info.transaction_status not in {
+        if self.connection.info.pipeline_status != psycopg.pq.PipelineStatus.OFF:
+            # A pipeline can defer the implicit commit until its synchronization point.
+            raise RuntimeError("Gateway operation requires a non-pipelined connection")
+        if not self.connection.autocommit or self.connection.info.transaction_status not in {
             psycopg.pq.TransactionStatus.IDLE,
             psycopg.pq.TransactionStatus.UNKNOWN,
         }:
             raise RuntimeError("Gateway operation requires its own transaction")
-        async with self.connection.transaction():
-            cursor = await self.connection.execute(
-                f"SELECT gateway_v1.{operation}(" + ",".join(["%s"] * len(args)) + ")", args
-            )
-            value = (await cursor.fetchone())[0]
-        return value
+        # One function call is one implicit transaction. A normal (buffered)
+        # autocommit execute waits for PostgreSQL to finish the transaction;
+        # do not hold the wallet lock across a client-issued COMMIT round trip.
+        cursor = await self.connection.execute(
+            f"SELECT gateway_v1.{operation}(" + ",".join(["%s"] * len(args)) + ")", args
+        )
+        return (await cursor.fetchone())[0]
 
     async def refresh(self):
         async with self.config_lock:

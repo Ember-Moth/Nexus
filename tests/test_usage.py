@@ -1,6 +1,6 @@
 import pytest
 
-from nexus.modules.billing.usage import normalize
+from nexus.modules.billing.domain.usage import normalize
 
 
 def test_token_subsets_are_counted_once():

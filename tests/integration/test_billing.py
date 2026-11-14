@@ -14,7 +14,7 @@ from test_project_credentials import project
 
 from nexus.bootstrap import Application
 from nexus.modules.billing import Admission, Settlement
-from nexus.modules.billing.repository import BillingRepository
+from nexus.modules.billing.persistence.repository import BillingRepository
 from nexus.shared.errors import ServiceError
 
 pytestmark = pytest.mark.integration
@@ -995,3 +995,26 @@ async def test_billing_rejects_cross_tenant_financial_references(http, admin):
             f"/api/v1/organizations/{company['id']}/account/reconcile", headers=auth(root)
         )
         assert response.json()["consistent"] is True, response.text
+
+
+async def test_reconcile_finds_hold_mismatch_even_when_period_total_matches(http, admin):
+    client, root, app, _ = http
+    org, _, _ = await setup_wallet(http)
+    _, _, _, _, admission = await setup_model(http, org)
+    await make_budget(client, root, org, "50")
+    await app.state.reservations.reserve(admission)
+    # Preserve the aggregate but break the association with the authoritative request.
+    admin.execute(
+        "UPDATE billing.budget_holds SET reserved=reserved-1 WHERE request_id=%s",
+        (admission.request_id,),
+    )
+    admin.execute(
+        "UPDATE billing.budget_periods SET reserved=reserved-1 WHERE organization_id=%s",
+        (org["id"],),
+    )
+    path = f"/api/v1/organizations/{org['id']}/account/reconcile"
+    report = await client.post(path, headers=auth(root))
+    assert report.status_code == 200, report.text
+    assert [(i["kind"], i["request_id"]) for i in report.json()["issues"]] == [
+        ("request_budget", str(admission.request_id))
+    ]

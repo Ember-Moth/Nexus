@@ -2,7 +2,7 @@
 
 M1 已实现 Python 工程、五个业务边界与依赖组装、存储作用域、迁移、API/Worker 生命周期和初始管理员引导。本机开发直接使用原生 PostgreSQL 和 Redis，不依赖 Docker，也不配置系统服务管理器。
 
-identity 已提供身份、项目凭据和模型策略，catalog 提供模型与上游管理。跨模块依赖由 bootstrap.py 连接公开能力，不共享仓储。API 和 Worker 分别位于 api.py、worker.py，没有统一的 Facade/Deps/_internal 模板。
+identity 已提供身份、项目凭据和模型策略，catalog 提供模型与上游管理。跨模块依赖由 bootstrap.py 连接公开能力，不共享仓储。进程入口分别位于 api.py 和 worker.py。改动业务用例、HTTP 路由和数据库操作时，按[模块内分层](architecture.md#python-工程组织)定位对应文件。
 
 ## 环境要求
 

@@ -8,7 +8,7 @@
 
 网关的请求授权和用量提交通过 [gateway_v1 数据库契约](plane-protocol.md) 完成，不与管理 API 共用身份和权限。
 
-业务 HTTP 接口按需放在所属业务包的 api.py 或相应 *_api.py，调用该包公开用例；进程级 api.py 负责应用生命周期和路由挂载。identity 拥有身份与授权接口，catalog 拥有模型和运行策略接口，billing 拥有价格、金额预算、支付、用量和资金接口，publication 拥有配置发布，reporting 拥有聚合查询与导出。handler 不获得全局 Store 或直接开启跨模块事务。
+业务 HTTP 接口放在所属模块的 `api/` 包中，由路由调用 `application/` 内的用例。进程级 `src/nexus/api.py` 负责应用生命周期和路由挂载。identity 拥有身份与授权接口，catalog 拥有模型和运行策略接口，billing 拥有价格、金额预算、支付、用量和资金接口，publication 拥有配置发布，reporting 拥有聚合查询与导出。handler 不获得全局 Store 或直接开启跨模块事务。
 
 M5 的汇总、导出、审计和财务处理接口见[查询与运营](operations.md)。
 

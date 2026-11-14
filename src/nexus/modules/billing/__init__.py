@@ -4,27 +4,32 @@ from nexus.infrastructure.audit_reader import audit_reader
 from nexus.infrastructure.postgres import ModuleDatabase
 from nexus.shared.storage import ModuleName
 
-from .antom_gateway import AntomConfig, AntomGateway
-from .budgets import BudgetService
-from .epay_gateway import EPayConfig, EPayGateway
-from .events import ACCOUNT_READY, ACCOUNT_READY_VERSION, FUNDING_POSTED, FUNDING_POSTED_VERSION
-from .gateways import GatewayDefinition, GatewayRegistry
-from .mock_gateway import definition as mock_definition
-from .operations import Operations
-from .operations_repository import OperationsRepository
-from .payment_processing import PaymentProcessor
-from .payment_repository import PaymentRepository
-from .payments import PaymentService
-from .ports import DeploymentInfo, ModelInfo, Scope
-from .pricing import PricingService
-from .reports_repository import BillingReports
-from .repository import transaction
-from .reservations import ReservationService
-from .schemas import Admission, Settlement
-from .service import BillingService
-from .snapshot_repository import create_price_source
-from .stripe_gateway import StripeConfig, StripeGateway
-from .usage import UsageProcessor
+from .application.accounts import BillingService
+from .application.budgets import BudgetService
+from .application.operations import Operations
+from .application.payments.processor import PaymentProcessor
+from .application.payments.registry import GatewayDefinition, GatewayRegistry
+from .application.payments.service import PaymentService
+from .application.ports import DeploymentInfo, ModelInfo, Scope
+from .application.pricing import PricingService
+from .application.reservations import ReservationService
+from .application.schemas import Admission, Settlement
+from .application.usage import UsageProcessor
+from .domain.events import (
+    ACCOUNT_READY,
+    ACCOUNT_READY_VERSION,
+    FUNDING_POSTED,
+    FUNDING_POSTED_VERSION,
+)
+from .persistence.operations import OperationsRepository
+from .persistence.payments import PaymentRepository
+from .persistence.reports import BillingReports
+from .persistence.repository import transaction
+from .persistence.snapshots import create_price_source
+from .providers.antom import AntomConfig, AntomGateway
+from .providers.epay import EPayConfig, EPayGateway
+from .providers.mock import definition as mock_definition
+from .providers.stripe import StripeConfig, StripeGateway
 
 __all__ = [
     "create_reports",
@@ -53,6 +58,19 @@ __all__ = [
     "create_services",
     "api",
 ]
+
+
+def __getattr__(name):
+    """Load the public HTTP adapters only when the API process requests them."""
+    if name == "operations_api":
+        from .api import operations
+
+        return operations
+    if name == "payment_api":
+        from .api import payments
+
+        return payments
+    raise AttributeError(name)
 
 
 def create_services(database: ModuleDatabase, access, catalog, currency):

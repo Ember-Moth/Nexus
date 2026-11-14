@@ -3,8 +3,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from nexus.modules.billing.money import decimal_value, reserve_amount, usage_amount
-from nexus.modules.billing.schemas import DiscountCreate, Rate
+from nexus.modules.billing.application.schemas import DiscountCreate, Rate
+from nexus.modules.billing.domain.money import decimal_value, reserve_amount, usage_amount
 
 
 @pytest.mark.parametrize(

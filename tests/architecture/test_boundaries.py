@@ -46,9 +46,10 @@ def violations(source: str, module: str, is_package: bool = False) -> list[str]:
     failures = []
     parts = module.split(".")
     owner = parts[2] if module.startswith("nexus.modules.") else None
-    kind = parts[-1]
-    http_entry = kind in {"api", "routes"} or kind.endswith("_api")
-    persistence = kind in {"repository", "models"} or kind.endswith("_repository")
+    layer = parts[3] if owner and len(parts) > 3 else None
+    module_root = owner and len(parts) == 3 and is_package
+    if layer and layer not in {"api", "application", "domain", "persistence", "providers"}:
+        failures.append("implementation outside a module layer")
     for target in imports(source, module, is_package):
         if target.startswith("nexus.bootstrap") and module not in ENTRY_POINTS:
             failures.append("business code depends on process assembly")
@@ -56,51 +57,54 @@ def violations(source: str, module: str, is_package: bool = False) -> list[str]:
             failures.append("global business data store or DTO package")
         if target.startswith("nexus.modules."):
             imported = target.split(".")
-            foreign = not owner or imported[2] != owner
-            if (
-                foreign
-                and len(imported) > 3
-                and imported[3] not in PUBLIC_EXPORTS.get(imported[2], set())
-            ):
-                failures.append("private module import")
+            if not owner or imported[2] != owner:
+                if len(imported) > 3 and (
+                    len(imported) != 4 or imported[3] not in PUBLIC_EXPORTS.get(imported[2], set())
+                ):
+                    failures.append("private module import")
+            elif layer:
+                # Only the public module root assembles concrete adapters.
+                imported_layer = imported[3] if len(imported) > 3 else None
+                if (
+                    imported_layer in {"api", "persistence", "providers"}
+                    and imported_layer != layer
+                ):
+                    failures.append("module layer depends on another concrete adapter")
+                if layer == "domain" and imported_layer != "domain":
+                    failures.append("domain depends on an outer layer")
+                if not imported_layer or imported_layer in PUBLIC_EXPORTS[owner] - {"api"}:
+                    failures.append("implementation depends on module assembly")
             if module.startswith(("nexus.shared.", "nexus.infrastructure.", "nexus.config")):
                 failures.append("foundation depends on business module")
         if owner:
             if target.startswith(("nexus.api", "nexus.worker", "nexus.commands", "nexus.cli")):
                 failures.append("module depends on process entry point")
-            if not http_entry and target.startswith(
+            if layer != "api" and target.startswith(
                 ("fastapi", "starlette", "uvicorn", "nexus.http")
             ):
                 failures.append("business core depends on HTTP framework")
-            if target.startswith(("sqlalchemy", "psycopg", "redis")) and not persistence:
+            if layer != "persistence" and target.startswith(("sqlalchemy", "psycopg", "redis")):
                 failures.append("business core bypasses its persistence boundary")
-            if target.startswith("nexus.infrastructure") and not (is_package or persistence):
+            if target.startswith("nexus.infrastructure") and not (
+                module_root or layer == "persistence"
+            ):
                 failures.append("business core bypasses its ports")
-        if (module in {"nexus.api", "nexus.worker"} or http_entry and owner) and target.startswith(
+        if (module in {"nexus.api", "nexus.worker"} or layer == "api") and target.startswith(
             ("sqlalchemy", "psycopg", "nexus.infrastructure.postgres")
         ):
             failures.append("entry point opens business storage")
-        if (
-            owner
-            and kind == "schemas"
-            and (
-                target.startswith("sqlalchemy")
-                or (
-                    target.startswith("nexus.modules.")
-                    and (
-                        target.split(".")[2] != owner
-                        or target.startswith(
-                            (
-                                f"nexus.modules.{owner}.models",
-                                f"nexus.modules.{owner}.repository",
-                            )
-                        )
-                    )
-                )
-            )
-        ):
-            failures.append("schema exposes another module or ORM")
     for node in ast.walk(ast.parse(source)):
+        if (
+            layer == "application"
+            and isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+        ):
+            if (
+                node.func.attr in {"rows", "execute", "executemany", "exec_driver_sql"}
+                and node.args
+            ):
+                if isinstance(node.args[0], (ast.Constant, ast.JoinedStr, ast.BinOp)):
+                    failures.append("application embeds a database statement")
         if owner and isinstance(node, ast.Call):
             name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
             if name in {"__import__", "import_module"}:
@@ -124,19 +128,41 @@ def test_source_boundaries():
 @pytest.mark.parametrize(
     "module, source",
     [
-        ("nexus.modules.billing.service", "from nexus.bootstrap import Application"),
-        ("nexus.modules.billing.service", "from nexus.modules.identity import repository"),
+        ("nexus.modules.billing.application.accounts", "from nexus.bootstrap import Application"),
         (
-            "nexus.modules.billing.service",
-            "from nexus.modules.identity.schemas import BootstrapResult",
+            "nexus.modules.billing.application.accounts",
+            "from nexus.modules.identity.persistence import repository",
         ),
-        ("nexus.modules.billing.service", "from fastapi import Depends"),
-        ("nexus.modules.billing.schemas", "from .models import Account"),
-        ("nexus.modules.billing.service", "from sqlalchemy import select"),
+        (
+            "nexus.modules.billing.application.accounts",
+            "from nexus.modules.identity.application.schemas import BootstrapResult",
+        ),
+        ("nexus.modules.billing.application.accounts", "from fastapi import Depends"),
+        ("nexus.modules.billing.application.schemas", "from ..persistence.models import Account"),
+        ("nexus.modules.billing.application.accounts", "from sqlalchemy import select"),
         ("nexus.infrastructure.cache", "from nexus.modules import billing"),
+        (
+            "nexus.modules.billing.application.payments.service",
+            "from ...providers.stripe import StripeGateway",
+        ),
+        (
+            "nexus.modules.billing.application.payments",
+            "from nexus.infrastructure.postgres import Database",
+        ),
+        ("nexus.modules.catalog.domain.policy", "from ..application.schemas import Visibility"),
+        ("nexus.modules.billing.api.accounts", "from ..persistence import repository"),
+        (
+            "nexus.modules.billing.persistence.repository",
+            "from nexus.modules.catalog.api.catalog import create_router",
+        ),
+        (
+            "nexus.modules.billing.application.operations",
+            'repo.rows("SELECT id FROM billing.accounts")',
+        ),
+        ("nexus.modules.billing.new_service", "from uuid import UUID"),
         ("nexus.worker", "from sqlalchemy import text"),
-        ("nexus.modules.billing.service", "from ...api import create_app"),
-        ("nexus.modules.billing.service", '__import__("nexus.bootstrap")'),
+        ("nexus.modules.billing.application.accounts", "from ....api import create_app"),
+        ("nexus.modules.billing.application.accounts", '__import__("nexus.bootstrap")'),
     ],
 )
 def test_guard_rejects_invalid_dependencies(module, source):
@@ -147,11 +173,14 @@ def test_guard_rejects_invalid_dependencies(module, source):
     "module, source",
     [
         ("nexus.bootstrap", "from nexus.modules import identity"),
-        ("nexus.modules.billing.service", "from nexus.modules.identity import BootstrapResult"),
-        ("nexus.modules.identity.api", "from fastapi import APIRouter"),
-        ("nexus.modules.billing.payment_api", "from fastapi import APIRouter"),
-        ("nexus.modules.identity.repository", "from sqlalchemy import select"),
-        ("nexus.modules.billing.schemas", "from .money import Money"),
+        (
+            "nexus.modules.billing.application.accounts",
+            "from nexus.modules.identity import BootstrapResult",
+        ),
+        ("nexus.modules.identity.api.routes", "from fastapi import APIRouter"),
+        ("nexus.modules.billing.api.payments", "from fastapi import APIRouter"),
+        ("nexus.modules.identity.persistence.repository", "from sqlalchemy import select"),
+        ("nexus.modules.billing.application.schemas", "from ..domain.money import Money"),
     ],
 )
 def test_public_interfaces_and_local_layers_are_allowed(module, source):

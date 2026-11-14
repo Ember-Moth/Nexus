@@ -45,6 +45,6 @@ Nexus 是面向企业客户的 AI API 中转与计费平台。控制平面负责
 
 当前架构选择 PostgreSQL 保存账户、账本、预留、用量和配置版本，Redis 承担配置分发辅助与运行状态。首期不把 Redis Streams 作为收费记录的唯一入口。
 
-仅借鉴 PPanel 的模块化单体思想，目录按 Python/FastAPI 用例组织，不照搬其框架模板。模块边界为：identity、catalog、billing、publication、reporting 各有数据属主，支付、定价、计量和钱包作为 billing 内部子域，跨模块通过窄门面与可靠事件协作。
+identity、catalog、billing、publication、reporting 各自拥有数据和事务。模块内按 HTTP 路由、应用用例和持久化分层，支付、定价、计量与钱包由 billing 统一管理。目录及依赖方向见[模块组织](docs/architecture.md#python-工程组织)。
 
 设计版本：v1.0。定稿日期：2026-11-08。已完成：M0、M1、M2 核心管理流程、M3 定价与账户、M3P 通用支付入账与模拟网关。M4 通信与自动结算已实现。M5 查询与运营已实现，M6 已通过本机控制平面验收。实测负载、恢复演练与复现命令见[控制平面验收](docs/control-plane-acceptance.md)。

@@ -173,6 +173,10 @@ async def test_revocation_is_live_and_replay_is_owned_by_node(plane, http, admin
 async def test_evidence_review_and_transaction_rollback(plane, http, admin):
     peer, _, _, model, dep, a, raw, _ = plane
     await peer.refresh()
+    async with peer.connection.pipeline():
+        with pytest.raises(RuntimeError, match="non-pipelined"):
+            await peer.call("reserve_request", a.request_id, a.api_key_id, a.model_id, 1, 4, 6)
+    assert await peer.call("get_request_status", a.request_id) is None
     # The admission and inbox are both rolled back when their caller loses the transaction.
     with pytest.raises(RuntimeError):
         async with peer.connection.transaction():
@@ -343,7 +347,7 @@ async def test_settlement_commit_failure_replays_and_worker_finishes(
     import os
     import sys
 
-    from nexus.modules.billing.repository import BillingRepository
+    from nexus.modules.billing.persistence.repository import BillingRepository
 
     peer, _, _, model, dep, a, raw, _ = plane
     await peer.refresh()
@@ -450,7 +454,7 @@ async def test_late_failed_attempt_cost_is_independent(plane, http, admin):
 
 
 async def test_publication_after_redis_write_is_replayable(plane, http, admin, monkeypatch):
-    from nexus.modules.publication.repository import PublicationRepository
+    from nexus.modules.publication.persistence.repository import PublicationRepository
 
     peer, _, _, _, _, _, _, cid = plane
     publication = http[2].state.publication
@@ -628,3 +632,37 @@ async def test_gateway_retries_lost_commit_response_with_original_event(
     assert admin.execute("SELECT count(*) FROM billing.usage_events").fetchone()[0] == 1
     await http[2].state.usage.process()
     assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (100, 0)
+
+
+async def test_attempt_rechecks_wallet_after_concurrent_freeze(plane, admin):
+    import asyncio
+
+    peer, _, org, model, deployment, admission, raw, _ = plane
+    await peer.refresh()
+    rid = admission.request_id
+    await peer.reserve(raw, model["id"], 4, 6, rid)
+    with admin.transaction():
+        admin.execute(
+            "UPDATE billing.accounts SET status='frozen' WHERE organization_id=%s", (org["id"],)
+        )
+        starting = asyncio.create_task(
+            peer.call("start_attempt", rid, uuid4(), 1, UUID(deployment["id"]))
+        )
+        async with asyncio.timeout(5):
+            while True:
+                waiting = admin.execute(
+                    "SELECT pg_backend_pid()=ANY(pg_blocking_pids(%s))",
+                    (peer.connection.info.backend_pid,),
+                ).fetchone()[0]
+                if waiting:
+                    break
+                assert not starting.done(), "Attempt bypassed the in-flight wallet freeze"
+                await asyncio.sleep(0.01)
+    with pytest.raises(psycopg.errors.RaiseException, match="account_frozen"):
+        await starting
+    assert admin.execute(
+        "SELECT count(*) FROM billing.request_attempts WHERE request_id=%s", (rid,)
+    ).fetchone() == (0,)
+    assert admin.execute(
+        "SELECT balance,held_amount FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+    ).fetchone() == (100, 10)

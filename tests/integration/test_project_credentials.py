@@ -8,7 +8,7 @@ import psycopg
 import pytest
 from test_identity_api import auth, create_org, create_user, login
 
-from nexus.modules.identity.errors import IdentityError
+from nexus.modules.identity.domain.errors import IdentityError
 
 pytestmark = pytest.mark.integration
 

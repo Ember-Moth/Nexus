@@ -4,10 +4,12 @@ from nexus.infrastructure.audit_reader import audit_reader
 from nexus.infrastructure.postgres import ModuleDatabase
 from nexus.shared.storage import ModuleName
 
-from .repository import transaction
-from .schemas import Visibility
-from .service import CatalogService
-from .snapshot_repository import RoutingPolicies, create_catalog_source
+from .application.routing import RoutingPolicies as RoutingService
+from .application.schemas import Visibility
+from .application.service import CatalogService
+from .persistence.repository import transaction
+from .persistence.routing import RoutingRepository
+from .persistence.snapshots import create_catalog_source
 
 __all__ = [
     "create_audit_reader",
@@ -21,6 +23,20 @@ __all__ = [
     "create_pricing_lookup",
     "api",
 ]
+
+
+def __getattr__(name):
+    """Load the public HTTP adapters only when the API process requests them."""
+    if name == "routing_api":
+        from .api import routing
+
+        return routing
+    raise AttributeError(name)
+
+
+class RoutingPolicies(RoutingService):
+    def __init__(self, database, access):
+        super().__init__(RoutingRepository(database), access)
 
 
 def create_model_lookup(database: ModuleDatabase):

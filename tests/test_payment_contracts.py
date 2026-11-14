@@ -6,17 +6,17 @@ import pytest
 from pydantic import ValidationError
 
 from nexus.infrastructure.credential_cipher import CredentialCipher
-from nexus.modules.billing.gateways import (
+from nexus.modules.billing.application.payments.registry import (
     GatewayDefinition,
     GatewayFailure,
     GatewayRegistry,
     validate_checkout,
 )
-from nexus.modules.billing.mock_gateway import MockConfig, definition
-from nexus.modules.billing.payment_schemas import (
+from nexus.modules.billing.application.payments.schemas import (
     CheckoutData,
     NotificationEnvelope,
 )
+from nexus.modules.billing.providers.mock import MockConfig, definition
 from nexus.shared.errors import ServiceError
 from scripts.mock_payment_provider import MockPaymentProvider
 

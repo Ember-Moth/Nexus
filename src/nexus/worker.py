@@ -55,7 +55,8 @@ async def run_worker(
                 health[name] = "unavailable"
                 logger.warning("%s failed: %s", name, type(error).__name__)
             try:
-                await asyncio.wait_for(stop.wait(), timeout=0.5)
+                idle = 0.1 if name == "settlement" and health[name] == "ok" else 0.5
+                await asyncio.wait_for(stop.wait(), timeout=idle)
             except TimeoutError:
                 pass
 

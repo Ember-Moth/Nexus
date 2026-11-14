@@ -1,8 +1,8 @@
 from nexus.infrastructure.audit_reader import audit_reader
 from nexus.shared.storage import ModuleName
 
-from .repository import transaction
-from .service import Reports
+from .application.service import Reports
+from .persistence.repository import transaction
 
 __all__ = ["create_service", "api"]
 

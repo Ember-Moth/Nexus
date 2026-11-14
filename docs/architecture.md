@@ -61,42 +61,19 @@ API 可通过多个进程或多个副本扩容。容器部署基线为一个服�
 
 ## Python 工程组织
 
-模块边界是业务和数据边界，不要求每个包都具有一套 Facade、Deps、contracts、internal 和 transport 目录。M1 使用直接的 Python 文件组织代码：
+`src/nexus/modules/` 下的五个包各自拥有业务规则、数据表和事务。模块根的 `__init__.py` 声明公开接口，并把本模块的仓储和外部适配器装配给应用服务。进程级的 `bootstrap.py` 连接这些公开能力。
 
-```text
-src/nexus/
-  api.py                     FastAPI 应用、健康检查、业务路由挂载
-  worker.py                  Worker 生命周期和任务入口
-  bootstrap.py               连接资源与真实业务服务的依赖组装
-  commands.py                迁移、检查、管理员引导等 CLI 用例
-  cli.py                     命令行解析
-  config.py                  启动配置
-  infrastructure/            可复用的数据库、Redis 和密码基础能力
-  shared/                    基础类型与错误，不承载全局业务模型
-  modules/
-    identity/
-      __init__.py            明确导出的业务 API
-      schemas.py             本模块的输入、结果等类型
-      service.py             已实现的管理员引导用例
-      ports.py               用例真正需要的事务和密码能力
-      repository.py          本模块的 ORM、仓储与事务
-    catalog/                 保留业务包，功能按阶段增加
-    billing/
-    publication/
-    reporting/
-migrations/
-tests/architecture/
-```
+| 模块内位置 | 职责 |
+| --- | --- |
+| `api/` | FastAPI 路由，解析请求、提取会话、调用用例并生成 HTTP 响应。身份模块按会话与成员、项目凭据、模型策略分别组织路由。 |
+| `application/` | 可从 API 或 Worker 调用的用例、命令和返回类型，以及用例所需的依赖接口。用例决定授权、状态变更和事务范围。 |
+| `persistence/` | 所属模块的 ORM 映射、SQL、仓储、事务和快照读取。在资金或配置事务中，更新和审计使用同一个数据库会话。 |
+| `domain/` | 独立于存储和传输的规则与值，例如 billing 的金额运算、identity 的令牌规则和模块事件。 |
+| `billing/providers/` | Stripe、EPay、Antom 和测试网关的协议实现，通过支付网关接口接入。 |
 
-需要 HTTP 接口时，在相应业务包增加 api.py；需要支付协议适配时，代码归 billing，根据规模选择文件或子包。只有真实用例复杂度需要时才拆分目录，不为目录对称或与 PPanel 一致而增加转发层。
+修改一笔充值的入账条件时，从 `billing/application/payments/processor.py` 进入；修改 EPay 签名或查单协议时，改 `billing/providers/epay.py`；修改支付收据的数据库读写时，改 `billing/persistence/payments.py`。三个入口共享 billing 的资金约束和事务。catalog 的路由用例在 `application/routing.py`，版本检查、路由写入和审计在 `persistence/routing.py`。
 
-模块以 __init__.py 明确导出业务能力和可交换的数据类型。需要替换外部依赖、约束调用范围或隔离事务时才声明 Protocol，不为每个具体类重复声明同名接口。公开接口不要求独立的 facade.py 或统一的 Dependencies 类。
-
-bootstrap.py 集中组装连接资源与已实现服务，业务代码不接收全局应用对象。M1 仅构造有真实用例的 identity 服务；五个 schema 的健康探测直接使用受限存储作用域，其他四个模块不为健康探测创建空业务服务。
-
-业务服务不依赖 FastAPI。业务包内的 api.py 负责参数与认证上下文转换，再调用该包的公开用例；重要授权和资金检查仍由业务服务执行。模块自己的 repository.py 或按需拆分的持久化代码负责数据库操作，不把 Session 暴露给其他模块或 HTTP 入口。
-
-Worker 负责调度和生命周期，业务事务由所属服务开启。任务入口不得自己拼接支付、钱包或账本 SQL。
+进程级 `api.py` 挂载模块公开的路由，`worker.py` 调度消费任务。模块间使用根包 `__all__` 中的业务能力和数据类型。架构测试按实际包路径检查依赖方向，覆盖嵌套包和应用层内嵌 SQL。只在有对应实现时建立 `domain/` 或厂商适配包。
 
 ## 模块交互与事务
 
@@ -116,7 +93,7 @@ PostgreSQL `gateway_v1` 是数据平面接入的特殊组合边界：允许在�
 
 启动配置包含连接、监听地址和根密钥来源，进程运行期间保持不变。运行时业务配置由各属主模块管理，按版本产生不可变快照；每次用例读取一致的配置版本，不在多个请求间修改共享可变字典。
 
-Python 包不依赖 Go internal 式的目录隔离。M1 的 AST 检查验证依赖方向和公开导出：业务代码不反向依赖启动组装、其他模块只能导入公开 API、持久化与 HTTP 不侵入业务服务。测试约束这些原则，不要求复制 PPanel 的文件名和层数。当前存储角色和作用域事务通过真实 PostgreSQL 集成测试；后续数据库桥接需增加公开 SQL 契约清单与相应测试，不把 Python 导入检查当成 SQL 权限保障。
+模块边界由两类检查验证。AST 检查跨模块导入和分层依赖，真实 PostgreSQL 集成测试验证五个数据库角色、事务作用域及网关函数权限。
 
 导入规则和组装检查已纳入 CI 配置。新增模块、跨模块依赖或 SQL 契约需更新所有权声明与针对性测试。
 

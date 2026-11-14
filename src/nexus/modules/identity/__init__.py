@@ -5,16 +5,14 @@ from nexus.infrastructure.passwords import Argon2Passwords
 from nexus.infrastructure.postgres import ModuleDatabase
 from nexus.shared.storage import ModuleName
 
-from .applications import ProjectService
-from .events import ORGANIZATION_CREATED, ORGANIZATION_CREATED_VERSION
-from .model_access import ModelAccessService
-from .ports import AuthLimits
-from .repository import IdentityUnitOfWork
-from .schemas import BootstrapResult
-from .service import IdentityService
-
-# The HTTP adapter submodule is loaded only by the API entry point.
-from .snapshot_repository import create_identity_source
+from .application.model_access import ModelAccessService
+from .application.ports import AuthLimits
+from .application.projects import ProjectService
+from .application.schemas import BootstrapResult
+from .application.service import IdentityService
+from .domain.events import ORGANIZATION_CREATED, ORGANIZATION_CREATED_VERSION
+from .persistence.repository import IdentityUnitOfWork
+from .persistence.snapshots import create_identity_source
 
 __all__ = [
     "create_audit_reader",

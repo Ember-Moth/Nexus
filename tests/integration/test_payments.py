@@ -493,7 +493,7 @@ async def test_expired_order_and_disabled_channel_still_accept_a_late_verified_p
 ):
     from datetime import UTC, datetime, timedelta
 
-    from nexus.modules.billing.payment_repository import PaymentRepository
+    from nexus.modules.billing.persistence.payments import PaymentRepository
 
     p = payments
     org = await enterprise(p)
@@ -582,7 +582,7 @@ async def test_funding_failure_and_post_commit_cancellation_are_replay_safe(
 ):
     from contextlib import asynccontextmanager
 
-    from nexus.modules.billing.payment_repository import PaymentRepository
+    from nexus.modules.billing.persistence.payments import PaymentRepository
 
     p = payments
     org = await enterprise(p)
@@ -649,7 +649,7 @@ async def test_funding_failure_and_post_commit_cancellation_are_replay_safe(
 
 
 async def test_notification_storage_failure_never_returns_success(payments, admin, monkeypatch):
-    from nexus.modules.billing.payment_repository import PaymentRepository
+    from nexus.modules.billing.persistence.payments import PaymentRepository
     from nexus.shared.errors import ServiceError
 
     p = payments
@@ -683,7 +683,7 @@ async def test_original_idempotency_window_cannot_be_extended_by_new_capabilitie
     from dataclasses import replace
     from datetime import UTC, datetime, timedelta
 
-    from nexus.modules.billing.payment_repository import PaymentRepository
+    from nexus.modules.billing.persistence.payments import PaymentRepository
 
     p = payments
     registry = p.app.state.payment_processor._registry
@@ -1016,7 +1016,7 @@ async def test_gateway_reversal_cannot_consume_inflight_funds(payments, admin):
 async def test_account_capacity_failure_keeps_verified_payment_for_reconciliation(payments, admin):
     from test_billing import adjustment, funding, post_funding, receiving
 
-    from nexus.modules.billing.money import MAX_AMOUNT
+    from nexus.modules.billing.domain.money import MAX_AMOUNT
 
     p = payments
     org = await enterprise(p)
@@ -1126,7 +1126,7 @@ async def test_payment_migration_cannot_erase_retained_remote_intents(
         await asyncio.to_thread(command.downgrade, config, "0006_pricing_reservations")
     assert (
         admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchone()[0]
-        == "0011_payment_quotes"
+        == "0012_gateway_admission"
     )
     assert (
         admin.execute(
@@ -1176,7 +1176,7 @@ async def test_stale_invalid_query_does_not_replace_a_newer_verified_credit(paym
 
 
 async def test_worker_rate_limit_is_shared_by_channels_and_workers(payments, admin):
-    from nexus.modules.billing.payment_processing import PaymentProcessor
+    from nexus.modules.billing.application.payments.processor import PaymentProcessor
 
     p = payments
     org = await enterprise(p)
@@ -1218,7 +1218,7 @@ async def test_rate_limited_recovery_reuses_a_verified_query_before_safe_retry(p
     original_transport = processor._registry._definitions["mock"]
     from dataclasses import replace
 
-    from nexus.modules.billing.gateways import GatewayFailure
+    from nexus.modules.billing.application.payments.registry import GatewayFailure
 
     def before_remote_create(config):
         gateway = original_transport.factory(config)
@@ -1278,7 +1278,7 @@ async def test_rate_limited_recovery_reuses_a_verified_query_before_safe_retry(p
 async def test_not_found_from_wrong_merchant_cannot_authorize_a_create_retry(payments, admin):
     from dataclasses import replace
 
-    from nexus.modules.billing.gateways import GatewayFailure
+    from nexus.modules.billing.application.payments.registry import GatewayFailure
 
     p = payments
     org = await enterprise(p)

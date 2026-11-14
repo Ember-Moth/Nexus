@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from nexus.http import credentials, cursor_value, expected_version
+from nexus.http import credentials, cursor_value, error_responses, expected_version
 
 from ..application.model_access import ModelAccessService
 from ..application.schemas import (
@@ -14,6 +14,8 @@ from ..application.schemas import (
     AccessPolicyView,
     Page,
 )
+
+CONFLICT = error_responses(409)
 
 
 def create_policy_router(get_service):
@@ -46,7 +48,7 @@ def create_policy_router(get_service):
     ):
         return tagged(response, await service.get_policy(token, organization_id, policy_id))
 
-    @router.post("", response_model=AccessPolicyView, status_code=201)
+    @router.post("", response_model=AccessPolicyView, status_code=201, responses=CONFLICT)
     async def create_policy(
         organization_id: UUID,
         body: AccessPolicyCreate,
@@ -56,7 +58,7 @@ def create_policy_router(get_service):
     ):
         return tagged(response, await service.create_policy(token, organization_id, body))
 
-    @router.patch("/{policy_id}", response_model=AccessPolicyView)
+    @router.patch("/{policy_id}", response_model=AccessPolicyView, responses=CONFLICT)
     async def update_policy(
         organization_id: UUID,
         policy_id: UUID,

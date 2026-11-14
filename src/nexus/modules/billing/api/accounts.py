@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from nexus.http import credentials, cursor_value, expected_version, idempotency_key
+from nexus.http import credentials, cursor_value, error_responses, expected_version, idempotency_key
 
 from ..application.accounts import BillingService
 from ..application.budgets import BudgetService
@@ -34,6 +34,8 @@ from ..application.schemas import (
     ReceivingView,
     SaleCreate,
 )
+
+CONFLICT = error_responses(409)
 
 
 def create_router(get_billing, get_pricing, get_budgets):
@@ -68,7 +70,9 @@ def create_router(get_billing, get_pricing, get_budgets):
     ):
         return tagged(response, await service.create_receiving(token, body, key))
 
-    @router.patch("/receiving-accounts/{resource_id}", response_model=ReceivingView)
+    @router.patch(
+        "/receiving-accounts/{resource_id}", response_model=ReceivingView, responses=CONFLICT
+    )
     async def update_receiving(
         resource_id: UUID,
         body: ReceivingPatch,
@@ -131,7 +135,9 @@ def create_router(get_billing, get_pricing, get_budgets):
         return tagged(response, await service.create_funding(token, organization_id, body, key))
 
     @router.patch(
-        "/organizations/{organization_id}/funding-records/{resource_id}", response_model=FundingView
+        "/organizations/{organization_id}/funding-records/{resource_id}",
+        response_model=FundingView,
+        responses=CONFLICT,
     )
     async def update_funding(
         organization_id: UUID,
@@ -167,6 +173,7 @@ def create_router(get_billing, get_pricing, get_budgets):
     @router.post(
         "/organizations/{organization_id}/funding-records/{resource_id}/cancel",
         response_model=FundingView,
+        responses=CONFLICT,
     )
     async def cancel_funding(
         organization_id: UUID,
@@ -234,7 +241,7 @@ def create_router(get_billing, get_pricing, get_budgets):
         ):
             return tagged(response, await service.create_price(token, kind, body, key))
 
-        @router.patch("/" + path + "/{resource_id}", response_model=PriceView)
+        @router.patch("/" + path + "/{resource_id}", response_model=PriceView, responses=CONFLICT)
         async def edit_price(
             resource_id: UUID,
             body: Prices,
@@ -294,6 +301,7 @@ def create_router(get_billing, get_pricing, get_budgets):
     @router.patch(
         "/organizations/{organization_id}/discount-versions/{resource_id}",
         response_model=DiscountView,
+        responses=CONFLICT,
     )
     async def edit_discount(
         organization_id: UUID,
@@ -343,6 +351,7 @@ def create_router(get_billing, get_pricing, get_budgets):
         "/organizations/{organization_id}/budget-policies",
         response_model=BudgetView,
         status_code=201,
+        responses=CONFLICT,
     )
     async def create_budget(
         organization_id: UUID,
@@ -354,7 +363,9 @@ def create_router(get_billing, get_pricing, get_budgets):
         return tagged(response, await service.create(token, organization_id, body))
 
     @router.patch(
-        "/organizations/{organization_id}/budget-policies/{resource_id}", response_model=BudgetView
+        "/organizations/{organization_id}/budget-policies/{resource_id}",
+        response_model=BudgetView,
+        responses=CONFLICT,
     )
     async def update_budget(
         organization_id: UUID,

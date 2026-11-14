@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from nexus.bootstrap import Application
 from nexus.config import RuntimeSettings
-from nexus.http import credentials
+from nexus.http import credentials, declare_error_responses
 from nexus.modules.billing import api as billing_api
 from nexus.modules.billing import operations_api, payment_api
 from nexus.modules.catalog import CatalogService, routing_api
@@ -36,6 +36,14 @@ def build_server(lifespan: Lifespan, *, development: bool = False) -> FastAPI:
         redoc_url=None,
         openapi_url="/openapi.json" if development else None,
     )
+    generate_openapi = app.openapi
+
+    def openapi() -> dict:
+        if app.openapi_schema is None:
+            app.openapi_schema = declare_error_responses(generate_openapi())
+        return app.openapi_schema
+
+    app.openapi = openapi
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):

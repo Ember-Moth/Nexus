@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from nexus.http import credentials, cursor_value, expected_version, idempotency_key
+from nexus.http import credentials, cursor_value, error_responses, expected_version, idempotency_key
 
 from ..application.projects import ProjectService
 from ..application.schemas import (
@@ -24,6 +24,8 @@ from ..application.schemas import (
     ServiceAccountPatch,
     ServiceAccountView,
 )
+
+CONFLICT = error_responses(409)
 
 
 def create_project_router(get_service) -> APIRouter:
@@ -46,7 +48,7 @@ def create_project_router(get_service) -> APIRouter:
         response.headers["ETag"] = f'"{result.key.version}"'
         return result
 
-    @router.post("/projects", response_model=ProjectView, status_code=201)
+    @router.post("/projects", response_model=ProjectView, status_code=201, responses=CONFLICT)
     async def create_project(
         organization_id: UUID,
         body: ProjectCreate,
@@ -72,7 +74,7 @@ def create_project_router(get_service) -> APIRouter:
     ):
         return tagged(response, await service.get_project(token, organization_id, project_id))
 
-    @router.patch("/projects/{project_id}", response_model=ProjectView)
+    @router.patch("/projects/{project_id}", response_model=ProjectView, responses=CONFLICT)
     async def update_project(
         organization_id: UUID,
         project_id: UUID,
@@ -87,7 +89,7 @@ def create_project_router(get_service) -> APIRouter:
             await service.update_project(token, organization_id, project_id, body, version),
         )
 
-    @router.post("/project-grants", response_model=GrantView, status_code=201)
+    @router.post("/project-grants", response_model=GrantView, status_code=201, responses=CONFLICT)
     async def create_grant(
         organization_id: UUID, body: GrantCreate, response: Response, token: Token, service: Service
     ):
@@ -109,7 +111,7 @@ def create_project_router(get_service) -> APIRouter:
     ):
         return tagged(response, await service.get_grant(token, organization_id, grant_id))
 
-    @router.patch("/project-grants/{grant_id}", response_model=GrantView)
+    @router.patch("/project-grants/{grant_id}", response_model=GrantView, responses=CONFLICT)
     async def update_grant(
         organization_id: UUID,
         grant_id: UUID,
@@ -123,7 +125,7 @@ def create_project_router(get_service) -> APIRouter:
             response, await service.update_grant(token, organization_id, grant_id, body, version)
         )
 
-    @router.delete("/project-grants/{grant_id}", status_code=204)
+    @router.delete("/project-grants/{grant_id}", status_code=204, responses=CONFLICT)
     async def revoke_grant(
         organization_id: UUID, grant_id: UUID, version: Version, token: Token, service: Service
     ):
@@ -131,7 +133,9 @@ def create_project_router(get_service) -> APIRouter:
             token, organization_id, grant_id, GrantPatch(status="revoked"), version
         )
 
-    @router.post("/service-accounts", response_model=ServiceAccountView, status_code=201)
+    @router.post(
+        "/service-accounts", response_model=ServiceAccountView, status_code=201, responses=CONFLICT
+    )
     async def create_account(
         organization_id: UUID,
         body: ServiceAccountCreate,
@@ -162,7 +166,9 @@ def create_project_router(get_service) -> APIRouter:
             response, await service.get_service_account(token, organization_id, account_id)
         )
 
-    @router.patch("/service-accounts/{account_id}", response_model=ServiceAccountView)
+    @router.patch(
+        "/service-accounts/{account_id}", response_model=ServiceAccountView, responses=CONFLICT
+    )
     async def update_account(
         organization_id: UUID,
         account_id: UUID,
@@ -208,7 +214,7 @@ def create_project_router(get_service) -> APIRouter:
     ):
         return tagged(response, await service.get_key(token, organization_id, key_id))
 
-    @router.post("/api-keys/{key_id}/revoke", response_model=KeyView)
+    @router.post("/api-keys/{key_id}/revoke", response_model=KeyView, responses=CONFLICT)
     async def revoke_key(
         organization_id: UUID,
         key_id: UUID,

@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from nexus.http import credentials, cursor_value, expected_version
+from nexus.http import credentials, cursor_value, error_responses, expected_version
 
 from ..application.schemas import (
     CredentialCreate,
@@ -20,6 +20,8 @@ from ..application.schemas import (
     UpstreamView,
 )
 from ..application.service import CatalogService
+
+CONFLICT = error_responses(409)
 
 
 def create_router(get_service):
@@ -62,11 +64,11 @@ def create_router(get_service):
             response, await service.get_model(token, model_id, organization_id, project_id, key_id)
         )
 
-    @router.post("/models", response_model=ModelView, status_code=201)
+    @router.post("/models", response_model=ModelView, status_code=201, responses=CONFLICT)
     async def create_model(body: ModelCreate, response: Response, token: Token, service: Service):
         return tagged(response, await service.create_model(token, body))
 
-    @router.patch("/models/{model_id}", response_model=ModelView)
+    @router.patch("/models/{model_id}", response_model=ModelView, responses=CONFLICT)
     async def update_model(
         model_id: UUID,
         body: ModelPatch,
@@ -85,13 +87,13 @@ def create_router(get_service):
     async def upstream(upstream_id: UUID, response: Response, token: Token, service: Service):
         return tagged(response, await service.get_upstream(token, upstream_id))
 
-    @router.post("/upstreams", response_model=UpstreamView, status_code=201)
+    @router.post("/upstreams", response_model=UpstreamView, status_code=201, responses=CONFLICT)
     async def create_upstream(
         body: UpstreamCreate, response: Response, token: Token, service: Service
     ):
         return tagged(response, await service.create_upstream(token, body))
 
-    @router.patch("/upstreams/{upstream_id}", response_model=UpstreamView)
+    @router.patch("/upstreams/{upstream_id}", response_model=UpstreamView, responses=CONFLICT)
     async def update_upstream(
         upstream_id: UUID,
         body: UpstreamPatch,
@@ -117,7 +119,10 @@ def create_router(get_service):
         return tagged(response, await service.get_credential(token, upstream_id, credential_id))
 
     @router.post(
-        "/upstreams/{upstream_id}/credentials", response_model=CredentialView, status_code=201
+        "/upstreams/{upstream_id}/credentials",
+        response_model=CredentialView,
+        status_code=201,
+        responses=CONFLICT,
     )
     async def create_credential(
         upstream_id: UUID,
@@ -129,7 +134,9 @@ def create_router(get_service):
         return tagged(response, await service.create_credential(token, upstream_id, body))
 
     @router.post(
-        "/upstreams/{upstream_id}/credentials/{credential_id}/revoke", response_model=CredentialView
+        "/upstreams/{upstream_id}/credentials/{credential_id}/revoke",
+        response_model=CredentialView,
+        responses=CONFLICT,
     )
     async def revoke_credential(
         upstream_id: UUID,
@@ -160,13 +167,13 @@ def create_router(get_service):
     async def deployment(deployment_id: UUID, response: Response, token: Token, service: Service):
         return tagged(response, await service.get_deployment(token, deployment_id))
 
-    @router.post("/deployments", response_model=DeploymentView, status_code=201)
+    @router.post("/deployments", response_model=DeploymentView, status_code=201, responses=CONFLICT)
     async def create_deployment(
         body: DeploymentCreate, response: Response, token: Token, service: Service
     ):
         return tagged(response, await service.create_deployment(token, body))
 
-    @router.patch("/deployments/{deployment_id}", response_model=DeploymentView)
+    @router.patch("/deployments/{deployment_id}", response_model=DeploymentView, responses=CONFLICT)
     async def update_deployment(
         deployment_id: UUID,
         body: DeploymentPatch,

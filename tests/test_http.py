@@ -2,7 +2,8 @@ from contextlib import asynccontextmanager
 
 import httpx
 
-from nexus.api import build_server
+from nexus.api import build_server, create_app
+from nexus.http import ErrorResponse, ValidationErrorResponse
 
 
 async def test_liveness_does_not_claim_dependency_readiness():
@@ -51,3 +52,39 @@ async def test_unexpected_errors_do_not_escape_or_echo_secrets(caplog):
     assert "sensitive-dependency-value" not in response.text
     assert "sensitive-dependency-value" not in caplog.text
     assert response.headers["cache-control"] == "no-store"
+
+
+async def test_error_bodies_match_the_declared_envelopes(settings_factory):
+    app = create_app(settings_factory())
+    app.state.routing = app.state.publication = object()  # rejected before any service call
+    spec = app.openapi()
+    responses = spec["paths"]["/api/v1/route-policies"]["post"]["responses"]
+    assert responses["401"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ErrorResponse"
+    )
+    assert responses["422"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ValidationErrorResponse"
+    )
+    assert "HTTPValidationError" not in spec["components"]["schemas"]
+    bearer = {"Authorization": "Bearer unverified"}
+    cluster = "/api/v1/gateway-clusters/00000000-0000-0000-0000-000000000001"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        unauthorized = await client.post("/api/v1/route-policies", json={})
+        invalid = await client.post("/api/v1/route-policies", headers=bearer, json={"x": 1})
+        missing_version = await client.patch(cluster, headers=bearer, json={})
+        bad_version = await client.patch(cluster, headers=bearer | {"If-Match": "3"}, json={})
+    assert unauthorized.status_code == 401
+    ErrorResponse.model_validate(unauthorized.json(), strict=True)
+    assert set(unauthorized.json()["error"]) == {"code", "message", "trace_id"}
+    assert invalid.status_code == 422
+    body = ValidationErrorResponse.model_validate(invalid.json(), strict=True)
+    assert body.error.code == "validation_error" and body.error.fields
+    assert set(invalid.json()["error"]) == {"code", "message", "trace_id", "fields"}
+    assert all(set(field) == {"location", "code"} for field in invalid.json()["error"]["fields"])
+    assert missing_version.status_code == 428
+    ErrorResponse.model_validate(missing_version.json(), strict=True)
+    assert bad_version.status_code == 422
+    assert "fields" not in bad_version.json()["error"]
+    ValidationErrorResponse.model_validate(bad_version.json(), strict=True)

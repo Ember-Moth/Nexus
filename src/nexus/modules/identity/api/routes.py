@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from nexus.http import credentials, cursor_value, expected_version
+from nexus.http import credentials, cursor_value, error_responses, expected_version
 
 from ..application.schemas import (
     CurrentUser,
@@ -27,6 +27,9 @@ from ..application.schemas import (
 )
 from ..application.service import IdentityService
 
+CONFLICT = error_responses(409)
+RATE_LIMITED = error_responses(429)
+
 
 def create_router(get_service) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["identity"])
@@ -36,7 +39,9 @@ def create_router(get_service) -> APIRouter:
     Limit = Annotated[int, Query(ge=1, le=100)]
     Cursor = Annotated[str | None, Query(max_length=512)]
 
-    @router.post("/auth/sessions", response_model=SessionCreated, status_code=201)
+    @router.post(
+        "/auth/sessions", response_model=SessionCreated, status_code=201, responses=RATE_LIMITED
+    )
     async def login(body: Login, request: Request, service: Service):
         return await service.login(
             body.login,
@@ -48,7 +53,7 @@ def create_router(get_service) -> APIRouter:
     async def logout(token: Token, service: Service):
         await service.logout(token)
 
-    @router.post("/auth/password", status_code=204)
+    @router.post("/auth/password", status_code=204, responses=RATE_LIMITED)
     async def set_password(body: PasswordSetup, request: Request, service: Service):
         await service.set_password(
             body.token.get_secret_value(),
@@ -60,7 +65,7 @@ def create_router(get_service) -> APIRouter:
     async def me(token: Token, service: Service):
         return await service.me(token)
 
-    @router.post("/users", response_model=SetupIssued, status_code=201)
+    @router.post("/users", response_model=SetupIssued, status_code=201, responses=CONFLICT)
     async def create_user(body: UserCreate, token: Token, service: Service):
         return await service.create_user(token, body.login)
 
@@ -69,12 +74,17 @@ def create_router(get_service) -> APIRouter:
         return await service.list_users(token, limit, cursor_value(cursor))
 
     @router.post(
-        "/users/{user_id}/password-reset-tokens", response_model=SetupIssued, status_code=201
+        "/users/{user_id}/password-reset-tokens",
+        response_model=SetupIssued,
+        status_code=201,
+        responses=CONFLICT,
     )
     async def setup(user_id: UUID, token: Token, service: Service):
         return await service.issue_password_setup(token, user_id)
 
-    @router.post("/organizations", response_model=OrganizationView, status_code=201)
+    @router.post(
+        "/organizations", response_model=OrganizationView, status_code=201, responses=CONFLICT
+    )
     async def create_organization(
         body: OrganizationCreate, response: Response, token: Token, service: Service
     ):
@@ -88,7 +98,9 @@ def create_router(get_service) -> APIRouter:
         response.headers["ETag"] = f'"{result.version}"'
         return result
 
-    @router.patch("/users/{user_id}/platform-roles", response_model=PlatformRolesView)
+    @router.patch(
+        "/users/{user_id}/platform-roles", response_model=PlatformRolesView, responses=CONFLICT
+    )
     async def update_platform_roles(
         user_id: UUID,
         body: PlatformRolesPatch,
@@ -115,7 +127,9 @@ def create_router(get_service) -> APIRouter:
         response.headers["ETag"] = f'"{result.version}"'
         return result
 
-    @router.patch("/organizations/{organization_id}", response_model=OrganizationView)
+    @router.patch(
+        "/organizations/{organization_id}", response_model=OrganizationView, responses=CONFLICT
+    )
     async def update_organization(
         organization_id: UUID,
         body: OrganizationPatch,
@@ -129,7 +143,10 @@ def create_router(get_service) -> APIRouter:
         return result
 
     @router.post(
-        "/organizations/{organization_id}/members", response_model=MemberView, status_code=201
+        "/organizations/{organization_id}/members",
+        response_model=MemberView,
+        status_code=201,
+        responses=CONFLICT,
     )
     async def add_member(
         organization_id: UUID,
@@ -160,7 +177,11 @@ def create_router(get_service) -> APIRouter:
         response.headers["ETag"] = f'"{result.version}"'
         return result
 
-    @router.patch("/organizations/{organization_id}/members/{member_id}", response_model=MemberView)
+    @router.patch(
+        "/organizations/{organization_id}/members/{member_id}",
+        response_model=MemberView,
+        responses=CONFLICT,
+    )
     async def update_member(
         organization_id: UUID,
         member_id: UUID,
@@ -174,7 +195,9 @@ def create_router(get_service) -> APIRouter:
         response.headers["ETag"] = f'"{result.version}"'
         return result
 
-    @router.delete("/organizations/{organization_id}/members/{member_id}", status_code=204)
+    @router.delete(
+        "/organizations/{organization_id}/members/{member_id}", status_code=204, responses=CONFLICT
+    )
     async def remove_member(
         organization_id: UUID, member_id: UUID, version: Version, token: Token, service: Service
     ):

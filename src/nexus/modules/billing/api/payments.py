@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from nexus.http import credentials, cursor_value, expected_version, idempotency_key
+from nexus.http import credentials, cursor_value, error_responses, expected_version, idempotency_key
 
 from ..application.payments.schemas import (
     ChannelCreate,
@@ -23,6 +23,8 @@ from ..application.payments.schemas import (
 )
 from ..application.payments.service import PaymentService
 from ..application.schemas import Page
+
+CONFLICT = error_responses(409)
 
 
 def create_router(get_service):
@@ -75,7 +77,9 @@ def create_router(get_service):
         return await service.versions(token, channel_id, limit, cursor_value(cursor))
 
     @router.post(
-        "/payment-channels/{channel_id}/versions/{config_id}/revoke", response_model=ChannelView
+        "/payment-channels/{channel_id}/versions/{config_id}/revoke",
+        response_model=ChannelView,
+        responses=CONFLICT,
     )
     async def revoke(
         channel_id: UUID,

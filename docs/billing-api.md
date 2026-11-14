@@ -1,20 +1,10 @@
 # 定价与预付费账户
 
-M3 提供 USD 账户、人工入账、独立售价与成本版本、组织折扣、金额预算、不可改写的资金流水、来源调整及账户对账。内部预留与结算原语使用同一套账务存储和锁顺序；外部调用授权、上游用量证据接收及自动归一化在 M4 接入。M3P 已接入通用支付流程与测试专用模拟网关，详见[支付网关与自动入账](payments.md)；真实渠道尚未接入。
+钱包按企业结算。平台管理员配置售价、部署成本、折扣和预算，平台财务登记收款并过账。在线充值的配置、收款币种和查单流程见[支付网关与自动入账](payments.md)。
 
-## 升级与运行
+## 账户准备
 
-沿用[开发说明](development.md)生成独立配置，先迁移，再启动 API 和 Worker：
-
-```sh
-uv run nexus --env-file .env.migrate migrate
-uv run nexus --env-file .env.api api
-uv run nexus --env-file .env.worker worker
-```
-
-`0005_billing_accounts` 增加账户、收款账户、入账、流水、调整、财务幂等与审计，以及身份模块的角色版本和开户事件收件箱。`0006_pricing_reservations` 增加价格、折扣、预算期间、请求预留与尝试记录。两者保留 M2 的身份、目录和凭据数据。
-
-`NEXUS_BILLING_CURRENCY` 默认 `USD`，这是本次确定的首期运营币种。第一次账务事务（包括账务就绪检查）将币种写入 billing.settings。以后 API 与 Worker 配置必须与持久化币种一致，否则账务操作拒绝、`billing_currency` 就绪检查失败；修改配置不执行换汇。
+`NEXUS_BILLING_CURRENCY` 默认 `USD`。第一次账务事务（包括账务就绪检查）将币种写入 billing.settings。以后 API 与 Worker 配置必须与持久化币种一致，否则账务操作拒绝、`billing_currency` 就绪检查失败；修改配置不执行换汇。
 
 Worker 每 500 ms 检查一次开户事件和到期预留，有待处理数据时连续消费。组织创建仍先返回 provisioning；billing 幂等开户并发出 account_ready，identity 消费后进入 active。两侧事件均携带显式 schema_version；消费者只接受已支持版本，未知版本保留待处理且不确认、不开户或激活。中途停机可重放，暂停组织只更新恢复目标，归档组织不会被重新激活。到期预留只进入 review，金额仍保持 held。
 
@@ -22,7 +12,7 @@ Worker 每 500 ms 检查一次开户事件和到期预留，有待处理数据�
 
 所有路径以 `/api/v1` 为前缀，使用管理会话 Bearer 认证。
 
-| 角色 | M3 权限 |
+| 角色 | 账务权限 |
 | --- | --- |
 | platform_admin | 维护价格、折扣和平台预算；读取账户；管理平台角色 |
 | platform_finance | 登记收款、过账、调整、对账；读取平台范围的账户与流水 |
@@ -30,7 +20,7 @@ Worker 每 500 ms 检查一次开户事件和到期预留，有待处理数据�
 | org_finance | 读取本企业账务；无直接入账、调整和预算写权限 |
 | org_developer | 可在模型权限范围内查询有效售价；无企业钱包和完整账务查询权限 |
 
-管理员不会隐式获得财务写权限。先读取 `GET /users/{id}/platform-roles`，再使用其 ETag 调用 `PATCH /users/{id}/platform-roles`，请求体例如 `{"roles":["platform_admin","platform_finance"]}`。此命令完整替换平台角色集合，要求目标用户已激活；不能移除最后一位有效平台管理员。所有角色变更有审计。
+平台财务写权限需显式授予。[分配平台角色](identity-api.md#平台角色与企业角色)
 
 财务只维护稳定的线下收款账户。`reference` 是同一真实收款账户的永久标识，限 1–70 个字母、数字或 `_.:-`；不能为同一真实账户创建多个 reference 以绕过收款去重。namespace 固定为 `manual:{reference}`，不能通过改名、停用或修改密钥改变。网关收款使用独立、受校验的 gateway 来源，人工补单须通过支付订单查单，不能在人工登记中指定网关来源或命名空间。
 
@@ -43,7 +33,7 @@ Worker 每 500 ms 检查一次开户事件和到期预留，有待处理数据�
 
 同一 namespace 内的 external_reference 全局唯一，不能给另一组织再次入账。未过账草稿可取消并重新登记；已过账收款不能释放这个唯一标识。收款账户停用后不接受新登记，已有真实收款草稿仍可过账。
 
-## 已实现接口
+## 接口
 
 `{org}`、`{id}` 为 UUID。列表使用 limit（1–100，默认 50）与 cursor 分页。
 
@@ -70,7 +60,7 @@ Worker 每 500 ms 检查一次开户事件和到期预留，有待处理数据�
 | `GET /organizations/{org}/adjustments/{id}` | 查看调整 |
 | `POST /organizations/{org}/adjustments/{id}/post` | 幂等执行反向资金调整 |
 | `GET /organizations/{org}/ledger`、`GET /organizations/{org}/ledger/{id}` | 只读资金流水 |
-| `GET /organizations/{org}/requests`、`GET /organizations/{org}/requests/{id}` | owner、企业财务及平台角色查看内部请求与预留状态 |
+| `GET /organizations/{org}/requests`、`GET /organizations/{org}/requests/{id}` | 平台和企业按权限查看请求与预留状态，开发者限于获授权项目 |
 | `POST /organizations/{org}/account/reconcile` | 财务核对账户、资金流水、预留、预算及单据关系；保存核对审计 |
 
 PATCH、发布、过账与草稿取消要求 `If-Match`。收款账户、入账、调整、价格和折扣的创建，以及发布和过账，还要求 `Idempotency-Key`。请求失败或响应丢失时，使用原键、原请求体及原 If-Match 重试；同键不同参数返回 409，过期版本返回 412，缺少必要头返回 428。
@@ -106,12 +96,4 @@ PATCH、发布、过账与草稿取消要求 `If-Match`。收款账户、入账�
 
 按账户对账返回 consistent、issues 和 as_of，并保存审计。Worker 每小时轮巡核对账户，发现差异时创建核对事项。财务人员可查看证据和处理历史，详见[查询与运营](operations.md)。
 
-## 内部资金原语与后续边界
-
-ReservationService 供同一控制平面内部使用，不暴露为管理 HTTP 路由。Admission 是调用方已经确认的身份与上界事实；它本身不鉴别企业 API Key，不代表对外可用的请求授权协议。M4 的 gateway_v1 在数据库事务内校验节点、应用凭据、模型权限和上界，Worker 消费持久化用量证据。具体签名与运行方式见[通信协议](plane-protocol.md)。
-
-原语已支持预留、尝试意图与成本快照、可信归一化用量结算、零费用释放、幂等重试和超时核对。上游失败不向客户收费，已确认的尝试成本独立保留；客户取消且存在可信用量时按实际用量收费。存在尝试意图后，单凭“未开始”的报告不能释放资金。成本未确认不阻止事实完整的客户费用结算。
-
-用量超出授权上界时保留预留和证据，冻结账户的新预留与新尝试。未知结果、缺失用量和到期预留也保留 held 状态。平台财务可提交依据处理异常，待全部冻结来源和账本差异核清后单独申请解冻。命令见[查询与运营](operations.md)。
-
-本机集成验证使用隔离的真实 PostgreSQL/Redis，覆盖 16 路预留竞争、重复收款/过账、提交后响应丢失、事务失败回滚、调价与折扣快照、多次尝试成本、预算回填、跨月退费、退款上限、超时、独立 Worker 开户及数据库历史保护。真实上游计量、支付渠道、近实时结算延迟和生产负载仍需对应阶段验收。
+网关预留、尝试和用量通过数据库函数提交。退款、超上界和缺失用量的处理见[计量与账务](billing.md)和[异常核对](operations.md#财务核对)。

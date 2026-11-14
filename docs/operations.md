@@ -1,10 +1,10 @@
 # 查询与运营
 
-先升级到当前迁移版本，再启动匹配版本的 API 和 Worker。升级时已有请求会进入投影队列。Worker 复制请求及关联费用的版本，成功后确认源版本。重复投递可安全重放，后续变化会再次进入队列。reporting 使用独立数据库角色。账户余额与流水由 billing 实时提供。
+API 提供查询和核对命令，Worker 维护报表投影、导出任务和周期性对账。账户余额与流水直接从 billing 读取。
 
 ## 查询
 
-管理接口前缀为 `/api/v1`。组织请求、消费、用量和流水列表支持 project_id、api_key_id、model_id、start、end 和 time_basis。时间参数带时区，包含起点，排除终点。默认按 occurred_at 查询，posted_at 选择记账期间。使用 limit 和 next_cursor 分页。充值属于组织，按项目筛选时只返回归属于该项目的流水。
+管理接口前缀为 `/api/v1`。组织请求、消费、用量和流水列表支持 project_id、api_key_id、model_id、start、end 和 time_basis。时间参数带时区，包含起点，排除终点。默认按 occurred_at 查询，posted_at 选择记账期间。使用 limit 控制每页数量，将返回的 next_cursor 作为下一次请求的 cursor。充值属于组织，按项目筛选时只返回归属于该项目的流水。
 
 | 接口 | 返回内容 |
 | --- | --- |
@@ -43,4 +43,4 @@
 
 平台管理员可从 `GET /internal/metrics` 查询当前 API 进程请求耗时与错误、连接取得耗时、等待锁数量、配置发布和节点滞后、用量积压与结算延迟、支付延迟、超期预留、重复与冲突事件、核对差异数。耗时样本取最近 24 小时的数据库事实，API 进程计数自启动累计。
 
-在迁移 `0010_settlement_backpressure` 之后，网关新增预留时检查全库 ready 结算任务数。达到 `billing.settings.settlement_backlog_limit` 时返回 `settlement_backlog`。默认阈值为 1024，部署方可在该单行配置中按实测容量设置正整数。已有请求可继续上报、重放或结算，积压下降后自动恢复新预留。该阈值按准入事务可见的已提交事实判断，已授权请求继续产生事件时，队列可以超过阈值。Worker 的 Redis 心跳包含进程累计的数据库连接取得次数与耗时。
+网关新增预留时检查全库 ready 结算任务数。达到 `billing.settings.settlement_backlog_limit` 时返回 `settlement_backlog`。默认阈值为 1024，部署方可在该单行配置中按实测容量设置正整数。已有请求可继续上报、重放或结算，积压下降后自动恢复新预留。该阈值按准入事务可见的已提交事实判断，已授权请求继续产生事件时，队列可以超过阈值。Worker 的 Redis 心跳包含进程累计的数据库连接取得次数与耗时。

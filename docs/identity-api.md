@@ -1,17 +1,6 @@
 # 登录与企业成员管理
 
-M2 第一部分已实现管理会话、平台用户创建、一次性密码设置、组织和成员管理。后续实现见[项目与应用凭据](project-credentials.md)和[模型与上游目录](catalog-api.md)。
-
-## 启动与升级
-
-沿用[本机开发说明](development.md)启动原生 PostgreSQL/Redis，执行以下升级后启动 API：
-
-```sh
-uv run nexus --env-file .env.migrate migrate
-uv run nexus --env-file .env.api api
-```
-
-迁移 `0002_identity_access` 保留 M1 已有管理员和密码哈希。开发环境可在 `/docs` 查看实际生成的 OpenAPI；生产环境默认关闭文档入口。已存在的数据库升级后不需要重新引导管理员。
+先在部署主机引导第一个平台管理员，再通过管理 API 创建人员账号和企业。启动命令见[运行指南](development.md#初始管理员)。
 
 ## 使用流程
 
@@ -19,14 +8,28 @@ uv run nexus --env-file .env.api api
 
 1. 初始管理员调用 `POST /auth/sessions`，提交 login 和 password，取得管理会话。
 2. 管理员调用 `POST /users` 创建用户，返回 pending 用户、一次性 setup_token 和有效期。公开自助注册未开放。
-3. 将一次性凭据交给对应用户，用户调用 `POST /auth/password` 提交 token 和新 password。凭据只可兑换一次，成功后用户进入 active。此阶段不自动发送邮件。
+3. 将一次性凭据交给对应用户，用户调用 `POST /auth/password` 提交 token 和新 password。凭据只可兑换一次，成功后用户进入 active。一次性凭据由管理员通过受控渠道交付。
 4. 管理员调用 `POST /organizations` 创建企业，可通过 owner_user_id 指定已激活的用户为首位 owner；省略时使用当前管理员。
 5. 企业 owner 使用自己的账号登录，调用 `POST /organizations/{org}/members` 关联已激活用户，指定 org_owner、org_developer 或 org_finance。
 6. 成员通过 `GET /me` 查询自己的身份、平台角色与有效成员关系；`GET /organizations` 只返回其可访问的企业。
 
-新企业首先进入 provisioning，创建组织、首位 owner 与 `identity.organization_created` outbox 事件在同一事务中提交。组织管理可以使用，但不会伪造计费账户已准备完成；普通管理接口不能直接把 provisioning 改为 active。M3 Worker 已消费账户事件并将准备完成的组织激活；收费网关接入仍在 M4。详见[定价与预付费账户](billing-api.md)。
+企业创建后处于 `provisioning`。Worker 完成幂等开户，identity 收到账户就绪事件后将企业激活。启用收费调用前确认组织为 `active`、余额和预算足以预留。[账户与预算](billing-api.md)
 
-## 已实现接口
+## 平台角色与企业角色
+
+| 角色 | 作用域 | 主要权限 |
+| --- | --- | --- |
+| `platform_admin` | 平台 | 用户、组织、平台角色、上游、模型和配置管理 |
+| `platform_finance` | 平台 | 人工入账、账务调整、对账与财务导出 |
+| `org_owner` | 组织 | 组织成员、项目、服务账号、Key、预算、充值订单和账务查看 |
+| `org_developer` | 授权项目 | 服务账号和 Key 管理、模型使用、用量查看 |
+| `org_finance` | 组织 | 创建充值订单；查询余额、流水、费用和导出，无直接账本写权限 |
+
+平台管理员不会隐式获得财务写权限；需要执行人工入账时显式授予财务角色。组织内至少保留一位有效 owner。企业成员可以按权限发起支付，但不能直接增加余额、标记已收款、修改销售价或查看上游成本和凭据。
+
+为已激活用户增授平台角色时，先读取 `GET /users/{id}/platform-roles`。用返回的 ETag 作为 `If-Match` 调用 `PATCH /users/{id}/platform-roles`，提交完整角色集合，例如 `{"roles":["platform_admin","platform_finance"]}`。服务保护最后一个有效的平台管理员。
+
+## 接口
 
 | 接口 | 行为 |
 | --- | --- |
@@ -45,9 +48,7 @@ uv run nexus --env-file .env.api api
 
 ## 权限与一致性
 
-平台管理员管理用户与企业，但不会隐式获得 platform_finance。平台财务可以读取企业基本信息，不因此拥有用户创建或企业管理权限。企业 owner 管理本企业资料和成员，开发者及企业财务不具有成员管理权限。
-
-企业之外的资源以及不匹配该企业路径的成员 ID 返回 404。每次请求重新查询会话、用户状态、平台角色及相应成员关系；移除成员或撤销角色后，同一旧会话不能继续使用失去的权限。用户停用时会话也不能继续认证，全局用户停用仍未提供管理入口；平台角色查询与条件更新已在 M3 提供 GET/PATCH /users/{id}/platform-roles，并保护最后一名管理员。
+企业之外的资源以及不匹配该企业路径的成员 ID 返回 404。每次请求重新查询会话、用户状态、平台角色及相应成员关系；移除成员或撤销角色后，同一旧会话不能继续使用失去的权限。用户停用后，现有会话也会失去访问权限。
 
 成员变更锁定组织行并重新检查调用者权限，防止并发操作移除最后一名有效 owner。每个组织与用户最多一条成员关系；已停用关系可使用 PATCH 恢复。归档组织不再接受资料或成员变更。
 
@@ -57,9 +58,7 @@ uv run nexus --env-file .env.api api
 
 ## 凭据与运行参数
 
-会话与一次性凭据均使用 32 字节随机值，数据库只保存 SHA-256 摘要；两类凭据使用不同前缀，不能与未来的数据平面 API Key 混用。密码使用 Argon2id，验证与哈希在有并发上限的线程任务中执行。过期会话和密码凭据在读取时失效，当前不自动清理历史记录。
-
-密码验证采用 argon2-cffi 的标准验证接口；会话生命周期遵循服务端验证、到期与撤销的设计原则。[argon2-cffi 说明](https://argon2-cffi.readthedocs.io/en/stable/howto.html)、[OWASP 会话管理说明](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
+会话与一次性凭据均使用 32 字节随机值，数据库只保存 SHA-256 摘要；两类凭据使用不同前缀，用途分别为管理登录和设置密码。密码使用 Argon2id，验证与哈希在有并发上限的线程任务中执行。过期会话和密码凭据在读取时失效，历史记录按部署策略维护。
 
 | 参数 | 默认值 |
 | --- | --- |

@@ -1,12 +1,6 @@
 # 模型与上游目录
 
-M2 已实现公开模型定义、上游配置、加密凭据、部署映射和组织/项目/Key 的模型访问策略。catalog 拥有供应侧数据，identity 拥有客户访问范围，双方通过公开只读能力协作，不共享业务事务或直接查询对方的私有表。
-
-## 升级与配置顺序
-
-执行 `uv run nexus --env-file .env.migrate migrate` 应用 `0004_catalog_and_access`，然后重启 API 和 Worker。迁移保留已有用户、组织、项目与 Key。
-
-建议按以下顺序配置：
+## 配置顺序
 
 1. 平台管理员创建公开模型，填写协议族、Token 计量维度和输入/输出上限。
 2. 创建 HTTPS 上游，选择协议族，写入 API Key 凭据。
@@ -15,7 +9,9 @@ M2 已实现公开模型定义、上游配置、加密凭据、部署映射和�
 5. 企业 owner 根据需要添加 customer 策略；获授权 developer 可以收窄其项目或 Key 范围。
 6. 企业成员携带组织、项目或 Key 上下文查询可见模型。
 
-当前协议族元数据支持 openai_compatible、anthropic 和 gemini，Token 模型使用 tokens.v1 计量定义。协议族标签不代表已经实现厂商协议适配。模型限制和能力由管理员填写，尚未通过真实上游调用验证。
+当前协议族元数据支持 openai_compatible、anthropic 和 gemini，Token 模型使用 tokens.v1 计量定义。这些是控制平面的目录标签。Rust Relay 首期仅规划 Anthropic Messages 和 OpenAI Responses；部署能否执行请求还取决于实际端点及已验收的能力。[Relay 协议范围](relay-design.md#协议覆盖与交付条件)
+
+模型限制和能力由管理员填写，尚未通过真实上游调用验证。
 
 ## 目录 API
 
@@ -61,8 +57,6 @@ M2 已实现公开模型定义、上游配置、加密凭据、部署映射和�
 
 接口为 `/organizations/{org}/access-policies` 的 GET/POST，以及 `/{policy_id}` 的 GET/PATCH。创建字段是 layer、scope_type、scope_id、allowed_models。layer 为 platform 或 customer；scope_type 为 organization、project 或 key。组织级 scope_id 可省略，其余必须提供实际资源 ID。
 
-规则如下：
-
 - 必须存在 platform 组织级策略，否则默认拒绝所有模型。
 - 有效范围是路径上全部 platform/customer 策略的交集。
 - 未设置下级策略表示继承；显式空列表表示拒绝全部。
@@ -73,8 +67,4 @@ M2 已实现公开模型定义、上游配置、加密凭据、部署映射和�
 
 客户查询 `GET /models` 或 `GET /models/{id}` 必须提供 organization_id，可进一步提供 project_id 或 key_id。所有上下文必须匹配且对当前用户可见；跨企业、未授权项目和不匹配的 Key 返回 404。平台管理员不提供组织上下文时查询完整管理目录，提供组织上下文时也按该企业实际范围预览。
 
-访问策略不赋予充值、授信或模型调用额度。当前 Key 的内部校验只验证身份与父级状态；实际数据平面还需接入模型策略、资金预留和路由执行。组织仍由后续账户准备流程从 provisioning 激活。
-
-## 当前边界
-
-M4 将目录、路由和运行配额发布为集群快照，并通过模拟器验证预留与结算。真实上游接入时仍需核对能力声明、Token 用量和故障行为。具体调用见[通信协议](plane-protocol.md)。
+完成模型授权后，还需发布售价、部署成本和路由。节点在调用时按实际余额和预算预留资金，使用授权版本的上游部署。[定价](billing-api.md) · [节点接入与配置发布](plane-protocol.md#节点接入与配置发布)

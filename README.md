@@ -1,50 +1,27 @@
 # Nexus
 
-Nexus 是面向企业客户的 AI API 中转与计费平台。控制平面负责企业管理、配置发布、预付费账户、用量结算和审计；数据平面负责执行调用策略、转发 AI API 请求并报告用量。
+Nexus 是企业 AI API 的控制平面。平台管理员配置模型、上游和访问权限，企业按项目签发调用 Key。网关为每次调用预留资金，Worker 根据用量结算 USD 预付费账户。充值支持人工登记、Stripe、彩虹易支付 V1/V2 和 Antom。
 
-设计 v1.0 已于 2026-11-08 定稿。M1、M2、M3 与 M3P 通用支付流程已实现，涵盖企业身份与目录、USD 预付费账户、版本化定价、人工入账、预算预留、来源调整，以及支付订单、签名通知、查单补偿和原子入账。支付支持 Stripe、彩虹易支付 V1/V2、Antom 和测试专用模拟网关。M4 已接通 PostgreSQL 网关协议、Redis 配置分发和用量自动结算，协议验证使用 Python 模拟器。
+控制平面由 Python 管理 API 和独立 Worker 构成。PostgreSQL 保存授权、价格、用量和账本，Redis 分发配置并协调限额。仓库提供 Python 网关模拟器验证两平面协议；Rust 数据平面计划放在 `src/relay/`，首期仅接入 Anthropic Messages 和 OpenAI Responses。
 
-## 已确认的范围
+## 从本机开始
 
-- 当前开发控制平面，技术栈为 Python、FastAPI、uvloop、PostgreSQL。
-- 数据平面计划使用 Rust，采用无状态网关集群，由负载均衡分发请求，暂不开发。
-- 两个平面通过 PostgreSQL、Redis 协作；业务状态外置，网关不持有唯一的账户或计量数据。
-- 首期采用预付费余额扣费，支持人工登记入账和支付确认后的自动入账；先定义通用支付接口，具体网关稍后确定。
-- 定价分为上游成本表、统一售价表和企业客户折扣，按输入、缓存、补全等 Token 用量自动结算，目标是接近实时扣费。
-- 服务企业客户的 API 调用业务，不接入 Coding Plan 套餐，不实现账号伪装或防风控功能。
+按[运行指南](docs/development.md)启动 PostgreSQL 和 Redis，迁移数据库，创建第一个平台管理员，再分别启动 API 与 Worker。本机默认地址为 `http://127.0.0.1:8000`。打开 `/docs`，用 `POST /api/v1/auth/sessions` 登录，将返回的 `access_token` 填入 **Authorize**。调用 `GET /api/v1/me` 可确认身份和角色。
 
-## 文档导航
+## 使用与接入
 
-| 文档 | 内容 |
+| 要做的事 | 文档 |
 | --- | --- |
-| [产品范围](docs/product-scope.md) | 用户、权限、首期功能、后续扩展和实施时确定的参数 |
-| [系统架构](docs/architecture.md) | 进程职责、技术选型、模块边界、部署和故障行为 |
-| [数据模型](docs/data-model.md) | 实体关系、租户隔离、关键约束、索引和数据生命周期 |
-| [计量与账务](docs/billing.md) | 成本与售价、客户折扣、Token 计量、预留、近实时扣费和对账 |
-| [支付网关与自动入账](docs/payments.md) | Stripe、EPay、Antom 配置、订单、验签、查单补偿与入账核对 |
-| [两平面通信协议](docs/plane-protocol.md) | PostgreSQL 通信边界、Redis 用途、配置和用量事件契约 |
-| [管理 API](docs/management-api.md) | 认证、授权、资源、命令、幂等与错误约定 |
-| [实施计划](docs/implementation-plan.md) | 开发阶段、验收条件、风险验证和后续网关接入 |
-| [本机开发与验证](docs/development.md) | 原生 PostgreSQL/Redis 实例、启动命令、迁移、管理员引导与测试 |
-| [登录与企业成员管理](docs/identity-api.md) | M2 第一部分已实现的流程、接口、权限与运行参数 |
-| [项目与应用凭据](docs/project-credentials.md) | 项目授权、服务账号、Key 签发、幂等、撤销与轮换 |
-| [查询与运营](docs/operations.md) | 范围授权、费用汇总、CSV 导出、审计和异常核对 |
-| [定价与预付费账户](docs/billing-api.md) | USD 账户、财务授权、价格与折扣、人工入账、预算、预留与调整 |
-| [模型与上游目录](docs/catalog-api.md) | 模型、上游、加密凭据、部署映射与模型访问策略 |
-| [PPanel 设计参考](docs/ppanel-reference.md) | 本地源码依据、模块边界与支付设计的采用范围 |
+| 接入管理 API，处理认证、幂等重试和版本冲突 | [管理 API](docs/management-api.md) |
+| 创建管理员、企业、成员，分配平台角色 | [登录与企业成员](docs/identity-api.md) |
+| 创建项目和服务账号，签发、轮换或撤销调用 Key | [项目与应用凭据](docs/project-credentials.md) |
+| 配置模型、上游凭据、部署和可见模型范围 | [模型与上游目录](docs/catalog-api.md) |
+| 发布价格和折扣，设置预算，登记收款、调整和对账 | [定价与预付费账户](docs/billing-api.md) |
+| 接入支付渠道，确认充值、查单和处理退款风险 | [支付网关与自动入账](docs/payments.md) |
+| 配置节点、发布快照、调用 SQL 函数、上报用量 | [两平面通信协议](docs/plane-protocol.md) |
+| 规划 Rust Relay 移植、协议覆盖与验收 | [Relay 迁移与设计方案](docs/relay-design.md) |
+| 查询费用、导出 CSV、处理异常和查看指标 | [查询与运营](docs/operations.md) |
 
-建议依次阅读产品范围、系统架构、计量与账务，再阅读数据模型和接口契约。
+## 维护与验证
 
-## 设计约定
-
-文档中的“首期”指控制平面首个可验收版本。网关行为是未来数据平面必须满足的契约，控制平面实现阶段通过协议模拟器验证。
-
-本导航中的产品范围、架构、数据模型、计费、支付、通信、管理 API 和实施计划共同组成已定稿的 v1.0 基线；PPanel 参考文档记录设计来源。“后续”不属于首期交付。首期运营币种已确定为 USD；具体支付渠道、实际报价、依赖补丁版本等实施参数，按文档规定的时点补齐，不影响设计定稿。
-
-实现遵循既定的业务范围、模块边界、资金不变量和协议语义。常规实现细节根据验证结果完善；若需要改变这些设计决定，应同步更新相关文档并记录变更原因，避免代码与基线分离。
-
-当前架构选择 PostgreSQL 保存账户、账本、预留、用量和配置版本，Redis 承担配置分发辅助与运行状态。首期不把 Redis Streams 作为收费记录的唯一入口。
-
-identity、catalog、billing、publication、reporting 各自拥有数据和事务。模块内按 HTTP 路由、应用用例和持久化分层，支付、定价、计量与钱包由 billing 统一管理。目录及依赖方向见[模块组织](docs/architecture.md#python-工程组织)。
-
-设计版本：v1.0。定稿日期：2026-11-08。已完成：M0、M1、M2 核心管理流程、M3 定价与账户、M3P 通用支付入账与模拟网关。M4 通信与自动结算已实现。M5 查询与运营已实现，M6 已通过本机控制平面验收。实测负载、恢复演练与复现命令见[控制平面验收](docs/control-plane-acceptance.md)。
+模块边界与故障行为见[系统架构](docs/architecture.md)。定位资金事实和报表投影时查[数据模型](docs/data-model.md)，复算预留、成本和折后费用时查[计量与账务](docs/billing.md)。压测口径、热点企业实测结果和备份恢复演练见[控制平面验收](docs/control-plane-acceptance.md)。

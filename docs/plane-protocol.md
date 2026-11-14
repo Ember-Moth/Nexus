@@ -1,6 +1,6 @@
 # 两平面通信协议
 
-协议设计 v1 已随项目设计基线 v1.0 定稿。控制平面通过 PostgreSQL 发布持久化事实，通过 Redis 分发配置副本和协调运行状态。Rust 网关暂不实现；控制平面实现阶段使用模拟器验证契约。
+网关使用受限 PostgreSQL 登录调用 `gateway_v1`，通过 Redis 接收配置通知并取得运行租约。本文给出节点接入顺序、SQL 签名和消息格式。仓库中的[Python 模拟器](../src/nexus/gateway_simulator.py)可用于联调。
 
 ## 通信边界
 
@@ -14,38 +14,39 @@
 
 客户 AI 请求和响应正文不经过 PostgreSQL、Redis 或管理 API。传输通道承载的是控制状态与用量元数据。
 
+## 节点接入与配置发布
+
+1. 部署管理员创建 `nexus_bridge` 和 `nexus_gateway` 两个 NOLOGIN 角色。迁移身份须能 SET ROLE 到 identity、catalog、billing、publication 的模块角色及 nexus_bridge，以建立函数所有权。节点使用各自的 LOGIN 身份，继承 nexus_gateway 的权限并具有目标数据库 CONNECT 权限。各函数的实际授权清单随迁移固化。仓库的本机依赖脚本会准备组角色，节点登录及其凭据由部署方配置。
+2. 平台管理员调用 `POST /api/v1/gateway-clusters`，提供 name、region、organization_ids、deployment_ids 和 public_key。公钥使用 Base64 编码的 32 字节 Curve25519 公钥。catalog 用 PyNaCl/libsodium sealed box 封装上游凭据，密文内部绑定集群、凭据和版本。部署方把私钥交给相应集群。
+3. 用 `PUT /api/v1/gateway-clusters/{id}/principals/{node_id}` 登记 database_role、node_id、capabilities 与 active。节点身份由 PostgreSQL 登录角色确定。集群 PATCH 使用 If-Match，可暂停集群、修改范围或轮换公钥。key_grace_seconds 指定旧密钥包读取窗口，0 表示立即截止。缩小组织或部署范围会使先前范围的快照失效。新增范围随下一次发布生效。
+4. 使用 `POST /api/v1/route-policies` 为组织及模型设置部署候选、priority 和 weight。组织 owner 可通过 `POST /api/v1/organizations/{org}/quota-policies` 设置 customer 层限额，platform 层由平台管理员维护。多个适用上限共同约束请求。首次配置返回 201，更新同一作用域时携带上一版本的 If-Match。
+5. 调用 `POST /api/v1/gateway-clusters/{id}/releases`，附带 Idempotency-Key，正常发布使用空对象。rollback_revision 可选择历史资源集合。发布前重新核对源版本、当前价格和凭据资格，回滚生成更高修订。查询 `GET /api/v1/gateway-clusters/{id}/releases/{revision}` 获取期望修订、已分发修订、任务和各节点最近的确认。
+6. 节点调用 get_config_snapshot，校验原始字节的 SHA-256 后应用并确认。普通更新给已应用旧配置的节点保留最多 5 秒传播窗口。权限收缩、Key 失效、凭据撤销及集群范围变动由数据库实时检查。旧节点仍可提交其在途请求的结束证据。分发 Worker 每 30 秒核对并重写当前副本，Redis 清空期间节点可从 PostgreSQL 恢复。
+
 ## 数据库身份与权限
 
-数据库划分内部业务 schema 和版本化的 `gateway_v1` schema。网关使用独立的受限数据库身份，服务端通过数据库认证角色映射 `gateway_principals`，确定其集群、节点和允许范围，不信任消息自报的 `node_id`。
+节点权限从 PostgreSQL 的 `session_user` 和 `publication.gateway_principals` 取得。部署角色负责建立节点登录，平台管理员登记集群绑定；连接代理需保留各节点的认证身份。`nexus_gateway` 获授 `gateway_v1` 函数的执行权限，业务表读写由函数所属角色完成。
 
-网关角色仅能执行指定函数，不能直接读写账户、价格、用户、账本或任意收件箱行。节点身份由部署引导流程配置，网关不能通过提交一个节点名称自行注册获得权限。
-
-gateway_v1 本身不拥有业务表。组合入口由应用迁移装配，各模块发布需要的版本化 SQL 契约：publication 提供节点和集群授权，identity 提供实时 Key/组织授权，catalog 提供模型与部署资格，billing 提供资金预留和计量写入。只有这些显式契约可以被组合入口调用，不暴露模块私有表或 ORM。
-
-一次网关变更只写一个业务模块：reserve_request、start_attempt、append_usage_event、cancel_unstarted_request 写 billing；ack_config 写 publication。跨模块的身份、配置和目录检查是业务只读操作，允许必要的行级锁保持到提交，不顺手更新其他模块的 last_seen 等字段。其执行权限只授予桥接角色，普通网关角色不能绕过组合入口直接调用内部能力。
-
-这项规则是 Nexus 直连 PostgreSQL 的特定适配。Python 业务模块仍通过门面和窄端口协作，不使用跨模块写事务；SQL 定义、锁顺序、模块所有权和权限清单必须一并测试。
-
-如果函数使用 `SECURITY DEFINER`，必须由非超级用户的专用角色拥有、固定安全的 `search_path`、全限定对象名、撤销 PUBLIC 执行权限，并校验调用身份和所有关联资源。函数不得将客户端参数拼接为动态 SQL。迁移角色、API 角色、Worker 角色和网关角色分别授权。[PostgreSQL 函数安全说明](https://www.postgresql.org/docs/current/sql-createfunction.html)
-
-网关身份基于实际认证的 `session_user` 映射，不使用在 SECURITY DEFINER 中已变为函数所有者的 `current_user`。网关没有切换到其他网关角色的权限；连接代理必须保留这一身份边界，不能统一成一个超级用户再相信参数中的节点名称。
+`reserve_request`、`start_attempt`、`append_usage_event`、`cancel_unstarted_request` 写 billing，`ack_config` 写 publication。身份与目录校验可以在同一短事务中取得必要的读锁。各函数的授权和所有者见[网关迁移](../migrations/versions/0008_gateway_protocol.py)。
 
 ## PostgreSQL 桥接操作
 
-函数参数由迁移 0008 和协议集成测试固定。PostgreSQL 函数在调用方事务内运行，函数返回一行并不等于事务已经提交。网关适配层必须收到 COMMIT 成功后，才把授权或事件接收视为成功；网络断开视为结果未知，用原业务 ID 查询或重试。
+PostgreSQL 函数在调用方事务内运行，函数返回一行并不等于事务已经提交。网关适配层必须收到 COMMIT 成功后，才把授权或事件接收视为成功；网络断开视为结果未知，用原业务 ID 查询或重试。
 
-Python 模拟器在 autocommit 连接上以单条 SQL 调用一个函数，等待普通缓冲查询完整返回后再确认成功。网关调用要求独占一个事务边界，拒绝已有事务或 pipeline 中的调用。迁移 `0012_gateway_admission` 保留 v1 函数签名；网关的新预留和开始尝试先按企业排队，再检查钱包状态。资金预留在持有账户写锁时一次写入所有命中的预算期间；开始尝试读取账户状态并持有共享锁至提交，以便冻结和尝试相互排序。
+Python 模拟器在 autocommit 连接上以单条 SQL 调用一个函数，等待普通缓冲查询完整返回后再确认成功。网关调用要求独占一个事务边界，拒绝已有事务或 pipeline 中的调用。网关的新预留和开始尝试先按企业排队，再检查钱包状态。资金预留在持有账户写锁时一次写入所有命中的预算期间；开始尝试读取账户状态并持有共享锁至提交，以便冻结和尝试相互排序。
 
-| 操作 | 输入要点 | 行为 |
-| --- | --- | --- |
-| `get_config_snapshot` | 指定修订号或当前版本 | 只返回本集群允许读取的完整快照 |
-| `get_credential_envelope` | 凭据 ID 与版本 | 校验集群授权，返回加密包，不返回控制平面根密钥 |
-| `ack_config` | 修订号、摘要、应用结果 | 记录实际应用状态；旧确认不覆盖较新成功版本 |
-| `reserve_request` | request_id、Key 标识、模型、配置版本、计量上界 | 校验实时权限，锁定售价和客户折扣，原子预留资金和金额预算 |
-| `get_request_status` | request_id | 返回本节点有权查询的授权、预留和处理状态 |
-| `start_attempt` | request_id、attempt_id、序号、deployment_id | 校验候选部署与有效身份，持久化尝试意图并锁定成本价 |
-| `append_usage_event` | 版本化事件 | 校验身份与关联，插入收件箱；调用方确认事务提交后才视为持久化成功 |
-| `cancel_unstarted_request` | request_id、原因 | 仅在不存在任何尝试意图时取消并释放预留 |
+所有函数由 `gateway_v1` 提供，返回 JSONB。请求、尝试、模型、部署、凭据与 Key 标识使用 UUID。SQL 中修订号使用 bigint，JSON 中使用十进制字符串。
+
+| 调用 | 含义 |
+| --- | --- |
+| `get_config_snapshot(revision DEFAULT NULL)` | 当前或历史完整包，含 Base64 原文、摘要与节点身份 |
+| `get_credential_envelope(revision, credential_id, credential_version)` | 所选集群的密文包 |
+| `ack_config(revision, hash, applied, reason DEFAULT '')` | 成功修订单调推进，reason 使用有界错误代码 |
+| `reserve_request(rid, kid, model, rev, inputs, outputs)` | 服务端确定组织、账户、价格和预算，重复返回 replayed 与原状态 |
+| `get_request_status(request_id)` | 本节点请求、冻结的价格引用、尝试、关闭与处理状态 |
+| `start_attempt(rid, aid, seq, dep)` | 序号从 1 递增，候选来自授权时快照，重试使用原 attempt_id |
+| `append_usage_event(message)` | UTF-8 JSON 文本，最多 65536 字节，事务提交后读取 accepted 或 conflict |
+| `cancel_unstarted_request(rid, reason)` | 在同一事务释放无尝试且未关闭的请求与各预算占用 |
 
 `reserve_request` 重试使用同一个 request_id 和相同语义参数。已有请求返回原授权及当前状态；不重新预留，也不重新选择售价或折扣。相同 ID 参数冲突则拒绝。已开始或已结清的请求不能因为拿到重复响应再次执行上游调用。
 
@@ -104,7 +105,7 @@ Key 撤销、组织冻结和权限收缩在请求授权时查数据库实时状�
 
 通用字段包括 `schema_version`、`event_id`、`event_type`、`request_id`、可选 `attempt_id`、`occurred_at`、`config_revision`、`payload`。组织、项目、Key、售价与成本版本、客户折扣版本从已经持久化的请求与尝试关联获取，不允许消息覆盖。网关提交用量事实，不提交一个可直接扣除的钱数。
 
-首期定义两类原始事实：
+协议接受两类原始事实。
 
 | 类型 | 必要内容 | 用途 |
 | --- | --- | --- |
@@ -178,57 +179,23 @@ Key 撤销、组织冻结和权限收缩在请求授权时查数据库实时状�
 | 配置当前版本 | `nexus:v1:cfg:{cluster_id}:current` | PostgreSQL，版本单调增加 |
 | 配置快照 | `nexus:v1:cfg:{cluster_id}:snapshot:42` | PostgreSQL，不可变 |
 | 配置通知频道 | `nexus:v1:cfg:cluster_id:changed` | 提示信息，不作为可靠记录 |
-| RPM 和 TPM | `nexus:v1:limit:{organization_id}:scope:metric:window` | 原子窗口计数，过期回收 |
-| 并发租约 | `nexus:v1:concurrency:{organization_id}:scope` | 请求租约集合，续租及过期回收 |
+| RPM 和 TPM | `nexus:v1:limit:{organization_id}:policy_id:metric:window` | 原子窗口计数，过期回收 |
+| 并发租约 | `nexus:v1:concurrency:{organization_id}:policy_id:concurrency` | 请求租约集合，续租及过期回收 |
 | 节点心跳 | `nexus:v1:node:node_id` | TTL，重启可重建 |
 
 同一组织的多层限流键使用相同 hash tag，以便一个原子操作检查和占用适用的组织、项目、Key 限额。Redis Cluster 的多键操作要求相关键处于同一 hash slot，不能把跨 slot 的多层扣减描述为天然原子。[Redis Cluster 约束](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/)
 
 RPM 首期按请求被全局限流器接纳时计数，即使后续余额不足也占用该次请求次数；TPM 先按授权上界占用，已确认用量后在原窗口内核销。错误、退款和未知用量的释放行为必须显式定义，不能任由每个节点自行解释。金额预算始终在 PostgreSQL 事务中控制。
 
-并发使用请求级租约和唯一占用 ID，支持幂等释放、续租与有界存活。节点失联导致租约过期时，旧节点必须在续租失败的安全截止前停止继续占用上游；否则只能承诺有界近似并发，不能承诺绝对硬上限。该行为属于未来网关验收项。
+并发使用请求级租约和唯一占用 ID，支持幂等释放、续租与有界存活。节点失联导致租约过期时，旧节点必须在续租失败的安全截止前停止继续占用上游；否则只能承诺有界近似并发，不能承诺绝对硬上限。真实网关接入时需验证到期后的上游取消行为。
 
 单一热点组织仍可能集中在一个 Redis slot，不能仅通过增加节点解决所有热点。实际压力测试后再决定更复杂的容量划分。
 
-## 版本、兼容与替代通道
+## 版本与兼容
 
-消息 schema、数据库接口 schema 和配置 revision 是不同概念。兼容升级允许增加可选字段，读取端忽略未知可选字段；未知必需能力、未知事件类型、关键枚举或不兼容主版本必须拒绝，不静默降级。
+网关应用配置前验证 schema 版本、摘要与必需能力，失败时上报拒绝原因并保留可用版本。用量事件按 v1 的字段集合和枚举校验。升级协议时先部署兼容调用端的数据库函数，待目标节点支持所需能力后再发布配置。
 
-迁移遵循先扩展、再升级调用方、最后移除旧契约的顺序。网关旧版本和新版本共存期间，配置只能使用目标集群共同支持的必需能力。
-
-PostgreSQL `LISTEN/NOTIFY` 可作为无 Redis 配置通知的替代，但不是首期第二套完整实现。消息只携带版本标识，离线恢复依赖快照。开始监听需要先提交 LISTEN，再读取当前状态并复查通知，不能假设监听前的事件会重放。[PostgreSQL LISTEN](https://www.postgresql.org/docs/current/sql-listen.html)、[NOTIFY](https://www.postgresql.org/docs/current/sql-notify.html)
-
-如果未来采用 Redis Streams，配置广播不能简单让所有网关共享一个消费组，因为同组消费者分摊消息；结算 Worker 则适合使用同组分摊。Streams 的重试、保留、持久化与故障切换策略必须另行设计，不在首期默认为已解决。[Redis 消费组](https://redis.io/docs/latest/commands/xreadgroup/)
-
-## M4 部署与调用
-
-执行迁移 `0008_gateway_protocol` 后，API 提供集群、节点登记、路由、配额与发布入口。Worker 分别运行配置分发、用量结算和支付消费者。每条消费记录引用该请求的售价、折扣和最终交付尝试，每条尝试成本引用开始时的成本版本。
-
-1. 部署管理员创建 `nexus_bridge` 和 `nexus_gateway` 两个 NOLOGIN 角色。迁移身份须能 SET ROLE 到 identity、catalog、billing、publication 的模块角色及 nexus_bridge，以建立函数所有权。节点使用各自的 LOGIN 身份，继承 nexus_gateway 的权限并具有目标数据库 CONNECT 权限。各函数的实际授权清单随迁移固化。仓库的本机依赖脚本会准备组角色，节点登录及其凭据由部署方配置。
-2. 平台管理员调用 `POST /api/v1/gateway-clusters`，提供 name、region、organization_ids、deployment_ids 和 public_key。公钥使用 Base64 编码的 32 字节 Curve25519 公钥。catalog 用 PyNaCl/libsodium sealed box 封装上游凭据，密文内部绑定集群、凭据和版本。部署方把私钥交给相应集群。
-3. 用 `PUT /api/v1/gateway-clusters/{id}/principals/{node_id}` 登记 database_role、node_id、capabilities 与 active。节点身份由 PostgreSQL 登录角色确定。集群 PATCH 使用 If-Match，可暂停集群、修改范围或轮换公钥。key_grace_seconds 指定旧密钥包读取窗口，0 表示立即截止。缩小组织或部署范围会使先前范围的快照失效。新增范围随下一次发布生效。
-4. 使用 `POST /api/v1/route-policies` 为组织及模型设置部署候选、priority 和 weight。组织 owner 可通过 `POST /api/v1/organizations/{org}/quota-policies` 设置 customer 层限额，platform 层由平台管理员维护。多个适用上限共同约束请求。首次配置返回 201，更新同一作用域时携带上一版本的 If-Match。
-5. 调用 `POST /api/v1/gateway-clusters/{id}/releases`，附带 Idempotency-Key，正常发布使用空对象。rollback_revision 可选择历史资源集合。发布前重新核对源版本、当前价格和凭据资格，回滚生成更高修订。查询 `GET /api/v1/gateway-clusters/{id}/releases/{revision}` 获取期望修订、已分发修订、任务和各节点最近的确认。
-6. 节点调用 get_config_snapshot，校验原始字节的 SHA-256 后应用并确认。普通更新为已应用上一配置的节点提供 5 秒传播时间。权限收缩、Key 失效、凭据撤销及集群范围变动由数据库实时检查。旧节点仍可提交其在途请求的结束证据。分发 Worker 每 30 秒核对并重写当前副本，Redis 清空期间节点可从 PostgreSQL 恢复。
-
-### SQL 参数
-
-所有函数由 `gateway_v1` 提供，返回 JSONB。请求、尝试、模型、部署、凭据与 Key 标识使用 UUID。SQL 中修订号使用 bigint，JSON 中使用十进制字符串。
-
-| 调用 | 含义 |
-| --- | --- |
-| `get_config_snapshot(revision DEFAULT NULL)` | 当前或历史完整包，含 Base64 原文、摘要与节点身份 |
-| `get_credential_envelope(revision, credential_id, credential_version)` | 所选集群的密文包 |
-| `ack_config(revision, digest, applied, reason DEFAULT '')` | 成功修订单调推进，reason 使用有界错误代码 |
-| `reserve_request(request_id, key_id, model_id, revision, input_limit, output_limit)` | 服务端确定组织、账户、价格和预算，重复返回 replayed 与原状态 |
-| `get_request_status(request_id)` | 本节点请求、冻结的价格引用、尝试、关闭与处理状态 |
-| `start_attempt(request_id, attempt_id, sequence, deployment_id)` | 序号从 1 递增，候选来自授权时快照，重试使用原 attempt_id |
-| `append_usage_event(message)` | UTF-8 JSON 文本，最多 65536 字节，事务提交后读取 accepted 或 conflict |
-| `cancel_unstarted_request(request_id, reason)` | 在同一事务释放无尝试且未关闭的请求与各预算占用 |
-
-网关适配器负责本地检查请求正文与协议上界。模拟器用 API Key 验证摘要定位 key_id，使用真实节点登录通过 SQL 再次授权。发生提交响应丢失时，保留原 request_id、attempt_id 和完整序列化事件，通过状态查询或原样重放恢复。conflict 返回值和审计随事务一起提交。
-
-### 归一化、限额与模拟器
+## 协议模拟器
 
 fixture.tokens.v1 要求 input_total_tokens、cached_input_tokens 和 output_tokens。启用缓存写入计价时还需相应 cache_write_5m_tokens 或 cache_write_1h_tokens。reasoning_tokens 属于 output_tokens 的子集。fixture.dimensions.v1 接收与冻结价格维度完全一致的非负整数量。Worker 保存规则版本、证据引用和归一化数量。缺失最终事实保持等待，新事实提交会立即唤醒任务。证据无效或结果未知进入核对，预留继续有效。失败尝试独立记成本，上游失败的客户费用为零。
 

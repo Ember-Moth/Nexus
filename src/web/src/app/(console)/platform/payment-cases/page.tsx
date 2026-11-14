@@ -6,7 +6,7 @@ export default function Page() {
   return (
     <SkeletonPage
       title="nav.items.paymentCases"
-      endpoints={["GET /organizations/{org}/payment-cases", "POST /organizations/{org}/payment-orders/{id}/reconcile（202）", "GET /organizations/{org}/payment-orders/{id}/observations", "GET /organizations/{org}/payment-orders/{id}/receipts"]}
+      endpoints={["GET /organizations/{organization_id}/payment-cases", "POST /organizations/{organization_id}/payment-orders/{id}/reconcile（202）", "GET /organizations/{organization_id}/payment-orders/{id}/observations", "GET /organizations/{organization_id}/payment-orders/{id}/receipts"]}
     />
   );
 }

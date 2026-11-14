@@ -6,7 +6,7 @@ export default function Page() {
   return (
     <SkeletonPage
       title="nav.items.adjustments"
-      endpoints={["GET/POST /organizations/{org}/adjustments（Idempotency-Key）", "POST /organizations/{org}/adjustments/{id}/post（If-Match + Idempotency-Key）"]}
+      endpoints={["GET/POST /organizations/{organization_id}/adjustments（Idempotency-Key）", "POST /organizations/{organization_id}/adjustments/{id}/post（If-Match + Idempotency-Key）"]}
     />
   );
 }

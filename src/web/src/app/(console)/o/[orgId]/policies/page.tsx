@@ -6,7 +6,7 @@ export default function Page() {
   return (
     <SkeletonPage
       title="nav.items.policies"
-      endpoints={["GET/POST /organizations/{org}/access-policies", "PATCH /organizations/{org}/access-policies/{id}（If-Match）"]}
+      endpoints={["GET/POST /organizations/{organization_id}/access-policies", "PATCH /organizations/{organization_id}/access-policies/{id}（If-Match）"]}
     />
   );
 }

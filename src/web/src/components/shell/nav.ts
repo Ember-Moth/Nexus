@@ -90,7 +90,7 @@ export const orgNav: NavGroup[] = [
     items: [
       { segment: "members", label: "nav.items.members", icon: UsersIcon, roles: [O, PA], skeleton: true },
       { segment: "policies", label: "nav.items.policies", icon: ShieldIcon, roles: [O, D, PA], skeleton: true },
-      { segment: "quotas", label: "nav.items.quotas", icon: GaugeIcon, roles: [O, PA], skeleton: true },
+      { segment: "quotas", label: "nav.items.quotas", icon: GaugeIcon, roles: [O, PA] },
       { segment: "audit", label: "nav.items.audit", icon: FileTextIcon, roles: [O, F, PA, PF] },
     ],
   },
@@ -110,7 +110,7 @@ export const platformNav: NavGroup[] = [
       { segment: "models", label: "nav.items.catalogModels", icon: BoxIcon, roles: [PA], skeleton: true },
       { segment: "upstreams", label: "nav.items.upstreams", icon: ServerIcon, roles: [PA], skeleton: true },
       { segment: "deployments", label: "nav.items.deployments", icon: GitBranchIcon, roles: [PA], skeleton: true },
-      { segment: "routes", label: "nav.items.routes", icon: SplitIcon, roles: [PA], skeleton: true },
+      { segment: "routes", label: "nav.items.routes", icon: SplitIcon, roles: [PA] },
     ],
   },
   {
@@ -123,7 +123,7 @@ export const platformNav: NavGroup[] = [
   },
   {
     label: "nav.groups.gateway",
-    items: [{ segment: "clusters", label: "nav.items.clusters", icon: NetworkIcon, roles: [PA], skeleton: true }],
+    items: [{ segment: "clusters", label: "nav.items.clusters", icon: NetworkIcon, roles: [PA] }],
   },
   {
     label: "nav.groups.finance",

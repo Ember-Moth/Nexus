@@ -6,7 +6,7 @@ export default function Page() {
   return (
     <SkeletonPage
       title="nav.items.models"
-      endpoints={["GET /models?organization_id={org}&project_id=&key_id=", "GET /organizations/{org}/pricing?model_id="]}
+      endpoints={["GET /models?organization_id={organization_id}&project_id=&key_id=", "GET /organizations/{organization_id}/pricing?model_id="]}
     />
   );
 }

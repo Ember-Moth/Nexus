@@ -11,7 +11,7 @@ pub mod websocket;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Endpoint {
     AnthropicMessages,
@@ -19,6 +19,12 @@ pub enum Endpoint {
 }
 
 impl Endpoint {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AnthropicMessages => "anthropic_messages",
+            Self::OpenaiResponses => "openai_responses",
+        }
+    }
     pub fn usage_format(self) -> &'static str {
         match self {
             Self::AnthropicMessages => "anthropic.messages.v1",

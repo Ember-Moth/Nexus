@@ -34,6 +34,26 @@ impl ControlError {
             None
         }
     }
+    /// A short reason for logs: a gateway contract error code (SQLSTATE P0001, raised
+    /// by `gateway_v1` with a fixed code) or a fixed description. Never driver text.
+    pub fn reason(&self) -> &str {
+        match self {
+            Self::Invalid(what) => what,
+            Self::Database(sqlx::Error::Database(db)) if db.code().as_deref() == Some("P0001") => {
+                db.message()
+            }
+            Self::Database(_) if self.retryable() => "database_unavailable",
+            Self::Database(_) => "database_error",
+        }
+    }
+    pub fn kind(&self) -> crate::metrics::ErrorKind {
+        match self {
+            Self::Database(sqlx::Error::Database(db)) if db.code().as_deref() == Some("P0001") => {
+                crate::metrics::ErrorKind::Rejected
+            }
+            _ => crate::metrics::ErrorKind::Unavailable,
+        }
+    }
     pub fn retryable(&self) -> bool {
         match self {
             Self::Database(sqlx::Error::Database(db)) => db.code().is_some_and(|s| {

@@ -16,6 +16,8 @@
 | `NEXUS_RELAY_CONCURRENCY`、`NEXUS_RELAY_LEASE_MS` | 默认最多 128 个并发任务，Redis 租期默认 15000 毫秒，范围 100 至 60000 毫秒 |
 | `NEXUS_RELAY_EVENT_BYTES`、`NEXUS_RELAY_STREAM_IDLE_MS` | 每个 SSE 事件和 WS 消息默认上限 1 MiB，上游事件和下游写出空闲时限默认 30000 毫秒 |
 | `NEXUS_RELAY_WS_SESSIONS`、`NEXUS_RELAY_WS_SESSIONS_PER_TENANT`、`NEXUS_RELAY_WS_TURNS_PER_TENANT` | 单节点默认最多 128 个会话，同一企业在该节点默认最多 16 个会话和 16 个活跃轮次。跨节点生成额度由 Redis 控制 |
+| `NEXUS_RELAY_MAX_ATTEMPTS` | HTTP/SSE 生成每个请求最多尝试的次数，默认 2，范围 1 至 4；1 表示关闭故障转移 |
+| `NEXUS_RELAY_FAILOVER_BUDGET_MS` | 首次尝试开始后仍可发起新尝试的时限，默认 10000 毫秒，范围 100 至 60000 毫秒；不截断已在执行的尝试 |
 | `NEXUS_RELAY_UPSTREAM_CA` | 可选的 PEM 根证书路径，用于拥有专用 CA 的 HTTPS 部署 |
 
 在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 或 `websocket` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认强制 `store=false`，省略输出限制时使用部署上限。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。旧部署保留原配置，声明端点后才参与原生转发。
@@ -27,6 +29,14 @@ WS 握手使用企业 Bearer Key，空闲和 ping/pong 不触发资金预留。�
 运行 `cargo test --locked --manifest-path src/relay/Cargo.toml` 验证协议、路由及写出跟踪。运行 `uv run python scripts/run_integration.py -q tests/integration/test_plane.py tests/integration/test_relay.py tests/integration/test_relay_streams.py` 验证真实客户端、本地 TLS 上游、隔离 PostgreSQL/Redis 和 Worker 的完整链路。
 
 获授权真实部署可运行 `tests/integration/test_live_relay_ws.py`。设置 `RELAY_ACCEPTANCE_WS_RUN=1`、`RELAY_ACCEPTANCE_WS_URL`、`RELAY_ACCEPTANCE_WS_MODEL` 和 `RELAY_ACCEPTANCE_WS_KEY`，使用上述隔离集成命令并指定该测试文件。测试只在一个连接串行发送两次生成，`RELAY_ACCEPTANCE_WS_OUTPUT` 默认每轮 64。商户 Key 写入本次隔离 catalog。给出 `wss://` 时 Relay 直接拨 TLS，给出回环 `ws://` 时测试搭建临时 TLS 入口，保留原始握手、帧和端点的升级状态。测试余额和真实上游计费分别核对。[Responses 续接语义](https://developers.openai.com/api/docs/guides/websocket-mode)
+
+## HTTP 和 SSE 故障转移
+
+一次尝试被证明没有执行，且客户端尚未收到任何字节时，节点在同一请求内换部署重发。可证明未执行指连接未建立（DNS、TCP、TLS 或连接超时），或上游在响应头以 429、502、503、529 拒绝。请求写出后的超时、2xx 之后的断流和其他状态都不重发。完整判定表和上报规则见[故障转移设计](relay-design.md#http-与-sse-故障转移)。
+
+在路由策略中为同一模型配置多个候选并设置 priority 和 weight。故障转移只在请求授权时的快照内挑选，先用完同组剩余权重再降组；候选的输入上界须不超过首次预留，输出上限须能容纳已预留的输出。每个候选都需要已发布的成本价，并在网关集群的部署范围内。每次重发都提交新的尝试，Worker 只对最终交付的尝试向客户收费；没有用量的失败尝试单独进入成本核对。
+
+运行 `cargo test --locked --manifest-path src/relay/Cargo.toml --test failover` 验证候选选择与错误分类。运行 `uv run python scripts/run_integration.py -q tests/integration/test_relay_failover.py`，用两个本地 TLS 上游验证 503 与拒绝连接后的切换、SSE 切换、发送后读超时、SSE 输出后断流、全部候选失败及 `NEXUS_RELAY_MAX_ATTEMPTS=1` 的原有行为，并核对尝试记录、单笔扣费、独立成本和预留释放。用例包含一次 30 秒的上游响应头等待。
 
 ## Bedrock Converse 上游
 

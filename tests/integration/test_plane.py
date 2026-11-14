@@ -64,14 +64,10 @@ async def provision_plane(
     issued = (await issue_key(client, root, org, str(admission.service_account_id))).json()
     raw = issued["secret"]
     admission = admission.model_copy(update={"api_key_id": UUID(issued["key"]["id"])})
-    response = await client.post(
-        "/api/v1/route-policies",
+    response = await client.put(
+        f"/api/v1/route-policies/{org['id']}/{model['id']}",
         headers=auth(root),
-        json={
-            "organization_id": org["id"],
-            "model_id": model["id"],
-            "candidates": [{"deployment_id": dep["id"]}],
-        },
+        json={"candidates": [{"deployment_id": dep["id"]}]},
     )
     assert response.status_code == 201, response.text
     private = PrivateKey.generate()
@@ -552,13 +548,13 @@ async def test_lease_expiry_and_replacement_after_cache_loss(plane, http):
 async def test_published_policies_feed_simulator_and_slow_node_cannot_republish(plane, http):
     peer, _, org, model, dep, a, raw, cid = plane
     client, root, app, _ = http
-    path = f"/api/v1/organizations/{org['id']}/quota-policies"
-    body = {"layer": "platform", "scope_type": "organization", "metric": "rpm", "limit_value": 1}
-    created = await client.post(path, headers=auth(root), json=body)
+    path = f"/api/v1/organizations/{org['id']}/quota-policies/platform/organization/{org['id']}/rpm"
+    body = {"limit_value": 1}
+    created = await client.put(path, headers=auth(root), json=body)
     assert created.status_code == 201, created.text
-    assert (await client.post(path, headers=auth(root), json=body)).status_code == 428
-    assert (await client.post(path, headers=auth(root, 9), json=body)).status_code == 412
-    updated = await client.post(path, headers=auth(root, 1), json=body)
+    assert (await client.put(path, headers=auth(root), json=body)).status_code == 428
+    assert (await client.put(path, headers=auth(root, 9), json=body)).status_code == 412
+    updated = await client.put(path, headers=auth(root, 1), json=body)
     assert updated.status_code == 200 and updated.json()["version"] == 2
     release = f"/api/v1/gateway-clusters/{cid}/releases"
     response = await client.post(release, headers=headers(root, "enable-quota"), json={})

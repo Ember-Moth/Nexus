@@ -77,10 +77,11 @@ async def stream_plane(http, admin, binary, ca, port, family, *, ws=False, conve
                 json={"node_id": str(nid), "database_role": role, "capabilities": caps},
             )
             assert r.status_code == 200, r.text
-        r = await client.post(
-            f"/api/v1/organizations/{org['id']}/quota-policies",
+        r = await client.put(
+            f"/api/v1/organizations/{org['id']}/quota-policies"
+            f"/customer/organization/{org['id']}/concurrency",
             headers=auth(root),
-            json={"metric": "concurrency", "limit_value": 1},
+            json={"limit_value": 1},
         )
         assert r.status_code == 201, r.text
         r = await client.post(

@@ -214,14 +214,10 @@ async def test_settlement_capacity(plane, http, admin, service_directory):  # no
     proj = await project(client, root, cold, "load")
     sa = await account(client, root, cold, proj["id"])
     cold_key = (await key(client, root, cold, sa["id"])).json()["secret"]
-    route = await client.post(
-        "/api/v1/route-policies",
+    route = await client.put(
+        f"/api/v1/route-policies/{cold['id']}/{model['id']}",
         headers=auth(root),
-        json={
-            "organization_id": cold["id"],
-            "model_id": model["id"],
-            "candidates": [{"deployment_id": deployment["id"]}],
-        },
+        json={"candidates": [{"deployment_id": deployment["id"]}]},
     )
     assert route.status_code == 201
     cluster_path = f"/api/v1/gateway-clusters/{cid}"

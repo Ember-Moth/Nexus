@@ -237,10 +237,11 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             },
         )
         assert resp.status_code == 200, resp.text
-        quota = await app_client.post(
-            f"/api/v1/organizations/{org['id']}/quota-policies",
+        quota = await app_client.put(
+            f"/api/v1/organizations/{org['id']}/quota-policies"
+            f"/customer/organization/{org['id']}/concurrency",
             headers=auth(root),
-            json={"metric": "concurrency", "limit_value": 1},
+            json={"limit_value": 1},
         )
         assert quota.status_code == 201, quota.text
         release = f"/api/v1/gateway-clusters/{cid}/releases"
@@ -438,16 +439,11 @@ async def test_rust_replays_python_quota_lease(plane, http, admin, relay_binary)
     peer, _, org, model, _, admission, _, cid = plane
     client, root, app, settings = http
     for metric, limit in [("rpm", 5), ("tpm", 30), ("concurrency", 1)]:
-        result = await client.post(
-            f"/api/v1/organizations/{org['id']}/quota-policies",
+        result = await client.put(
+            f"/api/v1/organizations/{org['id']}/quota-policies"
+            f"/platform/key/{admission.api_key_id}/{metric}",
             headers=auth(root),
-            json={
-                "layer": "platform",
-                "scope_type": "key",
-                "scope_id": str(admission.api_key_id),
-                "metric": metric,
-                "limit_value": limit,
-            },
+            json={"limit_value": limit},
         )
         assert result.status_code == 201, result.text
     result = await client.post(

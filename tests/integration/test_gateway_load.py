@@ -54,14 +54,10 @@ async def provision_tenants(http, admin, first, first_key, model, deployment, cl
         sa = await account(client, root, tenant, proj["id"])
         secrets.append((await key(client, root, tenant, sa["id"])).json()["secret"])
         tenants.append(tenant)
-        route = await client.post(
-            "/api/v1/route-policies",
+        route = await client.put(
+            f"/api/v1/route-policies/{tenant['id']}/{model}",
             headers=auth(root),
-            json={
-                "organization_id": tenant["id"],
-                "model_id": model,
-                "candidates": [{"deployment_id": deployment}],
-            },
+            json={"candidates": [{"deployment_id": deployment}]},
         )
         assert route.status_code == 201, route.text
     for tenant in tenants:

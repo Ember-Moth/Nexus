@@ -1,9 +1,15 @@
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import Field
 
 from .schemas import Schema
+
+# A quota policy is identified by (organization_id, layer, scope_type, scope_id, metric).
+QuotaLayer = Literal["platform", "customer"]
+QuotaScope = Literal["organization", "project", "key"]
+QuotaMetric = Literal["rpm", "tpm", "concurrency"]
+QuotaValue = Annotated[int, Field(ge=1, le=2000000000, strict=True)]
 
 
 class Candidate(Schema):
@@ -12,18 +18,31 @@ class Candidate(Schema):
     weight: int = Field(default=1, ge=1, le=10000, strict=True)
 
 
+Candidates = Annotated[list[Candidate], Field(min_length=1, max_length=256)]
+
+
 class Route(Schema):
+    """A route policy is identified by (organization_id, model_id)."""
+
     organization_id: UUID
     model_id: UUID
-    candidates: list[Candidate] = Field(min_length=1, max_length=256)
+    candidates: Candidates
+
+
+class RouteCandidates(Schema):
+    candidates: Candidates
 
 
 class Quota(Schema):
-    layer: Literal["platform", "customer"] = "customer"
-    scope_type: Literal["organization", "project", "key"] = "organization"
+    layer: QuotaLayer = "customer"
+    scope_type: QuotaScope = "organization"
     scope_id: UUID | None = None
-    metric: Literal["rpm", "tpm", "concurrency"]
-    limit_value: int = Field(ge=1, le=2000000000, strict=True)
+    metric: QuotaMetric
+    limit_value: QuotaValue
+
+
+class QuotaLimit(Schema):
+    limit_value: QuotaValue
 
 
 class RoutePolicyView(Schema):
@@ -34,12 +53,13 @@ class RoutePolicyView(Schema):
 
 
 class QuotaPolicyResult(Schema):
-    """The written policy; `scope_id` echoes the request and is null for organization scope."""
+    """The written policy. `scope_id` echoes the request, so the deprecated POST may leave it
+    null for organization scope."""
 
-    layer: Literal["platform", "customer"]
-    scope_type: Literal["organization", "project", "key"]
+    layer: QuotaLayer
+    scope_type: QuotaScope
     scope_id: UUID | None
-    metric: Literal["rpm", "tpm", "concurrency"]
+    metric: QuotaMetric
     limit_value: int
     id: UUID
     version: int

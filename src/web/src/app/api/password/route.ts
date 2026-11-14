@@ -1,6 +1,7 @@
 // Redeems a one-time setup token: POST /auth/password. Unauthenticated, same-origin only.
 import { NextResponse, type NextRequest } from "next/server";
 
+import { authRequestHeaders } from "@/lib/server/auth-headers";
 import { nexusApiUrl } from "@/lib/server/config";
 import { bffError, isSameOrigin } from "@/lib/server/session";
 
@@ -12,7 +13,7 @@ export async function POST(request: NextRequest) {
   try {
     upstream = await fetch(`${nexusApiUrl()}/api/v1/auth/password`, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
+      headers: authRequestHeaders(request.headers),
       body: await request.text(),
       cache: "no-store",
     });

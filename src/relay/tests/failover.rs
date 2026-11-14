@@ -299,10 +299,10 @@ fn a_fallback_keeps_request_conditions_and_requires_a_working_conversion() {
 
 #[test]
 fn only_rejections_before_execution_are_declined() {
-    for status in [429, 502, 503, 529] {
+    for status in [429, 503, 529] {
         assert!(declined(StatusCode::from_u16(status).unwrap()), "{status}");
     }
-    for status in [200, 400, 401, 404, 408, 409, 413, 500, 504] {
+    for status in [200, 400, 401, 404, 408, 409, 413, 500, 502, 504] {
         assert!(!declined(StatusCode::from_u16(status).unwrap()), "{status}");
     }
     assert!(UpstreamError::Connect.unsent());

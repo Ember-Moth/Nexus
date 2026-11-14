@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from nexus.http import credentials, cursor_value, error_responses, expected_version
+from nexus.http import auth_limit_peer, credentials, cursor_value, error_responses, expected_version
 
 from ..application.schemas import (
     CurrentUser,
@@ -31,7 +31,7 @@ CONFLICT = error_responses(409)
 RATE_LIMITED = error_responses(429)
 
 
-def create_router(get_service) -> APIRouter:
+def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["identity"])
     Service = Annotated[IdentityService, Depends(get_service)]
     Token = Annotated[str, Depends(credentials)]
@@ -46,7 +46,7 @@ def create_router(get_service) -> APIRouter:
         return await service.login(
             body.login,
             body.password.get_secret_value(),
-            request.client.host if request.client else "unknown",
+            auth_limit_peer(request, auth_proxy_peers),
         )
 
     @router.delete("/auth/sessions/current", status_code=204)
@@ -58,7 +58,7 @@ def create_router(get_service) -> APIRouter:
         await service.set_password(
             body.token.get_secret_value(),
             body.password.get_secret_value(),
-            request.client.host if request.client else "unknown",
+            auth_limit_peer(request, auth_proxy_peers),
         )
 
     @router.get("/me", response_model=CurrentUser)

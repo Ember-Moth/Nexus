@@ -471,3 +471,68 @@ async def test_concurrent_password_redemption_and_live_platform_role(http, admin
     admin.execute("DELETE FROM identity.platform_role_bindings WHERE role='platform_admin'")
     assert (await client.get("/api/v1/users", headers=auth(root))).status_code == 403
     assert (await client.get("/api/v1/me", headers=auth(root))).json()["platform_roles"] == []
+
+
+async def test_auth_limits_use_only_ingress_verified_ips_from_the_configured_bff(http):
+    from ipaddress import ip_address
+
+    _, _, _, settings = http
+    app = create_app(
+        settings.model_copy(
+            update={
+                "auth_proxy_peers": [ip_address("127.0.0.2")],
+                "redis_namespace": "nexus:proxy-test:" + uuid4().hex,
+                "login_per_account": 2,
+                "login_per_ip": 2,
+            }
+        )
+    )
+
+    async def attempt(client, name, address):
+        return (
+            await client.post(
+                "/api/v1/auth/sessions",
+                headers={"X-Nexus-Client-IP": address},
+                json={"login": name, "password": "bad"},
+            )
+        ).status_code
+
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=("127.0.0.2", 1234)),
+            base_url="http://test",
+        ) as bff,
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=("127.0.0.3", 1234)),
+            base_url="http://test",
+        ) as direct,
+    ):
+        # Two clients share the BFF connection address. Only the first exhausts its IP quota.
+        assert await attempt(bff, "user-a", "10.2.0.1") == 401
+        assert await attempt(bff, "user-b", "10.2.0.1") == 401
+        assert await attempt(bff, "user-c", "10.2.0.1") == 429
+        assert await attempt(bff, "user-c", "10.2.0.2") == 401
+        assert await attempt(bff, "user-c", "10.2.0.3") == 401
+        assert await attempt(bff, "user-c", "10.2.0.4") == 429  # same account
+        # Malformed claims share the trusted peer's fallback bucket.
+        assert await attempt(bff, "user-d", "invalid") == 401
+        assert await attempt(bff, "user-e", "10.2.0.5, 10.2.0.6") == 401
+        assert await attempt(bff, "user-f", "invalid") == 429
+        # Direct callers cannot manufacture separate buckets, even for password setup.
+        assert await attempt(direct, "user-g", "10.2.0.7") == 401
+        assert await attempt(direct, "user-h", "10.2.0.8") == 401
+        assert (
+            await direct.post(
+                "/api/v1/auth/password",
+                headers={"X-Nexus-Client-IP": "10.2.0.9"},
+                json={"token": "nxp_" + "a" * 43, "password": PASSWORD},
+            )
+        ).status_code == 429
+        assert (
+            await bff.post(
+                "/api/v1/auth/password",
+                headers={"X-Nexus-Client-IP": "10.2.0.9"},
+                json={"token": "nxp_" + "a" * 43, "password": PASSWORD},
+            )
+        ).status_code == 401

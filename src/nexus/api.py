@@ -203,7 +203,11 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     app.include_router(operations_api.create_router(get_operations))
     app.include_router(publication_api.create_router(get_publication))
     app.include_router(routing_api.create_router(get_routing))
-    app.include_router(identity_api.create_router(get_identity))
+    app.include_router(
+        identity_api.create_router(
+            get_identity, auth_proxy_peers=frozenset(settings.auth_proxy_peers)
+        )
+    )
     app.include_router(identity_api.create_project_router(get_projects))
     app.include_router(identity_api.create_policy_router(get_model_access))
     app.include_router(catalog_api.create_router(get_catalog))

@@ -49,6 +49,9 @@ NEXUS_API_URL=http://127.0.0.1:8000 NEXUS_ADMIN_PASSWORD_FILE=<存放管理员�
 | `NEXUS_API_URL` | 管理 API 地址（不含 `/api/v1`），只在服务端使用，默认 `http://127.0.0.1:8000` |
 | `NEXUS_COOKIE_SECURE` | 默认 Secure Cookie（浏览器在 `http://localhost` 上也接受）。仅在非 localhost 的明文 HTTP 主机上设为 `false` |
 | `NEXUS_WEB_ORIGIN` | 部署在会改写 Host 的反向代理后时，填写对外 Origin，供 CSRF 的 Origin 校验使用 |
+| `NEXUS_WEB_CLIENT_IP_HEADER` | 登录与设置密码的客户端 IP 来源。仅在入口代理覆盖该头、且客户端无法绕过代理直连 BFF 时设置，例如 `x-real-ip` |
+
+配置按客户端 IP 限流时，让入口代理把已验证的单个 IP 写入上述头，在 API 上将 BFF 的确切 TCP 来源 IP 加入 `NEXUS_AUTH_PROXY_PEERS`，例如本机部署为 `["127.0.0.1"]`。BFF 将单个合法地址放进 `X-Nexus-Client-IP`，API 仅在登录及设置密码时从白名单内的 BFF 读取它。账户维度的 Redis 限额继续生效。任一侧未配置或地址无效时沿用直连 peer；默认配置下经过同一 BFF 的登录共享该 peer 的限额。
 
 ## 会话与安全
 
@@ -129,8 +132,7 @@ pnpm api:types:check                                 # CI：生成结果必须�
 3. **调用 Key**：`KeyView` 没有状态字段（需由 `revoked_at`/`rotated_at`/`expires_at` 推导）和 `last_used_at`；列表不能按状态筛选。签发和轮换的幂等重放返回 200，契约只声明了 201。
 4. **发布**：集群列表已分页，但仍没有发布历史列表、`GET /gateway-clusters/{cluster_id}` 单体接口和节点（principals）列表，节点只出现在某个修订的状态里。
 5. **聚合与 N+1**：没有计数（服务账号下的有效 Key 数等）；预算概览需先列策略再逐个查周期；流水不能按类型筛选；请求和流水只返回项目、Key、模型的 ID。
-6. **登录限流与 BFF**：API 按直连地址做每 IP 限流且不信任转发头，经 BFF 登录时所有用户共享 BFF 的地址。部署时需要为 BFF 配置可信代理，或由 API 提供受信的客户端地址传递方式。
-7. **价格版本列表返回 500**：`GET /sale-price-versions` 和 `GET /cost-price-versions`（带不带 `scope_id` 都一样）抛出 `TypeError: BillingRepository.page() got multiple values for argument 'kind'`——`pricing.list_prices` 把 `kind` 放进了 `**filters`，与 `page(self, kind, …)` 的参数同名。创建和发布价格不受影响。价格版本页目前是骨架，接入前需要先修。
+6. **价格版本列表返回 500**：`GET /sale-price-versions` 和 `GET /cost-price-versions`（带不带 `scope_id` 都一样）抛出 `TypeError: BillingRepository.page() got multiple values for argument 'kind'`——`pricing.list_prices` 把 `kind` 放进了 `**filters`，与 `page(self, kind, …)` 的参数同名。创建和发布价格不受影响。价格版本页目前是骨架，接入前需要先修。
 
 ## 检查
 

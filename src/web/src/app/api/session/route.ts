@@ -7,6 +7,7 @@
 //                      the cookies even if the API call fails.
 import { NextResponse, type NextRequest } from "next/server";
 
+import { authRequestHeaders } from "@/lib/server/auth-headers";
 import { cookieSecure, csrfCookieName, nexusApiUrl } from "@/lib/server/config";
 import {
   bffError,
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
   try {
     upstream = await fetch(`${nexusApiUrl()}/api/v1/auth/sessions`, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
+      headers: authRequestHeaders(request.headers),
       body: JSON.stringify({ login, password }),
       cache: "no-store",
     });

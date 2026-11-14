@@ -490,3 +490,123 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             assert ledger.closed(rid)["delivery_outcome"] == "unknown"
             assert len(second_upstream.received) == calls
         await second_upstream.stop()
+
+
+@pytest.mark.parametrize("gate", ["budget", "lease", "disconnect"])
+async def test_failover_rechecks_after_attempt_commit(
+    http,
+    admin,
+    tls,  # noqa: F811
+    relay_binary,  # noqa: F811
+    monkeypatch,
+    gate,  # noqa: F811
+):  # noqa: F811
+    # Delay only the first attempt's evidence, after attempt two has committed.
+    # This is the window between fallback selection and the actual backup POST.
+    monkeypatch.setenv("NEXUS_RELAY_FAILOVER_BUDGET_MS", "200" if gate == "budget" else "10000")
+    one = Double("primary", tls[0], primary)
+    two = Double("backup", tls[0], backup)
+    await one.start()
+    await two.start()
+    try:
+        async with failover_plane(http, admin, (one.port, two.port)) as (plane, first, second):
+            peer, private, _, model, _, _, key, cid = plane
+            ledger = Ledger(admin, peer)
+            async with running_relay(
+                relay_binary, peer, private, cid, http[3], tls[1], peer.connection.info.port
+            ) as client:
+                # A SHARE lock on just the inbox does not prevent start_attempt from reading it.
+                with admin.transaction():
+                    admin.execute("LOCK TABLE billing.usage_events IN SHARE MODE")
+                    request = asyncio.create_task(
+                        client.post(
+                            "/v1/messages",
+                            headers={"x-api-key": key},
+                            json={
+                                "model": model["public_name"],
+                                "messages": [{"role": "user", "content": "busy"}],
+                                "max_tokens": 6,
+                            },
+                        )
+                    )
+                    async with asyncio.timeout(5):
+                        while admin.execute(  # noqa: ASYNC110 - observe a separate SQL transaction
+                            "SELECT count(*) FROM billing.request_attempts"
+                        ).fetchone() != (2,):
+                            await asyncio.sleep(0.01)
+                    if gate == "disconnect":
+                        request.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await request
+                        await asyncio.sleep(0.1)
+                    else:
+                        await asyncio.sleep(0.35 if gate == "budget" else 0.85)
+                    assert not two.received
+                if gate != "disconnect":
+                    response = await request
+                    assert response.status_code == 503 and response.json() == OVERLOADED
+                await wait_events(admin, 3)
+                await http[2].state.usage.process()
+                rid = ledger.new()
+                (a1, _, d1, _), (a2, _, d2, _) = ledger.attempts(rid)
+                assert (d1, d2) == (first, second) and not two.received
+                assert set(ledger.finished(rid)) == {a1, a2}
+                assert ledger.closed(rid)["attempt_ids"] == [str(a1), str(a2)]
+                assert (
+                    ledger.closed(rid)["delivered_attempt_id"] is None and ledger.debits(rid) == []
+                )
+                assert ledger.closed(rid)["delivery_outcome"] == "upstream_failed"
+                assert ledger.finished(rid)[a2]["outcome"] == (
+                    "cancelled" if gate == "disconnect" else "failed"
+                )
+                assert (await ledger.status(rid))["reservation_state"] == "released"
+                assert ledger.finished(rid)[a2]["raw_usage"] is None
+    finally:
+        await one.stop()
+        await two.stop()
+
+
+async def test_ambiguous_gateway_errors_do_not_replay_generation(http, admin, tls, relay_binary):  # noqa: F811
+    async def intermediary(body, reader, writer):
+        if marker(body) == "gateway":
+            await reply(writer, "502 Bad Gateway", OVERLOADED)
+        else:
+            await reply(
+                writer,
+                "503 Service Unavailable",
+                {"type": "error", "error": {"type": "gateway_error", "message": "lost response"}},
+            )
+
+    one = Double("primary", tls[0], intermediary)
+    two = Double("backup", tls[0], backup)
+    await one.start()
+    await two.start()
+    try:
+        async with failover_plane(http, admin, (one.port, two.port)) as (plane, _, _):
+            peer, private, _, model, _, _, key, cid = plane
+            ledger = Ledger(admin, peer)
+            async with running_relay(
+                relay_binary, peer, private, cid, http[3], tls[1], peer.connection.info.port
+            ) as client:
+                for n, (label, code) in enumerate([("gateway", 502), ("ambiguous", 503)], start=1):
+                    response = await client.post(
+                        "/v1/messages",
+                        headers={"x-api-key": key},
+                        json={
+                            "model": model["public_name"],
+                            "messages": [{"role": "user", "content": label}],
+                            "max_tokens": 6,
+                            "stream": n == 2,
+                        },
+                    )
+                    assert response.status_code == code
+                    await wait_events(admin, 2 * n)
+                    await http[2].state.usage.process()
+                    rid = ledger.new()
+                    assert one.count(label) == 1 and not two.received
+                    assert len(ledger.attempts(rid)) == 1 and ledger.debits(rid) == []
+                    assert ledger.closed(rid)["delivery_outcome"] == "unknown"
+                    assert (await ledger.status(rid))["reservation_state"] == "held"
+    finally:
+        await one.stop()
+        await two.stop()

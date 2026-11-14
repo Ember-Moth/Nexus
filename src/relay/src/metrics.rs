@@ -80,7 +80,6 @@ label!(
         Connect => "connect",
         Signing => "signing",
         Status429 => "status_429",
-        Status502 => "status_502",
         Status503 => "status_503",
         Status529 => "status_529",
         OtherStatus => "status_other",
@@ -90,7 +89,6 @@ impl FailoverReason {
     pub fn declined(status: u16) -> Self {
         match status {
             429 => Self::Status429,
-            502 => Self::Status502,
             503 => Self::Status503,
             529 => Self::Status529,
             _ => Self::OtherStatus,

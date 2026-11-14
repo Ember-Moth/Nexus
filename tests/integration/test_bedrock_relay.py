@@ -100,7 +100,8 @@ async def test_bedrock_converse_and_stream(http, admin, tls, relay_binary, sigv4
             if mode == "http_error":
                 writer.write(
                     b"HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\n"
-                    b"Connection: close\r\n\r\n" + b'{"message":"slow down"}'
+                    b"x-amzn-errortype: ThrottlingException\r\nConnection: close\r\n\r\n"
+                    + b'{"message":"slow down"}'
                 )
             elif not stream:
                 reply = {

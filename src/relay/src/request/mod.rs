@@ -178,6 +178,7 @@ async fn cancel(db: &Gateway, rid: Uuid) -> bool {
 enum Opened {
     /// The existing delivery path handles this response, including non-retryable errors.
     Answer(reqwest::Response),
+    Buffered(Reply),
     /// The upstream provably did not execute the generation. A declined status keeps its
     /// buffered reply as cost evidence and as the client's error if no attempt follows.
     Declined(Option<Reply>, FailoverReason),
@@ -223,13 +224,13 @@ async fn open(
     let opened = run
         .reservation
         .guarded(async {
-            tokio::select! {
+            tokio::select! {biased;
                 _ = sender.closed() => None,
                 result = call => Some(result),
             }
         })
         .await;
-    // Failover is disabled at one attempt; every outcome then keeps its single-attempt report.
+    // Classify ambiguous replies even when there is no retry budget.
     let failover = node.max_attempts > 1;
     let response = match opened {
         Ok(Some(Ok(response))) => response,
@@ -246,10 +247,25 @@ async fn open(
         }
     };
     timer.first_byte();
-    if !failover || !crate::upstream::declined(response.status()) {
+    if response.status() != StatusCode::BAD_GATEWAY && !crate::upstream::declined(response.status())
+    {
         return Opened::Answer(response);
     }
     let reason = FailoverReason::declined(response.status().as_u16());
+    // Bedrock's buffered error shape is derived from its HTTP status. Verify the
+    // service error header before projecting the response into a client protocol.
+    let bedrock_declined = bedrock
+        && matches!(
+            (
+                response.status().as_u16(),
+                response
+                    .headers()
+                    .get("x-amzn-errortype")
+                    .and_then(|header| header.to_str().ok())
+                    .and_then(|value| value.split(':').next())
+            ),
+            (429, Some("ThrottlingException")) | (503, Some("ServiceUnavailableException"))
+        );
     let rid = run.reservation.id.to_string();
     let limit = node.upstream.response_limit();
     let reply = run
@@ -263,16 +279,30 @@ async fn open(
             }
         }))
         .await;
-    Opened::Declined(
-        match reply {
-            Ok(Ok(Ok(mut reply))) => {
-                reply.outcome = "failed";
-                Some(reply)
+    match reply {
+        Ok(Ok(Ok(mut reply)))
+            if (bedrock_declined
+                || (!bedrock
+                    && crate::upstream::confirms_rejection(ep, reply.status, &reply.body)))
+                && reply
+                    .usage
+                    .raw_usage
+                    .as_ref()
+                    .is_none_or(|counts| counts.values().all(|n| *n == 0)) =>
+        {
+            reply.outcome = "failed";
+            if failover {
+                Opened::Declined(Some(reply), reason)
+            } else {
+                Opened::Buffered(reply)
             }
-            _ => None,
-        },
-        reason,
-    )
+        }
+        Ok(Ok(Ok(mut reply))) => {
+            reply.outcome = "unknown";
+            Opened::Buffered(reply)
+        }
+        _ => Opened::Lost,
+    }
 }
 
 pub async fn run(
@@ -319,7 +349,7 @@ pub async fn run(
         }
     };
     let frozen = selected.bounds;
-    let deadline = Instant::now() + node.failover_budget;
+    let deadline = run.retry_deadline(node.failover_budget);
     let mut failed = Vec::new();
     let limit = node.upstream.response_limit();
     let transport = if request.stream {
@@ -354,6 +384,10 @@ pub async fn run(
         .await;
         let answer = match opened {
             Opened::Answer(answer) => answer,
+            Opened::Buffered(reply) => {
+                deliver(run, sender, reply, exchange, limit, trace).await;
+                return;
+            }
             Opened::Lost => {
                 let _ = sender.send(Err(Failure::upstream()));
                 run.ended(None, false).await;
@@ -397,18 +431,38 @@ pub async fn run(
                         |r| r.usage.clone(),
                     );
                     let response_id = reply.as_ref().and_then(|r| r.response_id.as_deref());
-                    match run.fail_over(target, evidence, response_id).await {
-                        Ok(following) => {
+                    match run
+                        .fail_over(target, evidence, response_id, deadline, &sender)
+                        .await
+                    {
+                        Ok(()) => {
+                            if let Err(stop) = run.ready_to_retry(deadline, &sender).await {
+                                trace.failover(attempt, candidate, reason, stop);
+                                let respond = async {
+                                    if let Some(reply) = reply {
+                                        let _ = write_reply(sender, reply, exchange, limit).await;
+                                    } else {
+                                        let _ = sender.send(Err(Failure::upstream()));
+                                    }
+                                };
+                                let outcome = if matches!(stop, FailoverResult::ClientGone) {
+                                    "cancelled"
+                                } else {
+                                    "failed"
+                                };
+                                // Every earlier attempt was declined and the backup was never sent.
+                                tokio::join!(
+                                    respond,
+                                    run.finish_unsent(outcome, "upstream_failed")
+                                );
+                                return;
+                            }
                             trace.failover(attempt, candidate, reason, FailoverResult::Switched);
-                            run = following;
                             selected = next;
                             credential = key;
                             continue;
                         }
-                        Err(current) => {
-                            result = FailoverResult::StartFailed;
-                            run = current
-                        }
+                        Err(stop) => result = stop,
                     }
                 } else if candidate.is_some() {
                     result = FailoverResult::CredentialUnavailable;
@@ -468,44 +522,31 @@ pub async fn run(
 async fn deliver(
     run: lifecycle::Run,
     sender: Channel,
-    mut reply: Reply,
+    reply: Reply,
     exchange: Exchange<'_>,
     limit: usize,
     trace: Trace,
 ) {
-    if exchange.converts() {
-        let converted = serde_json::from_slice(&reply.body).ok().and_then(|body| {
-            convert::response::convert(exchange, &body, &reply.usage, reply.status.as_u16()).ok()
-        });
-        let converted = converted
-            .map(|(body, status)| (body.to_string().into_bytes(), status))
-            .filter(|(wire, _)| wire.len() <= limit);
-        let Some((body, status)) = converted else {
+    let delivered = write_reply(sender, reply, exchange, limit).await;
+    let (reply, written) = match delivered {
+        Ok(pair) => pair,
+        Err(reply) => {
             trace.rejected("conversion_failed");
-            let _ = sender.send(Err(Failure::upstream()));
-            // The upstream may have completed and incurred cost even though the client
-            // received no equivalent response. Retain its raw evidence and charge no customer.
+            let delivery = if reply.outcome == "unknown" {
+                "unknown"
+            } else {
+                "upstream_failed"
+            };
             run.finish(
                 reply.outcome,
-                "upstream_failed",
+                delivery,
                 reply.response_id.as_deref(),
                 reply.usage,
             )
             .await;
             return;
-        };
-        reply.body = body;
-        reply.status = StatusCode::from_u16(status).expect("HTTP status");
-    }
-    let (receipt, received) = oneshot::channel();
-    let sent = sender
-        .send(Ok(Response::Buffered {
-            status: reply.status,
-            body: reply.body,
-            receipt,
-        }))
-        .is_ok();
-    let written = sent && received.await.is_ok();
+        }
+    };
     let delivery = match (reply.outcome, written) {
         ("succeeded", _) if !reply.status.is_success() => "upstream_failed",
         ("succeeded", true) => "succeeded",
@@ -519,4 +560,36 @@ async fn deliver(
         reply.usage,
     )
     .await;
+}
+
+async fn write_reply(
+    sender: Channel,
+    mut reply: Reply,
+    exchange: Exchange<'_>,
+    limit: usize,
+) -> Result<(Reply, bool), Reply> {
+    if exchange.converts() {
+        let converted = serde_json::from_slice(&reply.body).ok().and_then(|body| {
+            convert::response::convert(exchange, &body, &reply.usage, reply.status.as_u16()).ok()
+        });
+        let converted = converted
+            .map(|(body, status)| (body.to_string().into_bytes(), status))
+            .filter(|(wire, _)| wire.len() <= limit);
+        let Some((body, status)) = converted else {
+            let _ = sender.send(Err(Failure::upstream()));
+            return Err(reply);
+        };
+        reply.body = body;
+        reply.status = StatusCode::from_u16(status).expect("HTTP status");
+    }
+    let (receipt, received) = oneshot::channel();
+    let sent = sender
+        .send(Ok(Response::Buffered {
+            status: reply.status,
+            body: std::mem::take(&mut reply.body),
+            receipt,
+        }))
+        .is_ok();
+    let written = sent && received.await.is_ok();
+    Ok((reply, written))
 }

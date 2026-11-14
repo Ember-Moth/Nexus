@@ -5,6 +5,7 @@ import binascii
 import json
 import re
 from datetime import datetime
+from ipaddress import IPv4Address, IPv6Address, ip_address
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -185,3 +186,27 @@ def optional_version(
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> int | None:
     return expected_version(if_match) if if_match is not None else None
+
+
+def auth_limit_peer(request: Request, trusted: frozenset[IPv4Address | IPv6Address]) -> str:
+    direct = request.client.host if request.client else "unknown"
+    if not trusted:
+        return direct
+    try:
+        peer = ip_address(direct)
+    except ValueError:
+        return direct
+    if peer not in trusted:
+        return direct
+    values = request.headers.getlist("X-Nexus-Client-IP")
+    if len(values) == 1 and "%" not in values[0]:
+        try:
+            address = ip_address(values[0])
+            return (
+                str(address.ipv4_mapped or address)
+                if isinstance(address, IPv6Address)
+                else str(address)
+            )
+        except ValueError:
+            pass
+    return direct

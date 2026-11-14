@@ -7,7 +7,7 @@ use crate::{
         limits::{Admission, Lease, LimitError},
         snapshot::{Deployment, Index, Selection},
     },
-    metrics::RequestTally,
+    metrics::{FailoverResult, RequestTally},
     protocol::{Endpoint, stream::Completion, usage::UsageEvidence},
     server::Node,
 };
@@ -177,6 +177,42 @@ impl Run {
     pub fn attempts(&self) -> usize {
         self.attempt.others.len() + 1
     }
+    /// Last admission check before polling a backup POST. Re-check the deadline
+    /// after Redis answers as either the control calls or the renewal can take time.
+    pub async fn ready_to_retry(
+        &mut self,
+        deadline: Instant,
+        sender: &super::Channel,
+    ) -> Result<(), FailoverResult> {
+        if sender.is_closed() {
+            return Err(FailoverResult::ClientGone);
+        }
+        if Instant::now() >= deadline {
+            return Err(FailoverResult::BudgetExhausted);
+        }
+        let lease = &mut self.reservation.lease;
+        match tokio::time::timeout_at(deadline, self.reservation.node.limits.renew(lease)).await {
+            Err(_) => return Err(FailoverResult::BudgetExhausted),
+            Ok(Err(_)) => return Err(FailoverResult::StartFailed),
+            Ok(Ok(())) => {}
+        }
+        if sender.is_closed() {
+            return Err(FailoverResult::ClientGone);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(FailoverResult::BudgetExhausted);
+        }
+        if now >= lease.safe_until {
+            return Err(FailoverResult::StartFailed);
+        }
+        Ok(())
+    }
+
+    pub fn retry_deadline(&self, budget: std::time::Duration) -> Instant {
+        self.attempt.started + budget
+    }
+
     pub fn usage_format(&self) -> &'static str {
         self.reservation.usage_format
     }
@@ -186,21 +222,16 @@ impl Run {
     /// finishes this run. An attempt committed with an unknown reply is reported as failed
     /// and listed by that close; when even its existence is unknown the close is withheld.
     pub async fn fail_over(
-        mut self,
+        &mut self,
         next: Target,
         evidence: UsageEvidence,
         response_id: Option<&str>,
-    ) -> Result<Run, Run> {
+        deadline: Instant,
+        sender: &super::Channel,
+    ) -> Result<(), FailoverResult> {
+        self.ready_to_retry(deadline, sender).await?;
         let node = self.reservation.node.clone();
         let rid = self.reservation.id;
-        if node
-            .limits
-            .renew(&mut self.reservation.lease)
-            .await
-            .is_err()
-        {
-            return Err(self);
-        }
         let mut others = self.attempt.others.clone();
         others.push(self.attempt.attempt);
         let mut attempt = Attempt {
@@ -246,7 +277,7 @@ impl Run {
                     _ => self.attempt.closable = false,
                 }
             }
-            return Err(self);
+            return Err(FailoverResult::StartFailed);
         }
         let spent = self
             .spent
@@ -256,15 +287,13 @@ impl Run {
         // The request's tally follows its open attempt and is recorded once, at the close.
         attempt.tally = std::mem::take(&mut self.attempt.tally);
         attempt.tally.deployment = Some(next.deployment);
-        let mut reservation = self.reservation;
+        let reservation = &mut self.reservation;
         reservation.deployment = next.deployment;
         reservation.endpoint = next.endpoint;
         reservation.usage_format = next.usage_format;
-        Ok(Run {
-            reservation,
-            attempt,
-            spent,
-        })
+        self.attempt = attempt;
+        self.spent = spent;
+        Ok(())
     }
     fn tokens(&self, usage: &UsageEvidence) -> Option<u64> {
         self.spent
@@ -272,13 +301,17 @@ impl Run {
             .map(|(a, b)| a + b)
     }
     pub async fn not_sent(self) {
+        self.finish_unsent("cancelled", "client_cancelled").await;
+    }
+
+    pub async fn finish_unsent(self, outcome: &str, delivery: &str) {
         let r = self.reservation;
-        finish_lease(&r.node.limits, &r.lease, Some(0), r.id).await;
+        finish_lease(&r.node.limits, &r.lease, self.spent, r.id).await;
         self.attempt
             .complete(
                 &r.node.db,
-                "cancelled",
-                "client_cancelled",
+                outcome,
+                delivery,
                 false,
                 None,
                 UsageEvidence {

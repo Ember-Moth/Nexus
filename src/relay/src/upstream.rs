@@ -48,11 +48,29 @@ impl UpstreamError {
     }
 }
 
-/// Response statuses with which an upstream declines a generation before executing it:
-/// rate limiting (429), an unavailable or overloaded service (502, 503) and Anthropic's
-/// overload signal (529). Every other status, including 500 and 504, may follow execution.
+/// These statuses can indicate an explicit admission rejection. The caller
+/// must also check the provider's error envelope before issuing another POST.
 pub fn declined(status: StatusCode) -> bool {
-    matches!(status.as_u16(), 429 | 502 | 503 | 529)
+    matches!(status.as_u16(), 429 | 503 | 529)
+}
+
+pub(crate) fn confirms_rejection(endpoint: Endpoint, status: StatusCode, body: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let error = &value["error"];
+    match (endpoint, status.as_u16()) {
+        (Endpoint::AnthropicMessages, 503 | 529) => {
+            value["type"] == "error" && error["type"] == "overloaded_error"
+        }
+        (Endpoint::AnthropicMessages, 429) => {
+            value["type"] == "error" && error["type"] == "rate_limit_error"
+        }
+        (Endpoint::OpenaiResponses, 429) => {
+            error["code"] == "rate_limit_exceeded" || error["type"] == "rate_limit_exceeded"
+        }
+        _ => false,
+    }
 }
 
 pub struct Upstream {

@@ -2,6 +2,7 @@ import base64
 import binascii
 import re
 import socket
+from ipaddress import IPv4Address, IPv6Address
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -37,6 +38,8 @@ class RuntimeSettings(BaseSettings):
     password_setup_ttl_seconds: int = Field(default=86400, ge=60, le=86400)
     login_window_seconds: int = Field(default=60, ge=1, le=3600)
     login_per_account: int = Field(default=10, ge=1, le=1000)
+    # Exact TCP peers allowed to assert a single ingress-verified client address for auth limits.
+    auth_proxy_peers: list[IPv4Address | IPv6Address] = Field(default_factory=list)
     login_per_ip: int = Field(default=60, ge=1, le=10000)
     export_per_org_minute: int = Field(default=10, ge=1, le=1000)
     export_ttl_seconds: int = Field(default=86400, ge=60, le=2592000)

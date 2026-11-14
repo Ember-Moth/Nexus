@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PencilIcon, PlusIcon, SplitIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -21,7 +21,7 @@ import { useT } from "@/i18n/provider";
 import { call, nexus } from "@/lib/api/client";
 import { isApiError, isConflict } from "@/lib/api/errors";
 import { useCursorList } from "@/lib/api/hooks";
-import type { RoutePolicy } from "@/lib/api/types";
+import type { Deployment, Model, Organization, RoutePolicy } from "@/lib/api/types";
 import { shortId } from "@/lib/format";
 
 const integer = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
@@ -42,23 +42,51 @@ const schema = z
 type Values = z.input<typeof schema>;
 type Parsed = z.output<typeof schema>;
 
-/** Catalog names for display; the platform admin sees the full catalog without org context. */
+/** Read catalog options by cursor. Candidate choices are separately scoped to the selected model. */
+function useDeployments(modelId?: string) {
+  return useCursorList<Deployment>({
+    queryKey: ["catalog", "deployments", "options", modelId ?? null],
+    enabled: modelId !== "",
+    fetchPage: async (cursor) =>
+      (await call(() =>
+        nexus.GET("/api/v1/deployments", { params: { query: { limit: 100, cursor, model_id: modelId } } }),
+      )).data,
+  });
+}
+
 function useCatalogNames() {
-  const organizations = useQuery({
-    queryKey: ["organizations", "options"],
-    queryFn: async () =>
-      (await call(() => nexus.GET("/api/v1/organizations", { params: { query: { limit: 100 } } }))).data.items,
+  const organizations = useCursorList<Organization>({
+    queryKey: ["organizations", "route-options"],
+    fetchPage: async (cursor) =>
+      (await call(() => nexus.GET("/api/v1/organizations", { params: { query: { limit: 100, cursor } } }))).data,
   });
-  const models = useQuery({
-    queryKey: ["catalog", "models", "options"],
-    queryFn: async () => (await call(() => nexus.GET("/api/v1/models", { params: { query: { limit: 100 } } }))).data.items,
+  const models = useCursorList<Model>({
+    queryKey: ["catalog", "models", "route-options"],
+    fetchPage: async (cursor) =>
+      (await call(() => nexus.GET("/api/v1/models", { params: { query: { limit: 100, cursor } } }))).data,
   });
-  const deployments = useQuery({
-    queryKey: ["catalog", "deployments", "options"],
-    queryFn: async () =>
-      (await call(() => nexus.GET("/api/v1/deployments", { params: { query: { limit: 100 } } }))).data.items,
-  });
+  const deployments = useDeployments();
   return { organizations, models, deployments };
+}
+
+type OptionsPage = {
+  error: Error | null;
+  refetch: () => Promise<unknown>;
+  hasNextPage: boolean;
+  fetchNextPage: () => Promise<unknown>;
+  isFetchingNextPage: boolean;
+};
+
+function MoreOptions({ query }: { query: OptionsPage }) {
+  const t = useT();
+  if (query.error) return <ErrorAlert error={query.error} onRetry={() => void query.refetch()} />;
+  if (!query.hasNextPage) return null;
+  return (
+    <Button type="button" variant="outline" size="sm" disabled={query.isFetchingNextPage}
+      onClick={() => void query.fetchNextPage()}>
+      {t(query.isFetchingNextPage ? "common.loading" : "common.loadMore")}
+    </Button>
+  );
 }
 
 function RouteDialog({
@@ -85,7 +113,8 @@ function RouteDialog({
   });
   const candidates = useFieldArray({ control: form.control, name: "candidates" });
   const modelId = useWatch({ control: form.control, name: "modelId" });
-  const deployments = (catalog.deployments.data ?? []).filter((d) => d.model_id === modelId);
+  const deploymentOptions = useDeployments(modelId);
+  const deployments = deploymentOptions.items;
 
   // PUT /route-policies/{organization_id}/{model_id}: create without If-Match (428 if it
   // already exists), replace with If-Match "<version>" (412 when the version is stale).
@@ -152,10 +181,12 @@ function RouteDialog({
                 render={({ field, fieldState }) => (
                   <Select value={field.value} onValueChange={field.onChange} disabled={Boolean(editing)}>
                     <SelectTrigger id="route-org" className="w-full" aria-invalid={fieldState.invalid || undefined}>
-                      <SelectValue placeholder={t("routes.selectOrganization")} />
+                      <SelectValue placeholder={t("routes.selectOrganization")}>
+                        {editing ? (catalog.organizations.items.find((o) => o.id === editing.organization_id)?.name ?? shortId(editing.organization_id)) : undefined}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      {(catalog.organizations.data ?? []).map((org) => (
+                      {catalog.organizations.items.map((org) => (
                         <SelectItem key={org.id} value={org.id}>
                           {org.name}
                         </SelectItem>
@@ -164,6 +195,7 @@ function RouteDialog({
                   </Select>
                 )}
               />
+              {!editing && <MoreOptions query={catalog.organizations} />}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="route-model">{t("routes.model")}</Label>
@@ -171,12 +203,17 @@ function RouteDialog({
                 control={form.control}
                 name="modelId"
                 render={({ field, fieldState }) => (
-                  <Select value={field.value} onValueChange={field.onChange} disabled={Boolean(editing)}>
+                  <Select value={field.value} onValueChange={(value) => {
+                    if (value !== field.value) candidates.replace([{ deploymentId: "", priority: 0, weight: 1 }]);
+                    field.onChange(value);
+                  }} disabled={Boolean(editing)}>
                     <SelectTrigger id="route-model" className="w-full" aria-invalid={fieldState.invalid || undefined}>
-                      <SelectValue placeholder={t("routes.selectModel")} />
+                      <SelectValue placeholder={t("routes.selectModel")}>
+                        {editing ? (catalog.models.items.find((m) => m.id === editing.model_id)?.public_name ?? shortId(editing.model_id)) : undefined}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      {(catalog.models.data ?? []).map((model) => (
+                      {catalog.models.items.map((model) => (
                         <SelectItem key={model.id} value={model.id}>
                           <span className="font-mono">{model.public_name}</span>
                         </SelectItem>
@@ -185,6 +222,7 @@ function RouteDialog({
                   </Select>
                 )}
               />
+              {!editing && <MoreOptions query={catalog.models} />}
             </div>
           </div>
           <fieldset className="grid gap-2">
@@ -208,7 +246,9 @@ function RouteDialog({
                         className="w-full"
                         aria-invalid={fieldState.invalid || undefined}
                       >
-                        <SelectValue placeholder={deployments.length ? t("routes.selectDeployment") : t("routes.noDeployments")} />
+                        <SelectValue placeholder={deploymentOptions.isFetching ? t("common.loading") : deployments.length ? t("routes.selectDeployment") : t("routes.noDeployments")}>
+                          {f.value ? (deployments.find((d) => d.id === f.value)?.name ?? shortId(f.value)) : undefined}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {deployments.map((deployment) => (
@@ -258,6 +298,7 @@ function RouteDialog({
             {duplicate ? <span className="text-xs text-destructive">{t("routes.duplicate")}</span> : null}
             {numberInvalid ? <span className="text-xs text-destructive">{t("routes.invalidNumber")}</span> : null}
             {invalid && !duplicate ? <span className="text-xs text-destructive">{t("routes.required")}</span> : null}
+            {modelId && <MoreOptions query={deploymentOptions} />}
           </fieldset>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
@@ -287,11 +328,11 @@ export default function RoutesPage() {
 
   const names = useMemo(
     () => ({
-      organization: new Map((catalog.organizations.data ?? []).map((o) => [o.id, o.name])),
-      model: new Map((catalog.models.data ?? []).map((m) => [m.id, m.public_name])),
-      deployment: new Map((catalog.deployments.data ?? []).map((d) => [d.id, d.name])),
+      organization: new Map(catalog.organizations.items.map((o) => [o.id, o.name])),
+      model: new Map(catalog.models.items.map((m) => [m.id, m.public_name])),
+      deployment: new Map(catalog.deployments.items.map((d) => [d.id, d.name])),
     }),
-    [catalog.organizations.data, catalog.models.data, catalog.deployments.data],
+    [catalog.organizations.items, catalog.models.items, catalog.deployments.items],
   );
 
   const columns = useMemo<ColumnDef<RoutePolicy, unknown>[]>(

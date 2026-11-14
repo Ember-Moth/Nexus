@@ -442,6 +442,12 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
         assert ("type" in r.json()) == bool(not messages)
         await wait_events(admin, 10)
         await http[2].state.usage.process()
+        # A Messages overloaded_error confirms rejection. A Responses server_error
+        # from an intermediary does not establish whether generation already ran.
+        rejection_hold = 0 if messages else 10
+        assert admin.execute("SELECT held_amount FROM billing.accounts").fetchone() == (
+            rejection_hold,
+        )
         mode = "truncated"
         with pytest.raises(httpx.RemoteProtocolError):
             await public.post(
@@ -451,7 +457,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
         await http[2].state.usage.process()
         assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
             80,
-            10,
+            rejection_hold + 10,
         )
         mode = "limit"
         r = await public.post(paths[cross], headers=hdrs[cross], json=body[cross])
@@ -478,11 +484,11 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
         assert await http[2].state.usage.process() == 1
         assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
             75,
-            20,
+            rejection_hold + 20,
         )
         assert admin.execute("SELECT spent,reserved FROM billing.budget_periods").fetchone() == (
             25,
-            20,
+            rejection_hold + 20,
         )
         mode = "private_output"
         r = await public.post(paths[cross], headers=hdrs[cross], json=body[cross])
@@ -491,7 +497,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
         assert await http[2].state.usage.process() == 1
         assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
             75,
-            20,
+            rejection_hold + 20,
         )
         assert admin.execute(
             "SELECT count(*) FROM billing.request_attempts WHERE cost_amount=2"
@@ -515,5 +521,5 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
         await http[2].state.usage.process()
         assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
             75,
-            20,
+            rejection_hold + 20,
         )

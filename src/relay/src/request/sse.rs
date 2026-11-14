@@ -139,10 +139,16 @@ pub async fn forward(
     mut sender: Channel,
 ) {
     let ep = exchange.upstream;
-    let opened=run.reservation.guarded(async{
-        tokio::select!{_=sender.closed()=>Err(()),r=node.upstream.open(base,ep,credential,body,true)=>r}
-    }).await;
-    let Ok(Ok(response)) = opened else {
+    let opened = run
+        .reservation
+        .guarded(async {
+            tokio::select! {
+                _ = sender.closed() => None,
+                result = node.upstream.open(base, ep, credential, body, true) => result.ok(),
+            }
+        })
+        .await;
+    let Ok(Some(response)) = opened else {
         let _ = sender.send(Err(Failure::upstream()));
         run.ended(None, false).await;
         return;

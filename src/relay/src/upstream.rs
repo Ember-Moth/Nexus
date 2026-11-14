@@ -1,8 +1,37 @@
-use crate::protocol::{Endpoint, response, usage::UsageEvidence};
+use crate::protocol::{Endpoint, ProtocolError, response, usage::UsageEvidence};
 use http::StatusCode;
 use reqwest::{Client, Url};
 use serde_json::Value;
 use std::time::Duration;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum UpstreamError {
+    #[error("upstream request timed out")]
+    Timeout,
+    #[error("upstream HTTP transport failed")]
+    Transport,
+    #[error("upstream response exceeds the configured size limit")]
+    ResponseTooLarge,
+    #[error("unsupported upstream content encoding")]
+    UnsupportedEncoding,
+    #[error("invalid upstream JSON")]
+    InvalidJson(#[from] serde_json::Error),
+    #[error(transparent)]
+    Protocol(#[from] ProtocolError),
+    #[error("unexpected upstream redirect")]
+    Redirect,
+}
+
+impl From<reqwest::Error> for UpstreamError {
+    fn from(error: reqwest::Error) -> Self {
+        if error.is_timeout() {
+            Self::Timeout
+        } else {
+            Self::Transport
+        }
+    }
+}
 
 pub struct Upstream {
     client: Client,
@@ -113,7 +142,7 @@ impl Upstream {
         secret: &str,
         body: &Value,
         stream: bool,
-    ) -> Result<reqwest::Response, ()> {
+    ) -> Result<reqwest::Response, UpstreamError> {
         let mut call = self.client.post(Self::endpoint(base, endpoint));
         call = match endpoint {
             Endpoint::AnthropicMessages => call
@@ -138,8 +167,8 @@ impl Upstream {
             .send(),
         )
         .await
-        .map_err(|_| ())?
-        .map_err(|_| ())
+        .map_err(|_| UpstreamError::Timeout)?
+        .map_err(UpstreamError::from)
     }
     pub async fn generate(
         &self,
@@ -147,7 +176,7 @@ impl Upstream {
         endpoint: Endpoint,
         secret: &str,
         body: &Value,
-    ) -> Result<Reply, ()> {
+    ) -> Result<Reply, UpstreamError> {
         let res = self.open(base, endpoint, secret, body, false).await?;
         self.buffered(res, endpoint).await
     }
@@ -155,34 +184,37 @@ impl Upstream {
         &self,
         mut res: reqwest::Response,
         endpoint: Endpoint,
-    ) -> Result<Reply, ()> {
+    ) -> Result<Reply, UpstreamError> {
         let status = res.status();
         if res
             .content_length()
             .is_some_and(|n| n > self.max_bytes as u64)
-            || res
-                .headers()
-                .get("content-encoding")
-                .is_some_and(|h| h != "identity")
         {
-            return Err(());
+            return Err(UpstreamError::ResponseTooLarge);
+        }
+        if res
+            .headers()
+            .get("content-encoding")
+            .is_some_and(|h| h != "identity")
+        {
+            return Err(UpstreamError::UnsupportedEncoding);
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = res.chunk().await.map_err(|_| ())? {
+        while let Some(chunk) = res.chunk().await? {
             if chunk.len() > self.max_bytes - bytes.len() {
-                return Err(());
+                return Err(UpstreamError::ResponseTooLarge);
             }
             bytes.extend_from_slice(&chunk);
         }
-        let mut data: Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
+        let mut data: Value = serde_json::from_slice(&bytes)?;
         // Preserve the delivery fact even if a new or malformed meter cannot be billed.
         let done = match response::observe(endpoint, &data) {
             Ok(done) => done,
-            Err(_) if data.get("usage").is_some() => {
-                data.as_object_mut().ok_or(())?.remove("usage");
-                response::observe(endpoint, &data).map_err(|_| ())?
+            Err(error) if data.get("usage").is_some() => {
+                data.as_object_mut().ok_or(error)?.remove("usage");
+                response::observe(endpoint, &data)?
             }
-            Err(_) => return Err(()),
+            Err(error) => return Err(error.into()),
         };
         let outcome = if status.is_success() || done.outcome(endpoint) == "failed" {
             done.outcome(endpoint)
@@ -190,7 +222,7 @@ impl Upstream {
             "unknown"
         };
         if status.is_redirection() {
-            return Err(());
+            return Err(UpstreamError::Redirect);
         }
         Ok(Reply {
             status,

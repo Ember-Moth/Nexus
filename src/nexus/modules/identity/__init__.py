@@ -13,6 +13,7 @@ from .application.service import IdentityService
 from .domain.events import ORGANIZATION_CREATED, ORGANIZATION_CREATED_VERSION
 from .persistence.repository import IdentityUnitOfWork
 from .persistence.snapshots import create_identity_source
+from .providers.authentication import AuthProviders
 
 __all__ = [
     "create_audit_reader",
@@ -31,15 +32,17 @@ __all__ = [
 
 
 def create_service(
-    database: ModuleDatabase, auth_limits: AuthLimits, *, session_ttl: int, setup_ttl: int
+    database: ModuleDatabase, auth_limits: AuthLimits, *, settings, mail_cipher
 ) -> IdentityService:
     database.require_module(ModuleName.IDENTITY)
     return IdentityService(
         lambda: IdentityUnitOfWork(database),
         Argon2Passwords(),
         auth_limits,
-        session_ttl=session_ttl,
-        setup_ttl=setup_ttl,
+        session_ttl=settings.session_ttl_seconds,
+        setup_ttl=settings.password_setup_ttl_seconds,
+        providers=AuthProviders(settings),
+        mail_cipher=mail_cipher,
     )
 
 

@@ -17,7 +17,7 @@ class CredentialCipher:
         if current_version not in roots or any(len(key) != 32 for key in roots.values()):
             raise ValueError("invalid credential encryption keyring")
         self.current_version = current_version
-        if purpose not in {"catalog", "payment"}:
+        if purpose not in {"catalog", "payment", "identity-mail"}:
             raise ValueError("unsupported credential purpose")
         self._purpose = purpose
         self._keys = MappingProxyType(
@@ -40,7 +40,11 @@ class CredentialCipher:
         return frozenset(self._keys)
 
     def _aad(self, upstream_id: UUID, credential_id: UUID, version: int) -> bytes:
-        kind = "upstream-credential" if self._purpose == "catalog" else "payment-configuration"
+        kind = {
+            "catalog": "upstream-credential",
+            "payment": "payment-configuration",
+            "identity-mail": "identity-mail",
+        }[self._purpose]
         return f"nexus:{kind}:v1:{upstream_id}:{credential_id}:{version}".encode()
 
     def encrypt(self, secret: str, upstream_id: UUID, credential_id: UUID) -> tuple[int, bytes]:

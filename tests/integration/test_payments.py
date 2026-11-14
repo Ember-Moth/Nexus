@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from test_billing import balance, finance_role, headers
+from test_billing import account_amounts, balance, finance_role, headers
 from test_identity_api import PASSWORD, auth, create_org, login
 
 from nexus.api import create_app
@@ -1126,7 +1126,7 @@ async def test_payment_migration_cannot_erase_retained_remote_intents(
         await asyncio.to_thread(command.downgrade, config, "0006_pricing_reservations")
     assert (
         admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchone()[0]
-        == "0014_bedrock_converse"
+        == "0016_auth_email"
     )
     assert (
         admin.execute(
@@ -1443,7 +1443,7 @@ async def test_confirmed_payment_posting_latency(payments, admin, service_direct
             },
         )
         assert posted == len(ids) and review == 0 and confirmed_p95 <= 2
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             240,
             0,
         )

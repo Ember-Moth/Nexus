@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from test_billing import funding, headers, post_funding
+from test_billing import account_amounts, funding, headers, post_funding
 from test_catalog import make_policy
 from test_identity_api import auth, create_org
 from test_plane import plane, register_node  # noqa: F401
@@ -279,7 +279,7 @@ async def test_settlement_capacity(plane, http, admin, service_directory):  # no
 
 
 async def test_backlog_replay_and_worker_takeover(plane, http, admin, service_directory):  # noqa: F811
-    peer, _, _, model, dep, admission, raw, _ = plane
+    peer, _, org, model, dep, admission, raw, _ = plane
     await peer.refresh()
     async with worker(service_directory, peer.redis, peer.namespace) as (process, _):
         process.kill()
@@ -288,7 +288,7 @@ async def test_backlog_replay_and_worker_takeover(plane, http, admin, service_di
     ids = [uuid4() for _ in range(16)]
     for rid in ids:
         await submit(peer, raw, model["id"], dep["id"], rid)
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (100, 32)
+    assert account_amounts(admin, org) == (100, 32)
     with pytest.raises(psycopg.errors.RaiseException, match="settlement_backlog"):
         await peer.reserve(raw, model["id"], 1, 1, uuid4())
     # Response-loss retries and already-admitted work remain accessible during backpressure.
@@ -302,14 +302,14 @@ async def test_backlog_replay_and_worker_takeover(plane, http, admin, service_di
         report = profile_results(admin, ids)
         assert report["unfinished"] == report["missing_or_duplicate_debit"] == 0
         print("restart_drain_seconds", round(monotonic() - started, 3), "jobs", len(ids))
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             68,
             0,
         )
         rid = uuid4()
         await submit(peer, raw, model["id"], dep["id"], rid)
         await drain(admin, [rid])
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             66,
             0,
         )
@@ -319,7 +319,7 @@ async def test_inflight_gateway_across_migrations(plane, http, admin, migration_
     from alembic import command
     from alembic.config import Config
 
-    peer, _, _, model, dep, admission, raw, _ = plane
+    peer, _, org, model, dep, admission, raw, _ = plane
     config = Config(str(ROOT / "alembic.ini"))
     config.attributes["settings"] = migration_settings
     await peer.refresh()
@@ -339,7 +339,7 @@ async def test_inflight_gateway_across_migrations(plane, http, admin, migration_
     await http[2].state.usage.process()
     assert await http[2].state.reports.project() == 1
     assert (await peer.call("get_request_status", rid))["charged_amount"] == "2.000000000000"
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (98, 0)
+    assert account_amounts(admin, org) == (98, 0)
 
 
 async def test_native_dependency_outages(plane, http, admin, service_directory):  # noqa: F811
@@ -348,7 +348,7 @@ async def test_native_dependency_outages(plane, http, admin, service_directory):
     from nexus.gateway_simulator import GatewayOutcomeUnknown
     from scripts.native_services import NativeServices
 
-    peer, _, _, model, dep, _, raw, cid = plane
+    peer, _, org, model, dep, _, raw, cid = plane
     services = NativeServices(service_directory, database=admin.info.dbname, track_commits=True)
     await http[2].state.publication.distribute()
     await peer.refresh()
@@ -411,7 +411,7 @@ async def test_native_dependency_outages(plane, http, admin, service_directory):
     await http[2].state.usage.process()
     with services.admin_connection() as conn:
         assert conn.execute("SELECT count(*) FROM billing.request_runs").fetchone() == (1,)
-        assert conn.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(conn, org) == (
             98,
             0,
         )
@@ -419,7 +419,7 @@ async def test_native_dependency_outages(plane, http, admin, service_directory):
 
 @pytest.mark.parametrize("operation", ["cancel", "close"])
 async def test_start_races_request_completion(operation, plane, http, admin):  # noqa: F811
-    original, _, _, model, dep, _, raw, cid = plane
+    original, _, org, model, dep, _, raw, cid = plane
     client, root, app, settings = http
     dsn = await register_node(client, root, admin, cid)
     async with AsyncExitStack() as stack:
@@ -464,7 +464,7 @@ async def test_start_races_request_completion(operation, plane, http, admin):  #
             await app.state.usage.process()
             status = await peer.call("get_request_status", rid)
             assert status["reservation_state"] != "held"
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             100 - charged,
             0,
         )

@@ -28,16 +28,60 @@ class Schema(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class Login(Schema):
+class ChallengeInput(Schema):
+    turnstile_token: SecretStr | None = Field(default=None, min_length=1, max_length=2048)
+
+
+class Login(ChallengeInput):
     login: str = Field(min_length=3, max_length=254)
     password: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class Registration(ChallengeInput):
+    email: str | None = Field(default=None, min_length=3, max_length=254)
+    login: str = Field(min_length=3, max_length=254)
+    password: SecretStr = Field(min_length=16, max_length=1024)
+
+
+class EmailRequest(ChallengeInput):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class EmailBinding(EmailRequest):
+    password: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class EmailProof(ChallengeInput):
+    token: SecretStr = Field(min_length=1, max_length=128)
+
+
+class RequestAccepted(Schema):
+    accepted: Literal[True] = True
+
+
+class VerificationPending(Schema):
+    email_verification_required: Literal[True] = True
+
+
+class AuthPolicy(Schema):
+    email_verification: bool
+    turnstile: bool
+
+
+class AuthPolicyView(AuthPolicy):
+    version: int
+
+
+class PublicAuthOptions(AuthPolicy):
+    turnstile_site_key: str | None
+    email_delivery_available: bool
 
 
 class UserCreate(Schema):
     login: str = Field(min_length=3, max_length=254)
 
 
-class PasswordSetup(Schema):
+class PasswordSetup(ChallengeInput):
     token: SecretStr = Field(min_length=1, max_length=128)
     password: SecretStr = Field(min_length=16, max_length=1024)
 
@@ -90,6 +134,7 @@ class OrganizationPatch(Schema):
 
 
 class OrganizationView(Schema):
+    personal_owner_id: UUID | None
     id: UUID
     name: str
     status: OrganizationStatus
@@ -125,12 +170,46 @@ class MemberView(Schema):
     created_at: datetime
 
 
+class MemberListItem(MemberView):
+    login: str
+
+
 class Page[T](Schema):
     items: list[T]
     next_cursor: str | None = None
 
 
+class InvitationCreate(Schema):
+    login: str = Field(min_length=3, max_length=254)
+    role: MemberRole
+
+
+class InvitationAccept(Schema):
+    token: SecretStr = Field(min_length=1, max_length=128)
+
+
+class InvitationView(Schema):
+    id: UUID
+    organization_id: UUID
+    login: str
+    role: MemberRole
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    accepted_at: datetime | None
+
+
+class InvitationIssued(InvitationView):
+    token: str = Field(repr=False)
+
+
+class RegistrationCreated(SessionCreated):
+    personal_organization_id: UUID
+
+
 class CurrentUser(Schema):
+    verified_email: str | None = None
+    personal_organization_id: UUID
     user: UserView
     platform_roles: list[str]
     memberships: list[MemberView]

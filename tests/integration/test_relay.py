@@ -23,7 +23,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from pg_receipt import lose_gateway_receipts
-from test_billing import headers, make_budget
+from test_billing import account_amounts, headers, make_budget
 from test_identity_api import auth
 from test_plane import plane, provision_plane  # noqa: F401 - pytest fixture
 
@@ -355,7 +355,7 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
                     "status"
                 ] == "accepted"
             assert await app.state.usage.process() == 1
-            assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+            assert account_amounts(admin, org) == (
                 95,
                 0,
             )
@@ -373,7 +373,7 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             assert result.status_code == 200 and result.json() == reply
             await wait_events(admin, 4)
             assert await app.state.usage.process() == 1
-            assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+            assert account_amounts(admin, org) == (
                 95,
                 10,
             )
@@ -398,7 +398,7 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             socket_writer.transport.abort()
             await wait_events(admin, 6)
             assert await app.state.usage.process() == 1
-            assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+            assert account_amounts(admin, org) == (
                 95,
                 20,
             )
@@ -450,7 +450,7 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             )
             await wait_events(admin, 8)
             assert await app.state.usage.process() == 1
-            assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+            assert account_amounts(admin, org) == (
                 90,
                 20,
             )
@@ -469,7 +469,7 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             assert (await pending).status_code == 502
             await wait_events(admin, 10)
             assert await app.state.usage.process() == 1
-            assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+            assert account_amounts(admin, org) == (
                 90,
                 30,
             )
@@ -641,7 +641,7 @@ async def test_upgrade_in_flight_legacy_attempt(plane, http, admin, migration_se
     from alembic import command
     from alembic.config import Config
 
-    peer, _, _, model, dep, a, raw, _ = plane
+    peer, _, org, model, dep, a, raw, _ = plane
     config = Config(str(CRATE.parents[1] / "alembic.ini"))
     config.attributes["settings"] = migration_settings
     await asyncio.to_thread(command.downgrade, config, "0012_gateway_admission")
@@ -680,4 +680,4 @@ async def test_upgrade_in_flight_legacy_attempt(plane, http, admin, migration_se
         },
     )
     assert await http[2].state.usage.process() == 1
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (95, 0)
+    assert account_amounts(admin, org) == (95, 0)

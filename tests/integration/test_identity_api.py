@@ -83,10 +83,17 @@ async def test_full_admin_organization_member_flow(http, admin):
             "/api/v1/organizations", headers=auth(owner_token), json={"name": "unauthorized"}
         )
     ).status_code == 403
-    event = admin.execute("SELECT topic, payload FROM identity.outbox").fetchone()
+    event = admin.execute(
+        "SELECT topic, payload FROM identity.outbox WHERE aggregate_id=%s", (org["id"],)
+    ).fetchone()
     assert event[0] == "identity.organization_created"
     assert event[1]["organization_id"] == org["id"]
-    assert admin.execute("SELECT count(*) FROM identity.organizations").fetchone()[0] == 1
+    assert (
+        admin.execute(
+            "SELECT count(*) FROM identity.organizations WHERE personal_owner_id IS NULL"
+        ).fetchone()[0]
+        == 1
+    )
     assert admin.execute("SELECT to_regclass('billing.billing_accounts')").fetchone()[0] is None
     assert "password_hash" not in me.text and "token_digest" not in me.text
     stored = admin.execute("SELECT token_digest FROM identity.admin_sessions").fetchall()
@@ -105,7 +112,11 @@ async def test_tenant_scoping_and_mass_assignment(http, admin):
     b = await create_org(client, root, "Tenant B", owner_b["user"]["id"])
     a_token = await login(client, "owner-a")
     listing = await client.get("/api/v1/organizations", headers=auth(a_token))
-    assert [item["id"] for item in listing.json()["items"]] == [a["id"]]
+    me = (await client.get("/api/v1/me", headers=auth(a_token))).json()
+    assert {item["id"] for item in listing.json()["items"]} == {
+        a["id"],
+        me["personal_organization_id"],
+    }
     b_members = await client.get(f"/api/v1/organizations/{b['id']}/members", headers=auth(root))
     foreign = b_members.json()["items"][0]["id"]
     for path in [
@@ -144,7 +155,13 @@ async def test_tenant_scoping_and_mass_assignment(http, admin):
             f"/api/v1/organizations/{a['id']}/members", headers=auth(a_token), json=payload
         )
         assert response.status_code == 422
-    assert admin.execute("SELECT count(*) FROM identity.memberships").fetchone()[0] == 2
+    assert (
+        admin.execute(
+            "SELECT count(*) FROM identity.memberships WHERE organization_id IN (%s,%s)",
+            (a["id"], b["id"]),
+        ).fetchone()[0]
+        == 2
+    )
     assert (
         admin.execute(
             "SELECT count(*) FROM identity.audit_events WHERE action = 'access.denied'"
@@ -270,7 +287,9 @@ async def test_last_owner_is_preserved_under_concurrent_updates(http, admin):
     assert sorted(result.status_code for result in results) == [200, 409]
     assert (
         admin.execute(
-            "SELECT count(*) FROM identity.memberships WHERE role='org_owner' AND status='active'"
+            "SELECT count(*) FROM identity.memberships WHERE role='org_owner' "
+            "AND status='active' AND organization_id=%s",
+            (org["id"],),
         ).fetchone()[0]
         == 1
     )
@@ -334,7 +353,8 @@ async def test_live_membership_permissions_and_organization_lifecycle(http):
         await client.delete(base + f"/members/{member['id']}", headers=auth(root, 2))
     ).status_code == 204
     assert (await client.get(base, headers=auth(token))).status_code == 404
-    assert (await client.get("/api/v1/organizations", headers=auth(token))).json()["items"] == []
+    remaining = (await client.get("/api/v1/organizations", headers=auth(token))).json()["items"]
+    assert [item["personal_owner_id"] for item in remaining] == [user["user"]["id"]]
     archived = await client.patch(base, headers=auth(root, 3), json={"status": "archived"})
     assert archived.status_code == 200
     assert (
@@ -387,7 +407,7 @@ async def test_finance_role_is_not_a_platform_administrator(http, admin):
     await create_org(client, root, "Finance-visible")
     token = await login(client, "staff-finance")
     assert (
-        len((await client.get("/api/v1/organizations", headers=auth(token))).json()["items"]) == 1
+        len((await client.get("/api/v1/organizations", headers=auth(token))).json()["items"]) == 3
     )
     assert (
         await client.post("/api/v1/organizations", headers=auth(token), json={"name": "forbidden"})

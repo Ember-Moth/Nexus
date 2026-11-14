@@ -5,6 +5,7 @@ import json
 
 import httpx
 import pytest
+from test_billing import account_amounts
 from test_relay import relay_binary, tls, wait_events  # noqa: F401
 from test_relay_streams import stream_plane, usage
 
@@ -351,7 +352,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
                 assert answer["stop_reason"] == "tool_use" and answer["model"] == model
                 assert answer["content"] == output(True)["content"]
             await wait_events(admin, 2 if i == cross else 4)
-        dep = plane[4]
+        _, _, org, _, dep, _, _, _ = plane
         for line, h, req in seen:
             assert (
                 line == f"POST {paths[native]} HTTP/1.1" and req["model"] == dep["upstream_model"]
@@ -430,7 +431,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
             20,
             0,
         )
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             80,
             0,
         )
@@ -445,9 +446,9 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
         # A Messages overloaded_error confirms rejection. A Responses server_error
         # from an intermediary does not establish whether generation already ran.
         rejection_hold = 0 if messages else 10
-        assert admin.execute("SELECT held_amount FROM billing.accounts").fetchone() == (
-            rejection_hold,
-        )
+        assert admin.execute(
+            "SELECT held_amount FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+        ).fetchone() == (rejection_hold,)
         mode = "truncated"
         with pytest.raises(httpx.RemoteProtocolError):
             await public.post(
@@ -455,7 +456,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
             )
         await wait_events(admin, 12)
         await http[2].state.usage.process()
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             80,
             rejection_hold + 10,
         )
@@ -482,7 +483,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
             "AND envelope->'payload'->'raw_usage'='null'::jsonb"
         ).fetchone() == (1,)
         assert await http[2].state.usage.process() == 1
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             75,
             rejection_hold + 20,
         )
@@ -495,7 +496,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
         assert r.status_code == 502
         await wait_events(admin, 18)
         assert await http[2].state.usage.process() == 1
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             75,
             rejection_hold + 20,
         )
@@ -519,7 +520,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
         assert not any(f["type"] in {"message_stop", "response.completed"} for f in frames)
         await wait_events(admin, 20)
         await http[2].state.usage.process()
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             75,
             rejection_hold + 20,
         )

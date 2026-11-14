@@ -8,11 +8,13 @@ from nexus.shared.errors import BootstrapRejected
 from ..domain.errors import IdentityError, forbidden, missing, unauthorized
 from ..domain.tokens import digest_token
 from .authorization import AccessControl
+from .email_auth import EmailAuthentication
 from .ports import AuthLimits, Cursor, Passwords, TransactionFactory
 from .schemas import (
     BootstrapResult,
     CurrentUser,
     FinancialAccess,
+    InvitationIssued,
     MemberCreate,
     MemberPatch,
     OrganizationCreate,
@@ -31,7 +33,7 @@ def normalize_login(login: str) -> str:
     return value
 
 
-class IdentityService:
+class IdentityService(EmailAuthentication):
     async def platform_roles(self, token, user_id):
         async with self._access.authenticated(token) as (tx, actor):
             self._access.platform_admin(actor)
@@ -187,6 +189,8 @@ class IdentityService:
         *,
         session_ttl: int,
         setup_ttl: int,
+        providers,
+        mail_cipher,
     ) -> None:
         self._transactions = transactions
         self._access = AccessControl(transactions)
@@ -194,6 +198,8 @@ class IdentityService:
         self._auth_limits = auth_limits
         self._session_ttl = session_ttl
         self._setup_ttl = setup_ttl
+        self.providers = providers
+        self.cipher = mail_cipher
         self._hash_slots = asyncio.Semaphore(2)
 
     async def _hash(self, password: str) -> str:
@@ -212,29 +218,42 @@ class IdentityService:
         if not allowed:
             raise IdentityError("rate_limited", "Too many authentication attempts", 429)
 
-    async def login(self, login: str, password: str, peer: str) -> SessionCreated:
+    async def _verify(self, password_hash, password):
+        async with self._hash_slots:
+            return await asyncio.to_thread(self._passwords.verify, password_hash, password)
+
+    async def login(
+        self, login: str, password: str, peer: str, turnstile_token=None
+    ) -> SessionCreated:
         login = normalize_login(login)
         if not 1 <= len(password) <= 1024:
             raise unauthorized()
         await self._throttle("login:" + login, peer)
+        version = await self.guard("login", turnstile_token)
         async with self._transactions() as tx:
             credentials = await tx.directory.credentials(login)
         password_hash = (
             credentials[1] if credentials and credentials[0].status == "active" else None
         )
-        async with self._hash_slots:
-            verified = await asyncio.to_thread(self._passwords.verify, password_hash, password)
+        verified = await self._verify(password_hash, password)
         if not verified or credentials is None:
             raise unauthorized()
-        token = "nxs_" + secrets.token_urlsafe(32)
         async with self._transactions() as tx:
+            await self.current(tx, version)
             user = await tx.directory.user(credentials[0].id, lock=True)
             if user is None or not await tx.directory.password_matches(user.id, password_hash):
                 raise unauthorized()
-            expires = await tx.directory.now() + timedelta(seconds=self._session_ttl)
-            await tx.directory.create_session(user.id, digest_token(token, "nxs_"), expires)
-            await tx.audit.record(user.id, "session.created", user.id)
+            return await self._new_session(tx, user.id)
+
+    async def _new_session(self, tx, user_id):
+        token = "nxs_" + secrets.token_urlsafe(32)
+        expires = await tx.directory.now() + timedelta(seconds=self._session_ttl)
+        await tx.directory.create_session(user_id, digest_token(token, "nxs_"), expires)
+        await tx.audit.record(user_id, "session.created", user_id)
         return SessionCreated(access_token=token, expires_at=expires)
+
+    async def register(self, body, peer):
+        return await self._register(body, normalize_login(body.login), peer)
 
     async def logout(self, token: str):
         digest = digest_token(token, "nxs_")
@@ -246,6 +265,8 @@ class IdentityService:
     async def me(self, token: str) -> CurrentUser:
         async with self._access.authenticated(token) as (tx, actor):
             return CurrentUser(
+                verified_email=await tx.email.verified(actor.user.id),
+                personal_organization_id=await tx.directory.personal_org_id(actor.user.id),
                 user=actor.user,
                 platform_roles=sorted(actor.platform_roles),
                 memberships=await tx.directory.my_memberships(actor.user.id),
@@ -287,15 +308,17 @@ class IdentityService:
                 raise missing(user_id)
             return await self._issue_setup(tx, actor, user)
 
-    async def set_password(self, token: str, password: str, peer: str):
+    async def set_password(self, token: str, password: str, peer: str, turnstile_token=None):
         digest = digest_token(token, "nxp_")
         await self._throttle("setup:" + digest, peer)
+        version = await self.guard("set_password", turnstile_token)
         async with self._transactions() as tx:
             user_id = await tx.directory.setup_user(digest)
         if user_id is None:
             raise unauthorized()
         password_hash = await self._hash(password)
         async with self._transactions() as tx:
+            await self.current(tx, version)
             user = await tx.directory.user(user_id, lock=True)
             if (
                 user is None
@@ -347,6 +370,12 @@ class IdentityService:
                 raise IdentityError(
                     "organization_archived", "Archived organizations cannot be modified", 409
                 )
+            if organization.personal_owner_id is not None and request.status == "archived":
+                raise IdentityError(
+                    "personal_organization_required",
+                    "A personal organization cannot be archived",
+                    409,
+                )
             if request.status is not None:
                 self._access.platform_admin(actor)
             result = await tx.directory.update_organization(
@@ -388,6 +417,7 @@ class IdentityService:
                 raise missing(request.user_id)
             if user.status != "active":
                 raise IdentityError("member_inactive", "Only active users may be added", 409)
+            await tx.directory.cancel_pending_invitations(organization_id, user.login)
             result = await tx.directory.create_member(organization_id, user.id, request.role)
             await tx.audit.record(
                 actor.user.id,
@@ -414,10 +444,15 @@ class IdentityService:
                 raise missing(member_id)
             self._access.version(member.version, version)
             role, status = request.role or member.role, request.status or member.status
-            if role == "org_owner" and status == "active":
-                user = await tx.directory.user(member.user_id, lock=True)
-                if user is None or user.status != "active":
-                    raise IdentityError("owner_inactive", "An owner must be an active user", 409)
+            if organization.personal_owner_id == member.user_id and (
+                role != "org_owner" or status != "active"
+            ):
+                raise IdentityError(
+                    "personal_owner_required", "The bound owner must remain active", 409
+                )
+            user = await tx.directory.user(member.user_id, lock=True)
+            if role == "org_owner" and status == "active" and user.status != "active":
+                raise IdentityError("owner_inactive", "An owner must be an active user", 409)
             if (
                 member.role == "org_owner"
                 and member.status == "active"
@@ -425,6 +460,7 @@ class IdentityService:
             ):
                 if await tx.directory.active_owner_count(organization_id) <= 1:
                     raise IdentityError("last_owner", "At least one active owner must remain", 409)
+            await tx.directory.cancel_pending_invitations(organization_id, user.login)
             result = await tx.directory.update_member(organization_id, member_id, role, status)
             await tx.audit.record(
                 actor.user.id,
@@ -434,6 +470,66 @@ class IdentityService:
                 details={"role": role, "status": status},
             )
             return result
+
+    async def invite(self, token, org_id, body):
+        login = normalize_login(body.login)
+        async with self._access.authenticated(token) as (tx, actor):
+            org = await self._access.organization(tx, actor, org_id, manage=True, lock=True)
+            if org.status not in {"active", "provisioning"}:
+                raise IdentityError(
+                    "organization_inactive", "Organization cannot accept invitations", 409
+                )
+            secret = "nxi_" + secrets.token_urlsafe(32)
+            expires = await tx.directory.now() + timedelta(days=7)
+            invitation = await tx.directory.issue_invitation(
+                org_id, login, body.role, actor.user.id, digest_token(secret, "nxi_"), expires
+            )
+            await tx.audit.record(
+                actor.user.id,
+                "invitation.created",
+                invitation.id,
+                organization_id=org_id,
+                details={"role": body.role},
+            )
+            return InvitationIssued(**invitation.model_dump(), token=secret)
+
+    async def list_invitations(self, token, org_id, limit, cursor):
+        async with self._access.authenticated(token) as (tx, actor):
+            await self._access.organization(tx, actor, org_id, manage=True)
+            return await tx.directory.invitations(org_id, limit, cursor)
+
+    async def revoke_invitation(self, token, org_id, invitation_id):
+        async with self._access.authenticated(token) as (tx, actor):
+            await self._access.organization(tx, actor, org_id, manage=True, lock=True)
+            if not await tx.directory.revoke_invitation(org_id, invitation_id):
+                raise missing(invitation_id)
+            await tx.audit.record(
+                actor.user.id, "invitation.revoked", invitation_id, organization_id=org_id
+            )
+
+    async def accept_invitation(self, token, body):
+        async with self._access.authenticated(token) as (tx, actor):
+            digest = digest_token(body.token.get_secret_value(), "nxi_")
+            org_id = await tx.directory.invitation_org(digest)
+            if org_id is None:
+                raise IdentityError(
+                    "invitation_unavailable", "Invitation unavailable for this account", 404
+                )
+            org = await tx.directory.organization(org_id, lock=True)
+            if org is None or org.status not in {"active", "provisioning"}:
+                raise IdentityError(
+                    "organization_inactive", "Organization cannot accept invitations", 409
+                )
+            member, accepted = await tx.directory.redeem_invitation(org_id, digest, actor.user)
+            if accepted:
+                await tx.audit.record(
+                    actor.user.id,
+                    "invitation.accepted",
+                    member.id,
+                    organization_id=org_id,
+                    details={"role": member.role},
+                )
+            return member
 
     async def bootstrap_admin(self, login: str, password: str) -> BootstrapResult:
         login = login.strip().lower()

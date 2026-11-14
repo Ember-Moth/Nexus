@@ -90,6 +90,13 @@ class Application:
             namespace=settings.redis_namespace,
         )
         self._storage = {name.value: self.database.for_module(name) for name in ModuleName}
+        roots = {
+            version: base64.urlsafe_b64decode(secret.get_secret_value())
+            for version, secret in settings.previous_encryption_keys.items()
+        }
+        roots[settings.encryption_key_version] = base64.urlsafe_b64decode(
+            settings.encryption_key.get_secret_value()
+        )
         self.identity = identity.create_service(
             self._storage[ModuleName.IDENTITY.value],
             RedisAuthLimits(
@@ -99,20 +106,15 @@ class Application:
                 ip_limit=settings.login_per_ip,
                 window=settings.login_window_seconds,
             ),
-            session_ttl=settings.session_ttl_seconds,
-            setup_ttl=settings.password_setup_ttl_seconds,
+            settings=settings,
+            mail_cipher=CredentialCipher(
+                settings.encryption_key_version, roots, purpose="identity-mail"
+            ),
         )
         self.projects = identity.create_project_service(self._storage[ModuleName.IDENTITY.value])
         self.model_access = identity.create_model_access_service(
             self._storage[ModuleName.IDENTITY.value],
             catalog.create_model_lookup(self._storage[ModuleName.CATALOG.value]),
-        )
-        roots = {
-            version: base64.urlsafe_b64decode(secret.get_secret_value())
-            for version, secret in settings.previous_encryption_keys.items()
-        }
-        roots[settings.encryption_key_version] = base64.urlsafe_b64decode(
-            settings.encryption_key.get_secret_value()
         )
         self.catalog = catalog.create_service(
             self._storage[ModuleName.CATALOG.value],

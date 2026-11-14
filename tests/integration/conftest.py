@@ -71,11 +71,15 @@ def reset_identity(admin):
         "identity.access_policies, "
         "identity.idempotency_records, identity.api_keys, identity.service_accounts, "
         "identity.project_grants, identity.projects, identity.outbox, "
+        "identity.email_challenges, identity.organization_invitations, "
         "identity.memberships, identity.organizations, "
         "identity.admin_sessions, identity.password_setup_tokens, identity.audit_events, "
         "identity.platform_role_bindings, identity.users"
     )
 
+    admin.execute(
+        "UPDATE identity.auth_policy SET email_verification=false,turnstile=false,version=1"
+    )
     admin.execute(
         "INSERT INTO billing.discount_versions (id,factor,state,effective_at,published_at) "
         "VALUES ('00000000-0000-0000-0000-000000000001',1,'published', "

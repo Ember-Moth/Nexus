@@ -114,6 +114,7 @@ async def serve_worker(settings: RuntimeSettings) -> None:
             consume=application.process_billing,
             extra_consumers={
                 "report_projection": application.reports.project,
+                "identity_mail": application.identity.dispatch_email,
                 "exports": application.reports.process_export,
                 "account_reconciliation": application.operations.check_next,
                 "settlement": application.usage.process,

@@ -155,7 +155,9 @@ async def test_epay_freezes_fx_and_checks_signed_receipts(version, keys, provide
     assert admin.execute("SELECT amount,currency FROM billing.payment_receipts").fetchall() == [
         (Decimal("72.50"), "CNY")
     ]
-    assert admin.execute("SELECT balance,currency FROM billing.accounts").fetchone() == (10, "USD")
+    assert admin.execute(
+        "SELECT balance,currency FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+    ).fetchone() == (10, "USD")
     assert admin.execute("SELECT count(*) FROM billing.ledger_entries").fetchone() == (1,)
     await finance_role(p.client, p.root)
     base = f"/api/v1/organizations/{org['id']}"
@@ -297,7 +299,9 @@ async def test_stripe_requires_captured_charge(provider_setup, admin):  # noqa: 
     assert (await p.client.post(url, headers=h, content=event + b" ")).status_code == 400
     assert (await p.client.post(url, headers=h, content=event)).status_code == 200
     await p.app.state.payment_processor.process()
-    assert admin.execute("SELECT balance FROM billing.accounts").fetchone() == (0,)
+    assert admin.execute(
+        "SELECT balance FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+    ).fetchone() == (0,)
     captured = True
     await finance_role(p.client, p.root)
     retried = await p.client.post(
@@ -306,7 +310,9 @@ async def test_stripe_requires_captured_charge(provider_setup, admin):  # noqa: 
     )
     assert retried.status_code == 202, retried.text
     await p.app.state.payment_processor.process()
-    assert admin.execute("SELECT balance FROM billing.accounts").fetchone() == (10,)
+    assert admin.execute(
+        "SELECT balance FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+    ).fetchone() == (10,)
     assert admin.execute("SELECT transaction_id FROM billing.payment_receipts").fetchall() == [
         ("ch_s",)
     ]
@@ -430,7 +436,9 @@ async def test_antom_verifies_response_and_waits_for_capture(provider_setup, adm
     assert (await read_order(p, org, item))["checkout"]["destination"].startswith(
         "https://checkout.antom.com/"
     )
-    assert admin.execute("SELECT balance FROM billing.accounts").fetchone() == (0,)
+    assert admin.execute(
+        "SELECT balance FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+    ).fetchone() == (0,)
     submitted = True
     url = "/webhooks/payments/" + chan["id"] + "/orders/" + item["id"]
     raw = json.dumps(
@@ -447,20 +455,26 @@ async def test_antom_verifies_response_and_waits_for_capture(provider_setup, adm
         "resultStatus"
     ] == "S"
     await p.app.state.payment_processor.process()
-    assert admin.execute("SELECT balance FROM billing.accounts").fetchone() == (0,)
+    assert admin.execute(
+        "SELECT balance FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+    ).fetchone() == (0,)
     capture = tamper = True
     admin.execute(
         "UPDATE billing.payment_operations SET next_attempt_at=clock_timestamp() WHERE kind='query'"
     )
     await p.app.state.payment_processor.process()
-    assert admin.execute("SELECT balance FROM billing.accounts").fetchone() == (0,)
+    assert admin.execute(
+        "SELECT balance FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+    ).fetchone() == (0,)
     tamper = False
     admin.execute(
         "UPDATE billing.payment_operations SET state='pending',next_attempt_at=clock_timestamp() "
         "WHERE kind='query'"
     )
     await p.app.state.payment_processor.process()
-    assert admin.execute("SELECT balance FROM billing.accounts").fetchone() == (10,)
+    assert admin.execute(
+        "SELECT balance FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+    ).fetchone() == (10,)
     assert admin.execute("SELECT transaction_id FROM billing.payment_receipts").fetchall() == [
         ("payment_one",)
     ]

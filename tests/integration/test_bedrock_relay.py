@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import httpx
 import pytest
-from test_billing import headers, make_budget
+from test_billing import account_amounts, headers, make_budget
 from test_identity_api import auth
 from test_plane import provision_plane
 from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F401
@@ -315,7 +315,7 @@ async def test_bedrock_converse_and_stream(http, admin, tls, relay_binary, sigv4
                 ).fetchall()
                 == [("aws.bedrock.converse.v1", 2)] * 4
             )
-            assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+            assert account_amounts(admin, org) == (
                 80,
                 0,
             )

@@ -297,9 +297,14 @@ async def test_integrity_case_requires_recheck_and_audit_is_redacted(http, admin
     admin.execute(
         "UPDATE billing.accounts SET balance=balance+1 WHERE organization_id=%s", (org["id"],)
     )
-    assert await app.state.operations.check_next() == 1
+    accounts = admin.execute("SELECT count(*) FROM billing.accounts").fetchone()[0]
+    for _ in range(accounts):
+        assert await app.state.operations.check_next() == 1
+    assert await app.state.operations.check_next() == 0
     queue = (await client.get("/api/v1/reconciliation-cases", headers=auth(root))).json()["items"]
-    case = next(c for c in queue if c["source_type"] == "account")
+    case = next(
+        c for c in queue if c["source_type"] == "account" and c["organization_id"] == org["id"]
+    )
     url = "/api/v1/reconciliation-cases/" + case["id"] + "/resolve"
     command = {"action": "retry", "reason": "Source data reviewed", "evidence": "ops-ticket"}
     h = headers(root, "integrity-recheck", case["version"])

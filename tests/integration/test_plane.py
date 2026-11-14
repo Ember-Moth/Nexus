@@ -14,7 +14,7 @@ import psycopg
 import pytest
 from nacl.public import PrivateKey
 from psycopg import sql
-from test_billing import headers, setup_model, setup_wallet
+from test_billing import account_amounts, headers, setup_model, setup_wallet
 from test_identity_api import auth
 
 from nexus.gateway_simulator import GatewaySimulator
@@ -146,7 +146,7 @@ async def test_gateway_to_ledger(plane, http, admin):
     assert (await peer.call("get_request_status", admission.request_id))[
         "charged_amount"
     ] == "5.000000000000"
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (95, 0)
+    assert account_amounts(admin, org) == (95, 0)
     assert admin.execute("SELECT cost_amount FROM billing.request_attempts").fetchone()[0] == 2
     assert await peer.limits.finish(lease, 5)
 
@@ -178,11 +178,11 @@ async def test_revocation_is_live_and_replay_is_owned_by_node(plane, http, admin
     assert (await peer.call("cancel_unstarted_request", a.request_id, "cancel"))[
         "state"
     ] == "canceled"
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (100, 0)
+    assert account_amounts(admin, org) == (100, 0)
 
 
 async def test_evidence_review_and_transaction_rollback(plane, http, admin):
-    peer, _, _, model, dep, a, raw, _ = plane
+    peer, _, org, model, dep, a, raw, _ = plane
     await peer.refresh()
     async with peer.connection.pipeline():
         with pytest.raises(RuntimeError, match="non-pipelined"):
@@ -229,7 +229,7 @@ async def test_evidence_review_and_transaction_rollback(plane, http, admin):
     await http[2].state.usage.process()
     status = await peer.call("get_request_status", a.request_id)
     assert status["state"] == "review" and status["reservation_state"] == "held"
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (100, 10)
+    assert account_amounts(admin, org) == (100, 10)
 
 
 async def test_configuration_recovery_rollback_and_old_ack(plane, http, admin):
@@ -360,7 +360,7 @@ async def test_settlement_commit_failure_replays_and_worker_finishes(
 
     from nexus.modules.billing.persistence.repository import BillingRepository
 
-    peer, _, _, model, dep, a, raw, _ = plane
+    peer, _, org, model, dep, a, raw, _ = plane
     await peer.refresh()
     _, lease = await peer.reserve(raw, model["id"], 4, 6, a.request_id)
     aid = uuid4()
@@ -394,7 +394,7 @@ async def test_settlement_commit_failure_replays_and_worker_finishes(
         m.setattr(BillingRepository, "finish_usage", crash)
         with pytest.raises(RuntimeError):
             await http[2].state.usage.process()
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (100, 10)
+    assert account_amounts(admin, org) == (100, 10)
     worker = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
@@ -411,7 +411,7 @@ async def test_settlement_commit_failure_replays_and_worker_finishes(
             if (await peer.call("get_request_status", a.request_id))["processing_state"] == "done":
                 break
             await asyncio.sleep(0.05)
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             97,
             0,
         )
@@ -427,7 +427,7 @@ async def test_settlement_commit_failure_replays_and_worker_finishes(
 
 
 async def test_late_failed_attempt_cost_is_independent(plane, http, admin):
-    peer, _, _, model, dep, a, raw, _ = plane
+    peer, _, org, model, dep, a, raw, _ = plane
     await peer.refresh()
     await peer.reserve(raw, model["id"], 4, 6, a.request_id)
     ids = [uuid4(), uuid4()]
@@ -452,13 +452,13 @@ async def test_late_failed_attempt_cost_is_independent(plane, http, admin):
     )
     await http[2].state.usage.process()
     assert (await peer.call("get_request_status", a.request_id))["processing_state"] == "waiting"
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (97, 0)
+    assert account_amounts(admin, org) == (97, 0)
     await peer.event(
         a.request_id, "attempt.finished", {**payload, "outcome": "failed"}, attempt_id=ids[0]
     )
     await http[2].state.usage.process()
     assert (await peer.call("get_request_status", a.request_id))["processing_state"] == "done"
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (97, 0)
+    assert account_amounts(admin, org) == (97, 0)
     assert admin.execute("SELECT sum(cost_amount) FROM billing.request_attempts").fetchone()[
         0
     ] == Decimal("2.4")
@@ -612,7 +612,7 @@ async def test_cli_simulator_with_worker(plane, http, service_directory):
 async def test_gateway_retries_lost_commit_response_with_original_event(
     plane, http, admin, monkeypatch
 ):
-    peer, _, _, model, dep, a, raw, _ = plane
+    peer, _, org, model, dep, a, raw, _ = plane
     await peer.refresh()
     await peer.reserve(raw, model["id"], 4, 6, a.request_id)
     aid = uuid4()
@@ -642,7 +642,7 @@ async def test_gateway_retries_lost_commit_response_with_original_event(
     assert reply["status"] == "accepted" and replies == 2
     assert admin.execute("SELECT count(*) FROM billing.usage_events").fetchone()[0] == 1
     await http[2].state.usage.process()
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (100, 0)
+    assert account_amounts(admin, org) == (100, 0)
 
 
 async def test_attempt_rechecks_wallet_after_concurrent_freeze(plane, admin):
@@ -680,7 +680,7 @@ async def test_attempt_rechecks_wallet_after_concurrent_freeze(plane, admin):
 
 
 async def test_native_profile_publication_attempt_binding_and_worker_replay(plane, http, admin):
-    peer, private, _, model, dep, admission, _, cid = plane
+    peer, private, org, model, dep, admission, _, cid = plane
     client, root, app, _ = http
     profile = {
         "endpoint": "openai_responses",
@@ -792,7 +792,7 @@ async def test_native_profile_publication_attempt_binding_and_worker_replay(plan
     assert Decimal(valid_status["charged_amount"]) == 5
     invalid_status = await peer.call("get_request_status", attempts[1][0])
     assert (invalid_status["state"], invalid_status["reservation_state"]) == ("review", "held")
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (90, 10)
+    assert account_amounts(admin, org) == (90, 10)
 
 
 async def check_rust_gateway(peer, private, cid, admission, model, dep, valid, rev, app):

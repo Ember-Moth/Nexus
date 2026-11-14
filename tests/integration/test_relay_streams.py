@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 from pg_receipt import lose_gateway_receipts
-from test_billing import headers, make_budget
+from test_billing import account_amounts, headers, make_budget
 from test_identity_api import auth
 from test_plane import provision_plane
 from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F401
@@ -211,8 +211,9 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
         upstream,
         stream_plane(
             http, admin, relay_binary, tls[1], upstream.sockets[0].getsockname()[1], family
-        ) as (public, model, token, dropped, _),
+        ) as (public, model, token, dropped, plane),
     ):
+        org = plane[2]
         hdr = {"x-api-key": token} if messages else {"authorization": f"Bearer {token}"}
         body = {
             "model": model,
@@ -235,7 +236,7 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
         assert data == events(messages, "r1")
         await wait_events(admin, 2)
         assert await http[2].state.usage.process() == 1
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             95,
             0,
         )
@@ -252,7 +253,7 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
         assert "event: error" in reply.text
         await wait_events(admin, 4)
         await http[2].state.usage.process()
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             95,
             0,
         )
@@ -268,7 +269,7 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
         await asyncio.wait_for(disconnected.wait(), 5)
         await wait_events(admin, 8)
         await http[2].state.usage.process()
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             95,
             20,
         )
@@ -279,7 +280,7 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
         await asyncio.wait_for(disconnected.wait(), 5)
         await wait_events(admin, 10)
         await http[2].state.usage.process()
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             95,
             30,
         )
@@ -295,7 +296,7 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
         assert first_failure.status_code == 502
         await wait_events(admin, 12)
         await http[2].state.usage.process()
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             95,
             40,
         )
@@ -385,7 +386,9 @@ async def test_responses_ws(http, admin, tls, relay_binary):  # noqa: F811
             ws=True,
         ) as (public, model, token, dropped, plane),
     ):
+        org = plane[2]
         uri = f"ws://127.0.0.1:{public.base_url.port}/v1/responses"
+        admission = plane[5]
         with pytest.raises(InvalidStatus) as error:
             async with connect(
                 uri, additional_headers={"authorization": "Bearer invalid"}, proxy=None
@@ -442,7 +445,7 @@ async def test_responses_ws(http, admin, tls, relay_binary):  # noqa: F811
             assert admin.execute(
                 "SELECT spent,reserved FROM billing.budget_periods"
             ).fetchone() == (10, 0)
-            assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+            assert account_amounts(admin, org) == (
                 90,
                 0,
             )
@@ -450,7 +453,6 @@ async def test_responses_ws(http, admin, tls, relay_binary):  # noqa: F811
             async with connect(uri, additional_headers=hdr, proxy=None) as other:
                 await send(other, nxt)
                 assert (await recv(other))["error"]["code"] == "previous_response_not_found"
-            _, _, org, _, _, admission, _, _ = plane
             r = await http[0].post(
                 f"/api/v1/organizations/{org['id']}/api-keys/{admission.api_key_id}/revoke",
                 headers=auth(http[1], 1),
@@ -517,8 +519,9 @@ async def test_ws_controls_and_unknown_send(http, admin, tls, relay_binary):  # 
             upstream.sockets[0].getsockname()[1],
             "openai_compatible",
             ws=True,
-        ) as (public, model, key, _, _),
+        ) as (public, model, key, _, plane),
     ):
+        org = plane[2]
         uri = f"ws://127.0.0.1:{public.base_url.port}/v1/responses"
         hdr = {"authorization": f"Bearer {key}"}
         create = {"type": "response.create", "stream_id": "one", "model": model, "input": "hi"}
@@ -540,7 +543,7 @@ async def test_ws_controls_and_unknown_send(http, admin, tls, relay_binary):  # 
             assert (await recv(ws))["type"] == "response.cancelled"
             await wait_events(admin, 2)
             assert await http[2].state.usage.process() == 1
-            assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+            assert account_amounts(admin, org) == (
                 95,
                 0,
             )
@@ -549,9 +552,7 @@ async def test_ws_controls_and_unknown_send(http, admin, tls, relay_binary):  # 
             assert (await recv(ws))["type"] == "error"
         await wait_events(admin, 4)
         assert await http[2].state.usage.process() == 1
-        assert len(creates) == 2 and admin.execute(
-            "SELECT balance,held_amount FROM billing.accounts"
-        ).fetchone() == (95, 10)
+        assert len(creates) == 2 and account_amounts(admin, org) == (95, 10)
         upstream.close()
         await upstream.wait_closed()
         async with connect(uri, additional_headers=hdr, proxy=None) as ws:
@@ -591,8 +592,9 @@ async def test_drain_active_ws(http, admin, tls, relay_binary):  # noqa: F811
             upstream.sockets[0].getsockname()[1],
             "openai_compatible",
             ws=True,
-        ) as (public, model, key, _, _),
+        ) as (public, model, key, _, plane),
     ):
+        org = plane[2]
         uri = f"ws://127.0.0.1:{public.base_url.port}/v1/responses"
         async with connect(
             uri, additional_headers={"authorization": f"Bearer {key}"}, proxy=None
@@ -606,7 +608,7 @@ async def test_drain_active_ws(http, admin, tls, relay_binary):  # noqa: F811
             await asyncio.wait_for(ws.wait_closed(), 5)
             assert await asyncio.wait_for(public.relay_process.wait(), 5) == 0
         assert await http[2].state.usage.process() == 1
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             95,
             0,
         )
@@ -690,8 +692,9 @@ async def test_slow_downstream_keeps_lease_until_bounded_abort(
             provider.sockets[0].getsockname()[1],
             "openai_compatible",
             ws=is_ws,
-        ) as (public, model, key, _, _),
+        ) as (public, model, key, _, plane),
     ):
+        org = plane[2]
         params = {"model": model, "input": "hi"}
         hdr = {"authorization": f"Bearer {key}"}
         sock = socket.socket()
@@ -731,7 +734,7 @@ async def test_slow_downstream_keeps_lease_until_bounded_abort(
                 sock.close()
         await wait_events(admin, 2)
         await http[2].state.usage.process()
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             100,
             10,
         )
@@ -821,7 +824,7 @@ async def test_ws_bound_turn_rechecks(http, admin, tls, relay_binary, change):  
             assert error["type"] == "error"
             assert len(received) == 1
         assert admin.execute("SELECT count(*) FROM billing.request_attempts").fetchone() == (1,)
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             95,
             0,
         )
@@ -850,8 +853,9 @@ async def test_ws_cancel_while_upstream_handshake_pending(http, admin, tls, rela
             upstream.sockets[0].getsockname()[1],
             "openai_compatible",
             ws=True,
-        ) as (public, model, key, _, _),
+        ) as (public, model, key, _, plane),
     ):
+        org = plane[2]
         async with connect(
             f"ws://127.0.0.1:{public.base_url.port}/v1/responses",
             additional_headers={"authorization": f"Bearer {key}"},
@@ -873,7 +877,7 @@ async def test_ws_cancel_while_upstream_handshake_pending(http, admin, tls, rela
             await asyncio.wait_for(ws.wait_closed(), 5)
         assert not upstream_messages
         assert admin.execute("SELECT count(*) FROM billing.request_attempts").fetchone() == (0,)
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             100,
             0,
         )

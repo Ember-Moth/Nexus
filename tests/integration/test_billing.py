@@ -20,6 +20,13 @@ from nexus.shared.errors import ServiceError
 pytestmark = pytest.mark.integration
 
 
+def account_amounts(connection, organization):
+    return connection.execute(
+        "SELECT balance,held_amount FROM billing.accounts WHERE organization_id=%s",
+        (organization["id"],),
+    ).fetchone()
+
+
 def headers(token, key=None, version=None):
     result = auth(token, version)
     if key is not None:
@@ -179,7 +186,7 @@ async def test_account_provisioning_is_replayable_and_keeps_suspension(http, adm
     path = f"/api/v1/organizations/{org['id']}"
     assert (await client.get(path + "/account", headers=auth(root))).status_code == 409
     events = await app.state.identity_service.pending_organizations()
-    event = events[0]
+    event = next(event for event in events if str(event.organization_id) == org["id"])
     ids = await asyncio.gather(
         *(app.state.billing_service.provision_account(event) for _ in range(6))
     )
@@ -201,8 +208,18 @@ async def test_account_provisioning_is_replayable_and_keeps_suspension(http, adm
     assert result["status"] == "suspended" and result["version"] == 3
     result = await client.patch(path, headers=auth(root, 3), json={"status": "active"})
     assert result.status_code == 200, result.text
-    assert admin.execute("SELECT count(*) FROM billing.accounts").fetchone()[0] == 1
-    assert admin.execute("SELECT count(*) FROM identity.inbox").fetchone()[0] == 1
+    assert (
+        admin.execute(
+            "SELECT count(*) FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        admin.execute(
+            "SELECT count(*) FROM identity.inbox WHERE organization_id=%s", (org["id"],)
+        ).fetchone()[0]
+        == 1
+    )
     changed_currency = Application(settings.model_copy(update={"billing_currency": "CNY"}))
     try:
         assert (await changed_currency.readiness())["billing_currency"] == "unavailable"
@@ -830,7 +847,8 @@ async def test_unknown_account_event_versions_are_not_consumed(http, admin):
     assert rejected.value.code == "unsupported_event_version"
     assert admin.execute("SELECT count(*) FROM billing.accounts").fetchone()[0] == 0
     admin.execute("UPDATE identity.outbox SET schema_version=1")
-    event = (await app.state.identity_service.pending_organizations())[0]
+    events = await app.state.identity_service.pending_organizations()
+    event = next(event for event in events if str(event.organization_id) == org["id"])
     await app.state.billing_service.provision_account(event)
     admin.execute("UPDATE billing.outbox SET schema_version=2")
     with pytest.raises(ServiceError) as rejected:
@@ -843,7 +861,12 @@ async def test_unknown_account_event_versions_are_not_consumed(http, admin):
         == "provisioning"
     )
     assert admin.execute("SELECT count(*) FROM identity.inbox").fetchone()[0] == 0
-    assert admin.execute("SELECT delivered_at FROM billing.outbox").fetchone()[0] is None
+    assert (
+        admin.execute(
+            "SELECT delivered_at FROM billing.outbox WHERE organization_id=%s", (org["id"],)
+        ).fetchone()[0]
+        is None
+    )
     admin.execute("UPDATE billing.outbox SET schema_version=1")
     await app.state.process_billing()
     assert (
@@ -852,9 +875,24 @@ async def test_unknown_account_event_versions_are_not_consumed(http, admin):
         ).fetchone()[0]
         == "active"
     )
-    assert admin.execute("SELECT count(*) FROM billing.accounts").fetchone()[0] == 1
-    assert admin.execute("SELECT count(*) FROM billing.inbox").fetchone()[0] == 1
-    assert admin.execute("SELECT count(*) FROM identity.inbox").fetchone()[0] == 1
+    assert (
+        admin.execute(
+            "SELECT count(*) FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        admin.execute(
+            "SELECT count(*) FROM billing.inbox WHERE organization_id=%s", (org["id"],)
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        admin.execute(
+            "SELECT count(*) FROM identity.inbox WHERE organization_id=%s", (org["id"],)
+        ).fetchone()[0]
+        == 1
+    )
 
 
 async def test_fractional_reservation_matches_the_m3_acceptance_case(http, admin):

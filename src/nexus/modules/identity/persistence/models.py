@@ -63,10 +63,29 @@ class PasswordToken(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class OrganizationInvitation(Base):
+    __tablename__ = "organization_invitations"
+    __table_args__ = {"schema": "identity"}
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("identity.organizations.id"))
+    invited_by: Mapped[UUID] = mapped_column(ForeignKey("identity.users.id"))
+    login: Mapped[str] = mapped_column(String(254))
+    role: Mapped[str] = mapped_column(String(32))
+    token_digest: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_by: Mapped[UUID | None] = mapped_column(ForeignKey("identity.users.id"))
+
+
 class Organization(Base):
     __tablename__ = "organizations"
     __table_args__ = {"schema": "identity"}
     id: Mapped[UUID] = mapped_column(primary_key=True)
+    personal_owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("identity.users.id"), unique=True
+    )
     name: Mapped[str] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(20), default="provisioning")
     resume_status: Mapped[str | None] = mapped_column(String(20))

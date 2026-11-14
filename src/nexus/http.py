@@ -52,6 +52,7 @@ ERROR_DESCRIPTIONS = {
     403: "Caller may not perform this operation",
     404: "Resource does not exist or is not visible to the caller",
     409: "Idempotency key reuse, state transition or resource conflict",
+    410: "Invitation has expired",
     412: "If-Match does not match the current resource version",
     422: "Request is malformed or violates a business rule",
     428: "A required If-Match or Idempotency-Key header is missing",

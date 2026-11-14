@@ -36,6 +36,19 @@ class RuntimeSettings(BaseSettings):
     log_level: Literal["debug", "info", "warning", "error"] = "info"
     session_ttl_seconds: int = Field(default=28800, ge=60, le=86400)
     password_setup_ttl_seconds: int = Field(default=86400, ge=60, le=86400)
+    mail_provider: Literal["smtp", "resend", "cloudflare"] | None = None
+    mail_from: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_security: Literal["starttls", "tls"] = "starttls"
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    resend_api_key: SecretStr | None = None
+    cloudflare_email_account_id: str | None = Field(default=None, pattern="^[a-fA-F0-9]{32}$")
+    cloudflare_email_api_token: SecretStr | None = None
+    turnstile_site_key: str | None = None
+    turnstile_secret_key: SecretStr | None = None
+    turnstile_hostname: str | None = None
     login_window_seconds: int = Field(default=60, ge=1, le=3600)
     login_per_account: int = Field(default=10, ge=1, le=1000)
     # Exact TCP peers allowed to assert a single ingress-verified client address for auth limits.

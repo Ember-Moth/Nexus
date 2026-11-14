@@ -12,7 +12,7 @@ from uuid import uuid4
 import httpx
 import psycopg
 import pytest
-from test_billing import headers
+from test_billing import account_amounts, headers
 from test_control_plane_acceptance import drain, submit, worker
 from test_identity_api import auth
 from test_payments import SIGNING_KEY, channel, order, payments, settle_paid  # noqa: F401
@@ -65,7 +65,7 @@ async def test_restore_snapshot_and_resume(plane, payments, http, admin, service
     await submit(peer, raw, model["id"], dep["id"], completed)
     await app.state.usage.process()
     await submit(peer, raw, model["id"], dep["id"], pending)
-    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (108, 2)
+    assert account_amounts(admin, org) == (108, 2)
     dsn = await register_node(client, root, admin, cid)
     source = json.loads((service_directory / "services.json").read_text())
 
@@ -85,7 +85,7 @@ async def test_restore_snapshot_and_resume(plane, payments, http, admin, service
         backup_seconds = await asyncio.to_thread(physical_backup, dest.pg_data, source)
         await submit(peer, raw, model["id"], dep["id"], after_backup)
         await app.state.usage.process()
-        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+        assert account_amounts(admin, org) == (
             104,
             0,
         )
@@ -114,9 +114,7 @@ async def test_restore_snapshot_and_resume(plane, payments, http, admin, service
             ):
                 assert (await control.get("/health/ready")).status_code == 200
                 with dest.admin_connection() as db:
-                    assert db.execute(
-                        "SELECT balance,held_amount FROM billing.accounts"
-                    ).fetchone() == (108, 2)
+                    assert account_amounts(db, org) == (108, 2)
                     assert db.execute(
                         "SELECT count(*) FROM billing.request_runs WHERE id=%s", (after_backup,)
                     ).fetchone() == (0,)
@@ -154,9 +152,7 @@ async def test_restore_snapshot_and_resume(plane, payments, http, admin, service
                         dest.root, node.redis, node.namespace, mock_url=payments.provider.url
                     ):
                         await drain(db, [completed, pending])
-                        assert db.execute(
-                            "SELECT balance,held_amount FROM billing.accounts"
-                        ).fetchone() == (106, 0)
+                        assert account_amounts(db, org) == (106, 0)
                         assert db.execute(
                             "SELECT count(*) FROM billing.payment_receipts"
                         ).fetchone() == (1,)

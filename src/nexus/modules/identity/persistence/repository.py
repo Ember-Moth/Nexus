@@ -12,6 +12,8 @@ from nexus.infrastructure.postgres import ModuleDatabase
 
 from ..application.ports import Actor, Cursor
 from ..application.schemas import (
+    InvitationView,
+    MemberListItem,
     MemberView,
     OrganizationCreated,
     OrganizationView,
@@ -21,12 +23,14 @@ from ..application.schemas import (
 )
 from ..domain.errors import IdentityError
 from ..domain.events import ORGANIZATION_CREATED, ORGANIZATION_CREATED_VERSION
+from .email import EmailRepository
 from .models import (
     AdminSession,
     AuditEvent,
     Inbox,
     Membership,
     Organization,
+    OrganizationInvitation,
     OutboxEvent,
     PasswordToken,
     PlatformRole,
@@ -73,8 +77,13 @@ class DirectoryRepository:
             ).first()
         )
 
-    async def create_user(self, login: str):
-        row = User(id=uuid4(), login=login, status="pending", password_hash=None)
+    async def create_user(self, login: str, password_hash: str | None = None):
+        row = User(
+            id=uuid4(),
+            login=login,
+            status="active" if password_hash else "pending",
+            password_hash=password_hash,
+        )
         self._session.add(row)
         await self._session.flush()
         return view(UserView, row)
@@ -281,6 +290,16 @@ class DirectoryRepository:
         ).first()
         if not row:
             return False
+        await self.replace_password(user_id, password_hash)
+        return True
+
+    async def replace_password(self, user_id, password_hash):
+        await self._session.execute(
+            update(PasswordToken)
+            .where(PasswordToken.user_id == user_id, PasswordToken.revoked_at.is_(None))
+            .values(revoked_at=func.clock_timestamp())
+        )
+        await EmailRepository(self._session).clear(user_id, ["reset", "bind"])
         await self._session.execute(
             update(User)
             .where(User.id == user_id)
@@ -291,7 +310,124 @@ class DirectoryRepository:
             .where(AdminSession.user_id == user_id, AdminSession.revoked_at.is_(None))
             .values(revoked_at=func.clock_timestamp())
         )
-        return True
+
+    async def personal_org_id(self, user_id):
+        return (
+            await self._session.execute(
+                select(Organization.id).where(Organization.personal_owner_id == user_id)
+            )
+        ).scalar_one()
+
+    async def issue_invitation(self, org_id, login, role, invited_by, digest, expires):
+        active_member = (
+            select(Membership.id)
+            .join(User, User.id == Membership.user_id)
+            .where(
+                Membership.organization_id == org_id,
+                Membership.status == "active",
+                User.login == login,
+            )
+        )
+        if (await self._session.execute(select(exists(active_member)))).scalar_one():
+            raise IdentityError("already_member", "User is already an active member", 409)
+        await self.cancel_pending_invitations(org_id, login)
+        row = OrganizationInvitation(
+            id=uuid4(),
+            organization_id=org_id,
+            login=login,
+            role=role,
+            invited_by=invited_by,
+            token_digest=digest,
+            expires_at=expires,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return view(InvitationView, row)
+
+    async def cancel_pending_invitations(self, org_id, login):
+        table = OrganizationInvitation
+        await self._session.execute(
+            update(table)
+            .where(
+                table.organization_id == org_id,
+                table.login == login,
+                table.accepted_at.is_(None),
+                table.revoked_at.is_(None),
+            )
+            .values(revoked_at=func.clock_timestamp())
+        )
+
+    async def invitation_org(self, digest):
+        return (
+            await self._session.execute(
+                select(OrganizationInvitation.organization_id).where(
+                    OrganizationInvitation.token_digest == digest
+                )
+            )
+        ).scalar_one_or_none()
+
+    async def redeem_invitation(self, org_id, digest, user):
+        row = (
+            await self._session.execute(
+                select(OrganizationInvitation)
+                .where(
+                    OrganizationInvitation.organization_id == org_id,
+                    OrganizationInvitation.token_digest == digest,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if row is None or row.login != user.login or row.revoked_at is not None:
+            raise IdentityError(
+                "invitation_unavailable", "Invitation unavailable for this account", 404
+            )
+        member = await self.membership_for_user(org_id, user.id)
+        if row.accepted_at is not None:
+            # Replaying acceptance must never re-enable a removed member or reapply an old role.
+            if row.accepted_by == user.id and member and member.status == "active":
+                return member, False
+            raise IdentityError("invitation_consumed", "Invitation already consumed", 409)
+        now = await self.now()
+        if row.expires_at <= now:
+            raise IdentityError("invitation_expired", "Invitation has expired", 410)
+        if member is None:
+            member = await self.create_member(org_id, user.id, row.role)
+        elif member.status != "active":
+            member = await self.update_member(org_id, member.id, row.role, "active")
+        row.accepted_by = user.id
+        row.accepted_at = now
+        return member, True
+
+    async def invitations(self, org_id, limit, cursor):
+        t = OrganizationInvitation
+        return await self._page(
+            select(t).where(
+                t.organization_id == org_id,
+                t.accepted_at.is_(None),
+                t.revoked_at.is_(None),
+                t.expires_at > func.clock_timestamp(),
+            ),
+            t,
+            InvitationView,
+            limit,
+            cursor,
+        )
+
+    async def revoke_invitation(self, org_id, invitation_id):
+        t = OrganizationInvitation
+        return (
+            await self._session.execute(
+                update(t)
+                .where(
+                    t.organization_id == org_id,
+                    t.id == invitation_id,
+                    t.accepted_at.is_(None),
+                    t.revoked_at.is_(None),
+                )
+                .values(revoked_at=func.clock_timestamp())
+                .returning(t.id)
+            )
+        ).scalar_one_or_none()
 
     async def organization(self, organization_id: UUID, *, lock: bool = False):
         stmt = (
@@ -392,12 +528,23 @@ class DirectoryRepository:
         return [view(MemberView, row) for row in rows]
 
     async def members(self, organization_id: UUID, limit: int, cursor: Cursor):
-        return await self._page(
+        page = await self._page(
             select(Membership).where(Membership.organization_id == organization_id),
             Membership,
             MemberView,
             limit,
             cursor,
+        )
+        logins = dict(
+            (
+                await self._session.execute(
+                    select(User.id, User.login).where(User.id.in_([m.user_id for m in page.items]))
+                )
+            ).all()
+        )
+        return Page[MemberListItem](
+            items=[MemberListItem(**m.model_dump(), login=logins[m.user_id]) for m in page.items],
+            next_cursor=page.next_cursor,
         )
 
     async def create_member(self, organization_id: UUID, user_id: UUID, role: str):
@@ -519,6 +666,7 @@ class IdentityUnitOfWork:
         self.administrators = AdministratorRepository(session)
         self.audit = AuditRepository(session)
         self.directory = DirectoryRepository(session)
+        self.email = EmailRepository(session)
         self.applications = ApplicationRepository(session)
         self.policies = PolicyRepository(session)
         return self

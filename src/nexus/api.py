@@ -8,11 +8,12 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from nexus.bootstrap import Application
 from nexus.config import RuntimeSettings
 from nexus.http import credentials, declare_error_responses
+from nexus.infrastructure.metrics import PROMETHEUS_CONTENT_TYPE, prometheus_text
 from nexus.modules.billing import api as billing_api
 from nexus.modules.billing import operations_api, payment_api
 from nexus.modules.catalog import CatalogService, routing_api
@@ -186,6 +187,15 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     async def metrics(request: Request, token: Annotated[str, Depends(credentials)]):
         return JSONResponse(
             content=jsonable_encoder(await request.app.state.operational_metrics(token)),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    # Same data and the same platform-admin bearer check, in Prometheus text format.
+    @app.get("/internal/metrics/prometheus", include_in_schema=False)
+    async def prometheus_metrics(request: Request, token: Annotated[str, Depends(credentials)]):
+        return PlainTextResponse(
+            prometheus_text(await request.app.state.operational_metrics(token)),
+            media_type=PROMETHEUS_CONTENT_TYPE,
             headers={"Cache-Control": "no-store"},
         )
 

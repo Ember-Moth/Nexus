@@ -82,6 +82,12 @@ async def test_usage_project_projection_finance_and_export(http, admin):
     metrics = await client.get("/internal/metrics", headers=auth(root))
     assert metrics.status_code == 200, metrics.text
     assert org["id"] not in metrics.text
+    path = "/internal/metrics/prometheus"
+    assert (await client.get(path, headers=auth(dev))).status_code == 403
+    text = await client.get(path, headers=auth(root))
+    assert text.status_code == 200, text.text
+    assert text.headers["content-type"].startswith("text/plain; version=0.0.4")
+    assert "\nnexus_billing_usage_backlog " in text.text and org["id"] not in text.text
 
 
 async def test_review_waiver_replay_and_unfreeze(http, admin):

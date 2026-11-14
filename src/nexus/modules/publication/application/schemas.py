@@ -59,6 +59,11 @@ class ClusterUpdate(Command):
         return Cluster.valid_key(value) if value is not None else None
 
 
+class Page[T](View):
+    items: list[T]
+    next_cursor: str | None
+
+
 class ClusterView(View):
     id: UUID
     name: str

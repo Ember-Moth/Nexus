@@ -160,6 +160,19 @@ def cursor_value(cursor: str | None):
         raise ServiceError("invalid_cursor", "Invalid pagination cursor", 422) from None
 
 
+def key_cursor_value(cursor: str | None, size: int) -> tuple[UUID, ...] | None:
+    """Decode a cursor for lists ordered by `size` UUID key columns."""
+    if cursor is None:
+        return None
+    try:
+        values = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+        if not isinstance(values, list) or len(values) != size:
+            raise ValueError
+        return tuple(UUID(value) for value in values)
+    except ValueError, TypeError, AttributeError, binascii.Error:
+        raise ServiceError("invalid_cursor", "Invalid pagination cursor", 422) from None
+
+
 def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
     if value is None:
         raise ServiceError("precondition_required", "Idempotency-Key is required", 428)

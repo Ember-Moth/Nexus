@@ -1,9 +1,9 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 
-from nexus.http import credentials, error_responses, optional_version
+from nexus.http import credentials, error_responses, key_cursor_value, optional_version
 
 from ..application.routing import RoutingPolicies
 from ..application.routing_schemas import (
@@ -12,11 +12,13 @@ from ..application.routing_schemas import (
     QuotaLimit,
     QuotaMetric,
     QuotaPolicyResult,
+    QuotaPolicyView,
     QuotaScope,
     Route,
     RouteCandidates,
     RoutePolicyView,
 )
+from ..application.schemas import Page
 
 
 def created(model):
@@ -28,6 +30,8 @@ def create_router(get_service):
     Token = Annotated[str, Depends(credentials)]
     Service = Annotated[RoutingPolicies, Depends(get_service)]
     Version = Annotated[int | None, Depends(optional_version)]
+    Limit = Annotated[int, Query(ge=1, le=100)]
+    Cursor = Annotated[str | None, Query(max_length=512)]
 
     def written(response, result):
         response.headers["ETag"] = f'"{result["version"]}"'
@@ -70,9 +74,10 @@ def create_router(get_service):
         """Deprecated alias of `PUT /route-policies/{organization_id}/{model_id}`."""
         return written(response, await service.route(token, body, version))
 
-    @router.get("/route-policies")
-    async def routes(token: Token, service: Service):
-        return {"items": await service.list_routes(token)}
+    @router.get("/route-policies", response_model=Page[RoutePolicyView])
+    async def routes(token: Token, service: Service, limit: Limit = 50, cursor: Cursor = None):
+        """Route policies ordered by organization_id, then model_id."""
+        return await service.list_routes(token, limit, key_cursor_value(cursor, 2))
 
     @router.put(
         "/organizations/{organization_id}/quota-policies/{layer}/{scope_type}/{scope_id}/{metric}",
@@ -123,8 +128,17 @@ def create_router(get_service):
         """Deprecated alias of the quota policy PUT on its natural key."""
         return written(response, await service.quota(token, organization_id, body, version))
 
-    @router.get("/organizations/{organization_id}/quota-policies")
-    async def quotas(organization_id: UUID, token: Token, service: Service):
-        return {"items": await service.list_quotas(token, organization_id)}
+    @router.get(
+        "/organizations/{organization_id}/quota-policies", response_model=Page[QuotaPolicyView]
+    )
+    async def quotas(
+        organization_id: UUID,
+        token: Token,
+        service: Service,
+        limit: Limit = 50,
+        cursor: Cursor = None,
+    ):
+        """Quota policies of the organization ordered by id."""
+        return await service.list_quotas(token, organization_id, limit, key_cursor_value(cursor, 1))
 
     return router

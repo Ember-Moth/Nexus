@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from nexus.shared.errors import ServiceError
+from nexus.shared.reporting import key_cursor
 
 
 class PublicationRepository:
@@ -104,8 +105,16 @@ class PublicationRepository:
             "UPDATE publication.gateway_clusters SET version=version+1 WHERE id=:cid", cid=cid
         )
 
-    async def list_clusters(self):
-        return await self.rows("SELECT * FROM publication.gateway_clusters ORDER BY id")
+    async def list_clusters(self, limit, cursor):
+        rows = await self.rows(
+            "SELECT * FROM publication.gateway_clusters "
+            + ("WHERE id>:after " if cursor else "")
+            + "ORDER BY id LIMIT :limit",
+            after=cursor and cursor[0],
+            limit=limit + 1,
+        )
+        last = rows[limit - 1] if len(rows) > limit else None
+        return rows[:limit], last and key_cursor(last["id"])
 
     async def update_cluster(self, c, body, new_key, scope_changed):
         if new_key:

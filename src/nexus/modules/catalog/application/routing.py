@@ -30,10 +30,12 @@ class RoutingPolicies:
         )
         return {**body.model_dump(), "id": policy_id, "version": (version or 0) + 1}
 
-    async def list_routes(self, token):
+    async def list_routes(self, token, limit, cursor):
         await self._access(token, operation="pricing")
-        return await self._repository.list_routes()
+        items, next_cursor = await self._repository.list_routes(limit, cursor)
+        return {"items": items, "next_cursor": next_cursor}
 
-    async def list_quotas(self, token, org):
+    async def list_quotas(self, token, org, limit, cursor):
         await self._access(token, org)
-        return await self._repository.list_quotas(org)
+        items, next_cursor = await self._repository.list_quotas(org, limit, cursor)
+        return {"items": items, "next_cursor": next_cursor}

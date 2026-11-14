@@ -63,3 +63,14 @@ class QuotaPolicyResult(Schema):
     limit_value: int
     id: UUID
     version: int
+
+
+class QuotaPolicyView(Schema):
+    id: UUID
+    organization_id: UUID
+    layer: QuotaLayer
+    scope_type: QuotaScope
+    scope_id: UUID
+    metric: QuotaMetric
+    limit_value: int
+    version: int

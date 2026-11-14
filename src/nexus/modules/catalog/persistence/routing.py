@@ -4,6 +4,7 @@ from uuid import uuid4
 from sqlalchemy import text
 
 from nexus.shared.errors import ServiceError
+from nexus.shared.reporting import key_cursor
 
 
 class RoutingRepository:
@@ -116,30 +117,27 @@ class RoutingRepository:
             )
         return policy_id
 
-    async def list_routes(self):
-        async with self._database.transaction() as session:
-            return [
-                dict(r)
-                for r in (
-                    await session.execute(
-                        text(
-                            "SELECT * FROM catalog.route_policies ORDER BY organization_id,model_id"
-                        )
-                    )
-                ).mappings()
-            ]
+    async def list_routes(self, limit, cursor):
+        after = "WHERE (organization_id,model_id)>(:org,:model) " if cursor else ""
+        rows = await self._page(
+            "SELECT * FROM catalog.route_policies "
+            + after
+            + "ORDER BY organization_id,model_id LIMIT :limit",
+            {"org": cursor and cursor[0], "model": cursor and cursor[1], "limit": limit + 1},
+        )
+        last = rows[limit - 1] if len(rows) > limit else None
+        return rows[:limit], last and key_cursor(last["organization_id"], last["model_id"])
 
-    async def list_quotas(self, org):
+    async def list_quotas(self, org, limit, cursor):
+        rows = await self._page(
+            "SELECT * FROM catalog.quota_policies WHERE organization_id=:org "
+            + ("AND id>:after " if cursor else "")
+            + "ORDER BY id LIMIT :limit",
+            {"org": org, "after": cursor and cursor[0], "limit": limit + 1},
+        )
+        last = rows[limit - 1] if len(rows) > limit else None
+        return rows[:limit], last and key_cursor(last["id"])
+
+    async def _page(self, query, params):
         async with self._database.transaction() as session:
-            return [
-                dict(r)
-                for r in (
-                    await session.execute(
-                        text(
-                            "SELECT * FROM catalog.quota_policies WHERE "
-                            "organization_id=:org ORDER BY id"
-                        ),
-                        {"org": org},
-                    )
-                ).mappings()
-            ]
+            return [dict(r) for r in (await session.execute(text(query), params)).mappings()]

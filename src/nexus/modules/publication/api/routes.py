@@ -1,15 +1,22 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 
-from nexus.http import credentials, error_responses, expected_version, idempotency_key
+from nexus.http import (
+    credentials,
+    error_responses,
+    expected_version,
+    idempotency_key,
+    key_cursor_value,
+)
 from nexus.shared.errors import ServiceError
 
 from ..application.schemas import (
     Cluster,
     ClusterUpdate,
     ClusterView,
+    Page,
     Principal,
     Release,
     ReleaseAccepted,
@@ -25,9 +32,15 @@ def create_router(get_service):
     Token = Annotated[str, Depends(credentials)]
     Service = Annotated[PublicationService, Depends(get_service)]
 
-    @router.get("")
-    async def clusters(token: Token, service: Service):
-        return {"items": await service.clusters(token)}
+    @router.get("", response_model=Page[ClusterView])
+    async def clusters(
+        token: Token,
+        service: Service,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+    ):
+        """Gateway clusters ordered by id."""
+        return await service.clusters(token, limit, key_cursor_value(cursor, 1))
 
     @router.post("", status_code=201, response_model=ClusterView, responses=CONFLICT)
     async def cluster(body: Cluster, token: Token, service: Service, response: Response):

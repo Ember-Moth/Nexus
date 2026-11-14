@@ -8,6 +8,11 @@ def next_cursor(at, row_id):
     return base64.urlsafe_b64encode(json.dumps([at.isoformat(), str(row_id)]).encode()).decode()
 
 
+def key_cursor(*keys):
+    """Cursor for lists ordered by their identifying UUID columns instead of creation time."""
+    return base64.urlsafe_b64encode(json.dumps([str(key) for key in keys]).encode()).decode()
+
+
 def predicates(org, projects, filters, *, alias="r"):
     expressions = [f"{alias}.organization_id=:org"]
     values = {"org": org}

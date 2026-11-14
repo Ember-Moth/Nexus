@@ -41,10 +41,11 @@ class PublicationService:
             await repo.audit(actor, "cluster.created", cid)
             return self.public(await repo.cluster(cid))
 
-    async def clusters(self, token):
+    async def clusters(self, token, limit, cursor):
         await self.admin(token)
         async with self.tx() as repo:
-            return [self.public(row) for row in await repo.list_clusters()]
+            rows, next_cursor = await repo.list_clusters(limit, cursor)
+            return {"items": [self.public(row) for row in rows], "next_cursor": next_cursor}
 
     async def update(self, token, cid, body, version):
         actor = await self.admin(token)

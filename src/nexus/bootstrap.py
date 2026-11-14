@@ -7,6 +7,7 @@ from nexus.config import RuntimeSettings
 from nexus.infrastructure.auth_limits import RedisAuthLimits
 from nexus.infrastructure.cache import Cache
 from nexus.infrastructure.credential_cipher import CredentialCipher
+from nexus.infrastructure.payment_http import PaymentHttp
 from nexus.infrastructure.postgres import Database
 from nexus.modules import billing, catalog, identity
 from nexus.shared.storage import ModuleName
@@ -130,6 +131,28 @@ class Application:
             settings.billing_currency,
         )
 
+        self.payment_http = (
+            PaymentHttp(settings.mock_payment_url) if settings.mock_payment_url else None
+        )
+        self.payments, self.payment_processor = billing.create_payment_services(
+            self._storage[ModuleName.BILLING.value],
+            BillingAccess(self.identity, self.model_access),
+            CredentialCipher(settings.encryption_key_version, roots, purpose="payment"),
+            self.payment_http,
+            RedisAuthLimits(
+                self.cache,
+                base64.urlsafe_b64decode(settings.encryption_key.get_secret_value()),
+                account_limit=settings.payment_notification_per_channel,
+                ip_limit=settings.payment_notification_per_ip,
+                window=60,
+            ),
+            currency=settings.billing_currency,
+            environment=settings.environment,
+            public_base_url=settings.payment_public_base_url,
+            return_url=settings.payment_return_url,
+            requests_per_minute=settings.payment_requests_per_merchant_per_minute,
+        )
+
     async def process_billing(self):
         await self.database.check_revision()
         count = 0
@@ -145,7 +168,9 @@ class Application:
             )
             await self.billing.acknowledge_account(event.event_id)
             count += 1
-        return count + await self.reservations.mark_expired()
+        return (
+            count + await self.reservations.mark_expired() + await self.payment_processor.process()
+        )
 
     async def readiness(self) -> dict[str, str]:
         checks = {
@@ -166,4 +191,7 @@ class Application:
         return dict(await asyncio.gather(*(probe(name, check) for name, check in checks.items())))
 
     async def close(self) -> None:
-        await asyncio.gather(self.database.close(), self.cache.close())
+        jobs = [self.database.close(), self.cache.close()]
+        if self.payment_http:
+            jobs.append(self.payment_http.close())
+        await asyncio.gather(*jobs)

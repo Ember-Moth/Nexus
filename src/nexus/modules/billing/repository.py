@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from nexus.shared.errors import ServiceError
 
 from . import models as m
-from .events import ACCOUNT_READY, ACCOUNT_READY_VERSION
+from .events import ACCOUNT_READY, ACCOUNT_READY_VERSION, FUNDING_POSTED, FUNDING_POSTED_VERSION
 from .schemas import AccountReady
 
 TABLES = {
@@ -29,6 +29,14 @@ TABLES = {
     "period": m.BudgetPeriod,
     "request": m.RequestRun,
     "attempt": m.Attempt,
+    "payment_channel": m.PaymentChannel,
+    "payment_version": m.PaymentChannelVersion,
+    "payment_order": m.PaymentOrder,
+    "payment_operation": m.PaymentOperation,
+    "payment_event": m.PaymentEvent,
+    "payment_observation": m.PaymentObservationRow,
+    "payment_receipt": m.PaymentReceipt,
+    "payment_case": m.PaymentCase,
 }
 
 
@@ -237,6 +245,27 @@ class BillingRepository:
         ).scalar_one()
         if row.delivered_at is None:
             row.delivered_at = await self.now()
+
+    async def funding_posted(self, record, entry_id):
+        self._session.add(
+            m.Outbox(
+                id=uuid4(),
+                topic=FUNDING_POSTED,
+                schema_version=FUNDING_POSTED_VERSION,
+                organization_id=record.organization_id,
+                aggregate_id=record.id,
+                payload={
+                    "funding_record_id": str(record.id),
+                    "ledger_entry_id": str(entry_id),
+                    "amount": str(record.amount),
+                    "currency": record.currency,
+                    "source_type": record.source_type,
+                    "payment_order_id": str(record.payment_order_id)
+                    if record.payment_order_id
+                    else None,
+                },
+            )
+        )
 
     async def append_entry(
         self, account, amount, kind, source_type, source_id, actor=None, reverses=None
@@ -612,10 +641,10 @@ class BillingRepository:
 
 
 @asynccontextmanager
-async def transaction(database, currency):
+async def transaction(database, currency, repository_type=BillingRepository):
     try:
         async with database.transaction() as session:
-            repo = BillingRepository(session)
+            repo = repository_type(session)
             await repo.currency(currency)
             yield repo
     except IntegrityError:

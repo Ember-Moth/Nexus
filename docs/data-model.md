@@ -95,7 +95,7 @@ API Key 记录 version、prefix、expires_at、revoked_at、rotated_at 和 rotat
 
 ## 价格与账户
 
-M3 物理实现使用 billing.accounts、receiving_accounts、funding_records、ledger_entries、adjustments、price_versions、discount_versions、budget_policies、budget_periods、budget_holds、request_runs 和 request_attempts。price_versions 以 kind 区分售价与成本；request_runs 同时保存预留状态与结算结果。用量收件箱与支付表将在后续迁移加入。
+M3 物理实现使用 billing.accounts、receiving_accounts、funding_records、ledger_entries、adjustments、price_versions、discount_versions、budget_policies、budget_periods、budget_holds、request_runs 和 request_attempts。price_versions 以 kind 区分售价与成本；request_runs 同时保存预留状态与结算结果。M3P 支付表已由 0007 加入；Token 用量收件箱仍待 M4。
 
 | 实体 | 主要字段 | 约束 |
 | --- | --- | --- |
@@ -118,7 +118,7 @@ M3 物理实现使用 billing.accounts、receiving_accounts、funding_records、
 
 ## 支付与收款
 
-支付凭据和第三方字段通过控制平面适配器使用，不进入两平面通信协议。
+支付凭据和第三方字段通过控制平面适配器使用，不进入两平面通信协议。M3P 的支付表已实现；原始通知与查单事实不可覆盖，通知处理状态与任务元数据单独受控更新。
 
 | 实体 | 主要字段 | 约束 |
 | --- | --- | --- |
@@ -132,11 +132,11 @@ M3 物理实现使用 billing.accounts、receiving_accounts、funding_records、
 
 `funding_records.payment_order_id` 对非空值唯一，保证每个支付订单最多一个原始充值；gateway 来源必须关联已核实订单和收款事实，manual 来源的 actor 必须为具名财务人员。系统自动入账使用具名服务身份，不伪造某个人的操作。
 
-所有入账共享 `(receipt_namespace, external_reference)` 唯一约束。命名空间由服务端依据已配置的真实收款账户或网关商户与环境生成，不能由客户端任意填写。渠道配置或密钥轮换不能产生新的交易命名空间。
+所有入账共享 `(receipt_namespace, external_reference)` 唯一约束。命名空间由服务端依据已配置的真实收款账户或网关商户与环境生成，不能由客户端任意填写。渠道配置或密钥轮换不能产生新的交易命名空间。物理 payment_operations 以 order_id、kind、operation_key 唯一；不同外部对象的通知分别保留查询任务，避免后一个提示覆盖前一个收款线索。首次创建意图固定幂等模式与到期时间，后续配置不能延长旧调用的幂等保证。payment_rate_buckets 以稳定收款命名空间协调跨 Worker 的出站限额；因限流延期的安全创建重试关联不可变查单证据。
 
 支付交易相关的人工补录通过原订单进行核实，沿用同一交易号。订单、充值记录、余额、资金流水和审计在一个事务中完成原始入账。支付事件去重不替代收款与账本唯一性。
 
-手续费、净结算金额和结算时间可以作为收款附加信息记录；不能覆盖原订单金额或客户充值额度。退款、争议和未追回款项关联 `reconciliation_cases` 与调整链，不通过修改原充值记录隐藏。
+手续费、净结算金额和结算时间可以作为收款附加信息记录；不能覆盖原订单金额或客户充值额度。退款、争议和未追回款项当前关联 billing.payment_cases、不可变查单证据与调整链，不通过修改原充值记录隐藏。
 
 ## 请求、预留与计量
 

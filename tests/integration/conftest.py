@@ -45,7 +45,11 @@ def admin(service_directory):
 @pytest.fixture(autouse=True)
 def reset_identity(admin):
     admin.execute(
-        "TRUNCATE billing.request_attempts, billing.budget_holds, billing.request_runs, "
+        "TRUNCATE billing.payment_cases, billing.payment_receipts, billing.payment_observations, "
+        "billing.payment_events, billing.payment_rate_buckets, billing.payment_operations, "
+        "billing.payment_orders, "
+        "billing.payment_channel_versions, billing.payment_channels, billing.request_attempts, "
+        "billing.budget_holds, billing.request_runs, "
         "billing.budget_periods, billing.budget_policies, billing.price_versions, "
         "billing.discount_versions, billing.audit_events, billing.idempotency_records, "
         "billing.adjustments, billing.ledger_entries, billing.funding_records, "

@@ -2,13 +2,13 @@
 
 管理 API 服务平台运营、财务和企业客户的管理操作，统一前缀为 `/api/v1`。本文给出资源与行为契约，不表示路由已经实现；完整 OpenAPI 将在实现阶段由实际模型生成并校验。
 
-已提供身份、企业成员、项目凭据、模型与上游目录及模型访问策略，实际清单见[登录与企业成员管理](identity-api.md)、[项目与应用凭据](project-credentials.md)和[模型与上游目录](catalog-api.md)。M3 已实现的账户、定价、财务授权和账务接口见[定价与预付费账户](billing-api.md)。支付、配置发布与执行层按后续阶段实现。
+已提供身份、企业成员、项目凭据、模型与上游目录及模型访问策略，实际清单见[登录与企业成员管理](identity-api.md)、[项目与应用凭据](project-credentials.md)和[模型与上游目录](catalog-api.md)。M3 已实现的账户、定价、财务授权和账务接口见[定价与预付费账户](billing-api.md)。M3P 已提供通用支付流程与模拟适配器，实际接口见[支付网关与自动入账](payments.md)。真实支付渠道、配置发布与执行层按后续阶段实现。
 
 支付通知是独立的机器入口 `/webhooks/payments/{channel_id}`，不使用管理会话；按具体渠道声明允许 GET 或 POST，并使用该渠道规定的验签方式。所有其他表中路径仍相对于管理 API 前缀。
 
 网关的请求授权和用量提交通过 [gateway_v1 数据库契约](plane-protocol.md) 完成，不与管理 API 共用身份和权限。
 
-业务 HTTP 接口按需放在所属业务包的 api.py，调用该包公开用例；进程级 api.py 负责应用生命周期和路由挂载。identity 拥有身份与授权接口，catalog 拥有模型和运行策略接口，billing 拥有价格、金额预算、支付、用量和资金接口，publication 拥有配置发布，reporting 拥有聚合查询与导出。handler 不获得全局 Store 或直接开启跨模块事务。
+业务 HTTP 接口按需放在所属业务包的 api.py 或相应 *_api.py，调用该包公开用例；进程级 api.py 负责应用生命周期和路由挂载。identity 拥有身份与授权接口，catalog 拥有模型和运行策略接口，billing 拥有价格、金额预算、支付、用量和资金接口，publication 拥有配置发布，reporting 拥有聚合查询与导出。handler 不获得全局 Store 或直接开启跨模块事务。
 
 ## 认证与授权
 
@@ -68,11 +68,15 @@
 | 账户余额 | `GET /organizations/{org}/account` | 返回已记账余额、预留和可用余额 |
 | 入账登记 | `GET/POST /organizations/{org}/funding-records` | 财务创建草稿，企业财务可查看允许的登记信息 |
 | 入账过账 | `POST /organizations/{org}/funding-records/{id}/post` | 平台财务权限，必须幂等，原子增加余额与流水 |
+| 支付类型 | `GET /payment-gateway-types` | 平台管理员读取已注册类型、配置 schema 和测试标识 |
 | 支付渠道管理 | `GET/POST /payment-channels`、`PATCH /payment-channels/{id}` | 平台管理员配置，凭据写入后不读回；停用不丢弃在途订单 |
+| 支付配置版本 | `GET /payment-channels/{id}/versions`、`POST /payment-channels/{id}/versions/{version_id}/revoke` | 只读脱敏元数据；撤销当前材料前先停用渠道 |
 | 可用充值渠道 | `GET /organizations/{org}/payment-methods` | 返回允许使用的渠道、币种与金额限制，不含商户密钥 |
 | 充值订单 | `GET/POST /organizations/{org}/payment-orders` | owner 或 org_finance 创建；金额、币种和渠道由服务端校验 |
 | 充值订单状态 | `GET /organizations/{org}/payment-orders/{id}` | 分别返回支付、入账和核对状态，必要时返回受控支付入口 |
 | 支付补单核对 | `POST /organizations/{org}/payment-orders/{id}/reconcile` | 平台财务触发服务端查单，不接受客户端提交 paid 标志 |
+| 支付证据 | `GET /organizations/{org}/payment-orders/{id}/observations`、`GET /organizations/{org}/payment-orders/{id}/receipts` | 平台财务查询已验证的最小证据与实际收款，不返回支付密钥或支付入口参数 |
+| 支付风险事项 | `GET /organizations/{org}/payment-cases` | 平台财务查询异常与关联证据；不提供任意改余额命令 |
 | 账务调整 | `POST /organizations/{org}/adjustments` | 平台财务权限，必须关联来源、原因和依据 |
 | 调整过账 | `POST /organizations/{org}/adjustments/{id}/post` | 校验可调整金额、资金约束并留审计 |
 | 资金流水 | `GET /organizations/{org}/ledger` | 只读，游标分页 |

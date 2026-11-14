@@ -3,6 +3,7 @@ from uuid import uuid4
 from nexus.shared.errors import ServiceError
 
 from .common import found, replay, versioned, view
+from .funding import post_funding_record
 from .ports import Access, Transactions
 from .schemas import (
     AccountView,
@@ -169,6 +170,12 @@ class BillingService:
             await repo.account(org_id)
             row = found(await repo.get("funding", resource_id, org_id, lock=True))
             versioned(row, version)
+            if row.source_type != "manual":
+                raise ServiceError(
+                    "gateway_funding_immutable",
+                    "Gateway receipts are managed through their payment order",
+                    409,
+                )
             if row.status != "draft":
                 raise ServiceError("record_immutable", "Only draft funding can be edited", 409)
             receiving = found(await repo.get("receiving", body.receiving_account_id, lock=True))
@@ -197,6 +204,12 @@ class BillingService:
             await repo.account(org_id)
             row = found(await repo.get("funding", resource_id, org_id, lock=True))
             versioned(row, version)
+            if row.source_type != "manual":
+                raise ServiceError(
+                    "gateway_funding_immutable",
+                    "Gateway receipts are managed through their payment order",
+                    409,
+                )
             if row.status != "draft":
                 raise ServiceError("invalid_funding_state", "Only a draft can be cancelled", 409)
             await repo.edit(row, {"status": "cancelled"})
@@ -215,24 +228,17 @@ class BillingService:
             account = await repo.account(org_id)
             row = found(await repo.get("funding", resource_id, org_id, lock=True))
             versioned(row, version)
+            if row.source_type != "manual":
+                raise ServiceError(
+                    "gateway_funding_immutable",
+                    "Gateway receipts are managed through their payment order",
+                    409,
+                )
             if row.status != "draft":
                 raise ServiceError("invalid_funding_state", "Funding is not a draft", 409)
             # A real receipt remains postable after a receiving account is disabled.
-            await repo.append_entry(
-                account, row.amount, "funding_credit", "funding", row.id, scope.actor_id
-            )
-            await repo.edit(
-                row,
-                {"status": "posted", "posted_by": scope.actor_id, "posted_at": await repo.now()},
-            )
+            await post_funding_record(repo, account, row, actor_id=scope.actor_id)
             await repo.remember(scope.actor_id, action, kd, rd, "funding", row.id)
-            await repo.audit(
-                scope.actor_id,
-                "funding.posted",
-                row.id,
-                org_id,
-                {"amount": str(row.amount), "currency": row.currency},
-            )
             return view(FundingView, row)
 
     async def create_adjustment(self, token, org_id, body, key):

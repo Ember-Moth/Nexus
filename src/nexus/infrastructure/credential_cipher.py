@@ -13,17 +13,20 @@ from nexus.shared.errors import ServiceError
 class CredentialCipher:
     """Versioned AEAD storage with separate key derivation and record-bound AAD."""
 
-    def __init__(self, current_version: int, roots: dict[int, bytes]):
+    def __init__(self, current_version: int, roots: dict[int, bytes], *, purpose="catalog"):
         if current_version not in roots or any(len(key) != 32 for key in roots.values()):
             raise ValueError("invalid credential encryption keyring")
         self.current_version = current_version
+        if purpose not in {"catalog", "payment"}:
+            raise ValueError("unsupported credential purpose")
+        self._purpose = purpose
         self._keys = MappingProxyType(
             {
                 version: HKDF(
                     algorithm=hashes.SHA256(),
                     length=32,
                     salt=None,
-                    info=b"nexus:catalog-credentials:v1",
+                    info=f"nexus:{purpose}-credentials:v1".encode(),
                 ).derive(root)
                 for version, root in roots.items()
             }
@@ -36,9 +39,9 @@ class CredentialCipher:
     def versions(self) -> frozenset[int]:
         return frozenset(self._keys)
 
-    @staticmethod
-    def _aad(upstream_id: UUID, credential_id: UUID, version: int) -> bytes:
-        return f"nexus:upstream-credential:v1:{upstream_id}:{credential_id}:{version}".encode()
+    def _aad(self, upstream_id: UUID, credential_id: UUID, version: int) -> bytes:
+        kind = "upstream-credential" if self._purpose == "catalog" else "payment-configuration"
+        return f"nexus:{kind}:v1:{upstream_id}:{credential_id}:{version}".encode()
 
     def encrypt(self, secret: str, upstream_id: UUID, credential_id: UUID) -> tuple[int, bytes]:
         version = self.current_version

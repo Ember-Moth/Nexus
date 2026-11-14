@@ -47,7 +47,7 @@ def violations(source: str, module: str, is_package: bool = False) -> list[str]:
     parts = module.split(".")
     owner = parts[2] if module.startswith("nexus.modules.") else None
     kind = parts[-1]
-    http_entry = kind in {"api", "routes"}
+    http_entry = kind in {"api", "routes"} or kind.endswith("_api")
     persistence = kind in {"repository", "models"} or kind.endswith("_repository")
     for target in imports(source, module, is_package):
         if target.startswith("nexus.bootstrap") and module not in ENTRY_POINTS:
@@ -149,6 +149,7 @@ def test_guard_rejects_invalid_dependencies(module, source):
         ("nexus.bootstrap", "from nexus.modules import identity"),
         ("nexus.modules.billing.service", "from nexus.modules.identity import BootstrapResult"),
         ("nexus.modules.identity.api", "from fastapi import APIRouter"),
+        ("nexus.modules.billing.payment_api", "from fastapi import APIRouter"),
         ("nexus.modules.identity.repository", "from sqlalchemy import select"),
         ("nexus.modules.billing.schemas", "from .money import Money"),
     ],

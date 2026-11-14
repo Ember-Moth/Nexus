@@ -19,7 +19,7 @@ def test_migration_round_trip_and_repeat_upgrade(migration_settings, admin):
         command.upgrade(config, "head")
     command.upgrade(config, "head")
     assert admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchall() == [
-        ("0006_pricing_reservations",)
+        ("0007_payment_admission",)
     ]
 
 
@@ -142,3 +142,61 @@ def test_m3_upgrade_preserves_and_provisions_existing_m2_organization(
         "JOIN billing.accounts a ON a.id=o.billing_account_id WHERE o.id=%s",
         (org_id,),
     ).fetchone() == ("active", "USD")
+
+
+def test_m3p_upgrade_keeps_existing_manual_funding(migration_settings, admin):
+    from decimal import Decimal
+    from uuid import uuid4
+
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.attributes["settings"] = migration_settings
+    user_id, org_id, account_id, receiving_id, funding_id, entry_id = [uuid4() for _ in range(6)]
+    try:
+        command.downgrade(config, "0006_pricing_reservations")
+        admin.execute(
+            "INSERT INTO identity.users(id,login,password_hash) VALUES(%s,%s,%s)",
+            (user_id, "m3-finance-preserved", "m3-test-password-hash"),
+        )
+        admin.execute(
+            "INSERT INTO identity.organizations(id,name,status,"
+            "billing_account_id) VALUES(%s,'M3 legacy','active',%s)",
+            (org_id, account_id),
+        )
+        admin.execute(
+            "INSERT INTO billing.accounts(id,organization_id,currency,"
+            "balance,entry_sequence) VALUES(%s,%s,'USD',5,1)",
+            (account_id, org_id),
+        )
+        admin.execute(
+            "INSERT INTO billing.receiving_accounts(id,name,reference,"
+            "receipt_namespace,currency) VALUES(%s,'Legacy bank',"
+            "'legacy-bank','manual:legacy-bank','USD')",
+            (receiving_id,),
+        )
+        admin.execute(
+            "INSERT INTO billing.funding_records(id,organization_id,"
+            "account_id,receiving_account_id,receipt_namespace,"
+            "external_reference,amount,currency,received_at,evidence,"
+            "status,created_by,posted_by,posted_at) VALUES(%s,%s,%s,%s,"
+            "'manual:legacy-bank','legacy-001',5,'USD',clock_timestamp(),"
+            "'Retained test receipt','posted',%s,%s,clock_timestamp())",
+            (funding_id, org_id, account_id, receiving_id, user_id, user_id),
+        )
+        admin.execute(
+            "INSERT INTO billing.ledger_entries(id,organization_id,"
+            "account_id,sequence,currency,signed_amount,balance_after,"
+            "kind,source_type,source_id,actor_id) VALUES(%s,%s,%s,1,"
+            "'USD',5,5,'funding_credit','funding',%s,%s)",
+            (entry_id, org_id, account_id, funding_id, user_id),
+        )
+    finally:
+        command.upgrade(config, "head")
+    assert admin.execute(
+        "SELECT balance,held_amount,entry_sequence FROM billing.accounts WHERE id=%s", (account_id,)
+    ).fetchone() == (Decimal(5), Decimal(0), 1)
+    assert admin.execute(
+        "SELECT source_type,system_actor,payment_order_id,created_by,"
+        "posted_by,amount,status FROM billing.funding_records WHERE id=%s",
+        (funding_id,),
+    ).fetchone() == ("manual", None, None, user_id, user_id, Decimal(5), "posted")
+    assert admin.execute("SELECT count(*) FROM billing.ledger_entries").fetchone()[0] == 1

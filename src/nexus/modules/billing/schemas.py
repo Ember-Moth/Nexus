@@ -82,12 +82,17 @@ class FundingCreate(Schema):
 
 
 class FundingView(FundingCreate):
+    receiving_account_id: UUID | None
+    source_type: str
+    system_actor: str | None
+    payment_order_id: UUID | None
+    payment_receipt_id: UUID | None
     id: UUID
     organization_id: UUID
     status: str
     version: int
     created_at: datetime
-    created_by: UUID
+    created_by: UUID | None
     posted_by: UUID | None
     posted_at: datetime | None
 

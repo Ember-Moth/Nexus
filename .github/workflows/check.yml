@@ -1,4 +1,4 @@
-name: M1 checks
+name: Control plane checks
 
 on:
   push:

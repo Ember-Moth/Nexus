@@ -82,16 +82,30 @@ class IdentityService:
         async with self._access.authenticated(token) as (tx, actor):
             if operation == "finance" and "platform_finance" not in actor.platform_roles:
                 raise forbidden()
-            if operation == "pricing" or (operation == "budget" and layer == "platform"):
+            if operation in {"pricing", "payment_admin"} or (
+                operation == "budget" and layer == "platform"
+            ):
                 self._access.platform_admin(actor)
             if organization_id is None:
-                if operation not in {"finance", "pricing"}:
+                if operation not in {"finance", "pricing", "payment_admin"}:
                     raise forbidden()
                 return actor.user.id
             org = await self._access.organization(tx, actor, organization_id, finance_read=True)
             member = await tx.directory.membership_for_user(organization_id, actor.user.id)
             role = member.role if member and member.status == "active" else None
             platform = bool(actor.platform_roles & {"platform_admin", "platform_finance"})
+            if operation == "payment":
+                if "platform_finance" not in actor.platform_roles and role not in {
+                    "org_owner",
+                    "org_finance",
+                }:
+                    raise forbidden(organization_id)
+                if org.status != "active":
+                    raise IdentityError(
+                        "organization_inactive",
+                        "An active organization is required for payment",
+                        409,
+                    )
             if operation == "budget":
                 if "platform_admin" not in actor.platform_roles and role != "org_owner":
                     raise forbidden(organization_id)

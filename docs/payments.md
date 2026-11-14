@@ -2,9 +2,90 @@
 
 Nexus 为预付费账户提供两种资金入口：财务人工登记，以及支付网关确认成功后的自动入账。两条路径共用资金账本、币种规则、幂等约束和对账机制。
 
-当前先定义通用支付接口和控制平面流程，具体网关稍后确定。本文不表示任何网关已经接入；真实自动入账需要选定适配器并完成其沙箱和上线验收。
+M3P 已实现通用支付流程和测试专用 mock 适配器。真实支付渠道尚未接入；真实自动入账需要选择相应适配器并完成官方协议、沙箱和上线验收。下文区分当前接口与后续运营能力。
 
 职责划分参考 PPanel 的支付适配、回调、下单和共同结算逻辑，不要求相同的包目录。Nexus 中支付是 billing 的内部子域，与钱包、资金流水共用一个数据所有权边界；来源见 [PPanel 设计参考](ppanel-reference.md)。
+
+## 当前运行与接口
+
+先执行 `uv run nexus --env-file .env.migrate migrate`，升级到 `0007_payment_admission`，再分别启动 API 与 Worker。升级保留原 M3 的人工入账、余额、流水和预算。存在任何支付订单时，降级会拒绝执行，避免抹掉在途或迟到收款的跟踪信息。
+
+API 与 Worker 使用相同的以下配置：
+
+| 配置 | 用途 |
+| --- | --- |
+| `NEXUS_PAYMENT_PUBLIC_BASE_URL` | 固定通知站点，例如 `https://control.example.com`；生成 `/webhooks/payments/{channel_id}` |
+| `NEXUS_PAYMENT_RETURN_URL` | 固定前端返回地址，只用于订单展示和查询；客户端不能覆盖 |
+| `NEXUS_MOCK_PAYMENT_URL` | 仅 development/test 可用的模拟器地址，只接受 `http://127.0.0.1:{port}` |
+| `NEXUS_PAYMENT_NOTIFICATION_PER_CHANNEL` | 每个渠道每分钟通知上限，默认 1000 |
+| `NEXUS_PAYMENT_NOTIFICATION_PER_IP` | 每个来源每分钟通知上限，默认 120 |
+| `NEXUS_PAYMENT_REQUESTS_PER_MERCHANT_PER_MINUTE` | 每商户环境固定 60 秒窗口的远端请求上限，默认 120 |
+
+生产进程要求通知与返回地址为 HTTPS，拒绝 mock 传输和 test 渠道。支付配置沿用已有根密钥配置，但使用独立于上游模型凭据的密钥派生和记录绑定；仍在查询或验签窗口内使用的旧根密钥必须保留。
+
+以下路径相对于 `/api/v1`，管理调用使用 Bearer 会话。列表提供 limit（1–100，默认 50）和 cursor，注册类型列表由已安装适配器决定。
+
+| 接口 | 权限和行为 |
+| --- | --- |
+| `GET /payment-gateway-types` | 平台管理员查看已安装类型与配置 schema；未注册类型不能启用 |
+| `GET/POST /payment-channels` | 平台管理员管理渠道；创建要求 Idempotency-Key |
+| `GET/PATCH /payment-channels/{id}` | PATCH 要求 If-Match 与 Idempotency-Key，可改名、限额、状态或替换完整配置 |
+| `GET /payment-channels/{id}/versions` | 查询配置版本、能力、根密钥版本和验签有效期，不返回密钥或密文 |
+| `POST /payment-channels/{id}/versions/{version_id}/revoke` | 平台管理员撤销材料，要求 If-Match；撤销当前配置前必须先停用渠道 |
+| `GET /organizations/{org}/payment-methods` | 组织 owner、org_finance 或平台财务查看可用渠道、币种、精度与限额 |
+| `GET/POST /organizations/{org}/payment-orders` | 创建要求上述充值权限、active 组织及 Idempotency-Key；返回 202 与订单，不等待远端下单 |
+| `GET /organizations/{org}/payment-orders/{id}` | 组织账务权限读取订单；只读数据库，不触发远端查单 |
+| `POST /organizations/{org}/payment-orders/{id}/reconcile` | 平台财务请求后台查单，返回 202；不接受客户端指定成功状态或入账金额 |
+| `GET /organizations/{org}/payment-orders/{id}/observations` | 平台财务读取最小查单证据，排除支付入口参数 |
+| `GET /organizations/{org}/payment-orders/{id}/receipts` | 平台财务读取真实收款、交易标识及证据关联，包括额外收款 |
+| `GET /organizations/{org}/payment-cases` | 平台财务读取支付异常、风险金额和证据关联 |
+
+企业开发者没有充值和企业钱包权限。平台管理员维护渠道，不隐式获得人工补单权限；管理员以企业 owner 身份操作自己的企业时，仍按该组织角色判断。平台财务权限沿用[财务授权流程](billing-api.md)。
+
+渠道 PATCH 中的 configuration 是完整替换，必须重新提供该类型需要的凭据。省略 configuration 时保留原材料。轮换默认保留旧验签材料 3600 秒，可通过 verification_grace_seconds 指定 0–86400 秒；最多同时存在八个有效验签版本。普通改名和密钥轮换都不能改变渠道商户、环境或收款命名空间。
+
+订单创建只接收 channel_id、amount 和 currency，金额必须是十进制字符串。渠道限额与金额精度都要通过；例如 mock 使用 USD 两位小数，`1.001` 被拒绝，不会被改成 `1.00`。组织消费折扣不改变充值额度。
+
+重试创建、渠道变更等命令时保留原 Idempotency-Key、请求体和 If-Match。重复调用返回同一资源；同键不同参数返回 409。缺少前提头返回 428，版本冲突返回 412。支付入口仅在未入账、未进入核对且期限有效时返回。
+
+## 本机模拟支付
+
+模拟器只验证协议与控制平面流程，不包含真实可付款的收银页面。其外部支付状态保存在模拟器进程内；Nexus 的订单、任务、证据和账本仍持久化在 PostgreSQL。
+
+1. 设置仅用于本机测试的 `NEXUS_MOCK_PROVIDER_API_KEY`（至少 32 个字符），运行：
+
+   ```sh
+   uv run python scripts/mock_payment_provider.py --port 59090 --merchant mock-merchant
+   ```
+
+2. 为 API 和 Worker 设置 `NEXUS_MOCK_PAYMENT_URL=http://127.0.0.1:59090` 及固定通知、返回地址，然后重启进程。
+3. 管理员创建 adapter_type 为 mock、stable_merchant_id 为 mock-merchant、environment 为 test 的渠道，明确 USD 限额。configuration 中 api_key 与模拟器环境变量一致，另提供至少 32 字符的 webhook_secret；notification_mode 可选 raw_json（默认）或 form。
+4. 企业 owner 或财务创建订单，Worker 生成受控的模拟支付入口。使用模拟器的 `POST /control/paid`，携带模拟 api_key 的 Bearer 认证和 `{"merchant_order_ref":"订单返回的引用"}`，模拟实际收款。
+5. 模拟器不主动发送通知；Worker 的查单补偿可以取得收款结果，也可由平台财务调用订单 reconcile 立即排队。之后查看订单的 credit_state、流水关联及账户余额。
+
+mock 通知使用 `X-Mock-Signature: t={Unix秒},v1={小写十六进制HMAC}`。签名输入为时间戳的十进制字节、一个 `.` 和原始 body；form 的 GET 通知使用原始 query 字节。算法为 HMAC-SHA256，默认容忍 300 秒时差，配置范围为 60–900 秒。重复签名头、重复 JSON 字段或重复表单/query 参数都会拒绝；不会先把多值参数折叠为字典再验签。
+
+raw_json 只接受 POST；form 接受 GET/POST。POST 不允许附带未签入 body 的 query。正常接收与已验证的无关通知返回 200（raw_json 为 ok，form 为 success）；非法通知返回 400，暂时失败返回 503，限流返回 429。模拟协议报文上限为 64 KiB，HTTP 入口另有 1 MiB 硬上限。通知入口不沿用管理 API 的业务 JSON 响应格式。
+
+已发布的 mock 只提供 redirect，不支持远端关单；接口明确返回不支持，不模拟关单成功。通用 CheckoutResult 也支持 qr_code，适配器必须显式声明该能力及受控内容前缀。真实渠道的协议、应答格式、金额精度和关闭能力由其适配器决定。
+
+## 任务与运行维护
+
+创建请求只保存不可变期望和任务。Worker 以短事务认领任务，默认租约 30 秒；出站 mock HTTP 调用有 10 秒总期限和响应体上限。网络期间不持有数据库连接或账户锁，多 Worker 通过 SKIP LOCKED、递增 fencing_token 和订单创建代次协作。
+
+首次创建意图保存原始幂等标识、幂等方式及到期时间。接管者看到已开始的操作会先查询原订单；“未找到”结果同样必须匹配真实商户和环境，不能用本地期望代替缺失的上游身份。只有原保证和当前能力均允许、渠道仍启用且订单仍有效时，才重发同一请求。修改配置或后续 SDK 能力不会延长旧调用的保证。过期、缺乏保证或持续未知的结果进入核对，不换订单号重新创建。
+
+商户出站请求限额由 PostgreSQL 中的窗口计数协调，多个渠道、密钥版本和 Worker 共用稳定收款命名空间，不按进程各自放大。限额不足只延期任务，不增加远端失败次数，也不丢弃创建意图。查单和安全重试需要分属不同窗口时，已验证查询证据会持久化；重试前仍复核订单版本、创建代次及原始幂等期限。
+
+正常未付款订单每 30 秒查询，已入账或过期订单每 300 秒继续检查资金变化。临时故障采用退避，单轮最多八次尝试，随后保留核对事项；新的有效通知或财务补单可以再次唤醒查询。通知中不同外部支付对象的提示拥有独立任务，不覆盖其他收款线索。
+
+通知先验签，再在同一数据库事务中保存最小事实并唤醒查单。任务完成后更新受控处理状态；原始内容、摘要和验证版本不变，已处理通知不会因后续查询故障退回待处理。查询结果与所观察的订单版本、创建代次和任务租约核对，迟到结果只保留证据、唤醒复查，不覆盖较新的支付或入账结果。
+
+人工登记与网关确认共用同一个过账函数。成功事务同时提交订单、实际收款关联、funding_records、唯一资金流水、余额、审计、任务状态及 billing.funding_posted 事件。网关过账使用 payment-worker 系统身份；财务补单只是请求服务端核实，不伪造某位人员确认收款。
+
+退款、争议、重复实际收款及绑定冲突会保存证据和核对事项。已入账订单的已验证反向资金通知会立即限制账户；查询补偿也会检查没有通知的后续变化。系统不自动发起对外退款、不自动扣成负余额，也不自动解除已有冻结。平台财务可以引用原入账流水执行受余额与预留约束的调整，核对工作台、事项关闭与解除限制命令在 M5 补齐。
+
+当前验证使用隔离的真实 PostgreSQL/Redis、本地 HTTP 模拟器及独立 Worker 进程，覆盖重复、乱序、漏通知、响应丢失、租约接管、提交前后中断、金额/身份冲突、轮换、反向资金事件和既有 M3 数据升级。尚未验证真实支付渠道、生产负载或过账延迟 SLA；后文的时效数字仍是待验收目标。
 
 ## 范围与职责
 

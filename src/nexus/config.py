@@ -5,7 +5,7 @@ import socket
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -39,6 +39,54 @@ class RuntimeSettings(BaseSettings):
     login_per_account: int = Field(default=10, ge=1, le=1000)
     login_per_ip: int = Field(default=60, ge=1, le=10000)
     billing_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+    payment_public_base_url: str | None = None
+    payment_return_url: str | None = None
+    mock_payment_url: str | None = None
+    payment_requests_per_merchant_per_minute: int = Field(default=120, ge=1, le=10000)
+    payment_notification_per_channel: int = Field(default=1000, ge=1, le=100000)
+    payment_notification_per_ip: int = Field(default=120, ge=1, le=10000)
+
+    @field_validator("payment_public_base_url", "payment_return_url")
+    @classmethod
+    def payment_endpoint(cls, value):
+        if value is None:
+            return value
+        try:
+            parsed = HttpUrl(value)
+            if (
+                parsed.username is not None
+                or parsed.password is not None
+                or parsed.fragment is not None
+                or parsed.query is not None
+            ):
+                raise ValueError
+            return str(parsed).rstrip("/")
+        except ValueError:
+            raise ValueError(
+                "payment endpoint must be a fixed HTTP(S) URL without credentials or query"
+            ) from None
+
+    @field_validator("mock_payment_url")
+    @classmethod
+    def mock_endpoint(cls, value):
+        if value is None:
+            return value
+        try:
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme != "http"
+                or parsed.hostname != "127.0.0.1"
+                or not parsed.port
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+                or parsed.path not in {"", "/"}
+            ):
+                raise ValueError
+        except ValueError:
+            raise ValueError("mock payment provider must be a loopback HTTP endpoint") from None
+        return value.rstrip("/")
 
     @field_validator("database_url")
     @classmethod
@@ -106,6 +154,13 @@ class RuntimeSettings(BaseSettings):
         if self.worker_heartbeat_ttl <= self.worker_interval + self.dependency_timeout:
             raise ValueError("heartbeat TTL must exceed the polling interval plus probe timeout")
         if self.environment == "production":
+            if self.mock_payment_url:
+                raise ValueError("mock payment gateway is not permitted in production")
+            if any(
+                value and not value.startswith("https://")
+                for value in (self.payment_public_base_url, self.payment_return_url)
+            ):
+                raise ValueError("production payment endpoints require HTTPS")
             if url.query.get("sslmode") != "verify-full":
                 raise ValueError("production PostgreSQL requires sslmode=verify-full")
             if urlsplit(self.redis_url.get_secret_value()).scheme != "rediss":

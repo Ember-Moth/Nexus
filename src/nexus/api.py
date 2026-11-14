@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from nexus.bootstrap import Application
 from nexus.config import RuntimeSettings
 from nexus.modules.billing import api as billing_api
+from nexus.modules.billing import payment_api
 from nexus.modules.catalog import CatalogService
 from nexus.modules.catalog import api as catalog_api
 from nexus.modules.identity import IdentityService, ModelAccessService, ProjectService
@@ -104,6 +105,8 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
         application = Application(settings)
         app.state.readiness = application.readiness
         app.state.billing_service = application.billing
+        app.state.payment_service = application.payments
+        app.state.payment_processor = application.payment_processor
         app.state.pricing_service = application.pricing
         app.state.budget_service = application.budgets
         app.state.reservations = application.reservations
@@ -129,6 +132,9 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     def get_model_access(request: Request) -> ModelAccessService:
         return request.app.state.model_access_service
 
+    def get_payments(request: Request):
+        return request.app.state.payment_service
+
     def get_billing(request: Request):
         return request.app.state.billing_service
 
@@ -144,4 +150,6 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     app.include_router(identity_api.create_policy_router(get_model_access))
     app.include_router(catalog_api.create_router(get_catalog))
     app.include_router(billing_api.create_router(get_billing, get_pricing, get_budgets))
+    app.include_router(payment_api.create_router(get_payments))
+    app.include_router(payment_api.create_webhook_router(get_payments))
     return app

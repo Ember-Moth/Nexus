@@ -15,3 +15,8 @@ dist/
 .DS_Store
 
 /src/relay/target/
+
+# Web console (src/web)
+node_modules/
+.next/
+*.tsbuildinfo

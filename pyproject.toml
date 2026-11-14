@@ -52,5 +52,8 @@ pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-markers = ["integration: requires the isolated PostgreSQL and Redis test services"]
+markers = [
+  "integration: requires the isolated PostgreSQL and Redis test services",
+  "capacity: timed control-plane load profiles",
+]
 addopts = "-ra --strict-markers"

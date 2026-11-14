@@ -16,6 +16,29 @@ from nexus.gateway_simulator import GatewaySimulator
 pytestmark = pytest.mark.integration
 
 
+async def register_node(client, root, admin, cid):
+    name = "nexus_node_" + uuid4().hex
+    password = secrets.token_urlsafe(32)
+    admin.execute(
+        sql.SQL("CREATE ROLE {} LOGIN PASSWORD {} IN ROLE nexus_gateway").format(
+            sql.Identifier(name), sql.Literal(password)
+        )
+    )
+    response = await client.put(
+        f"/api/v1/gateway-clusters/{cid}/principals/{(nid := uuid4())}",
+        headers=auth(root),
+        json={"database_role": name, "node_id": str(nid)},
+    )
+    assert response.status_code == 200, response.text
+    return psycopg.conninfo.make_conninfo(
+        host=admin.info.host,
+        port=admin.info.port,
+        dbname=admin.info.dbname,
+        user=name,
+        password=password,
+    )
+
+
 @pytest.fixture
 async def plane(http, admin):
     client, root, app, settings = http
@@ -50,30 +73,11 @@ async def plane(http, admin):
     )
     assert response.status_code == 201, response.text
     cid = response.json()["id"]
-    name = "nexus_node_" + uuid4().hex
-    password = secrets.token_urlsafe(32)
-    admin.execute(
-        sql.SQL("CREATE ROLE {} LOGIN PASSWORD {} IN ROLE nexus_gateway").format(
-            sql.Identifier(name), sql.Literal(password)
-        )
-    )
-    response = await client.put(
-        f"/api/v1/gateway-clusters/{cid}/principals/{(nid := uuid4())}",
-        headers=auth(root),
-        json={"database_role": name, "node_id": str(nid)},
-    )
-    assert response.status_code == 200, response.text
+    dsn = await register_node(client, root, admin, cid)
     response = await client.post(
         f"/api/v1/gateway-clusters/{cid}/releases", headers=headers(root, "release-one"), json={}
     )
     assert response.status_code == 202, response.text
-    dsn = psycopg.conninfo.make_conninfo(
-        host=admin.info.host,
-        port=admin.info.port,
-        dbname=admin.info.dbname,
-        user=name,
-        password=password,
-    )
     async with GatewaySimulator.connect(
         dsn, settings.redis_url.get_secret_value(), settings.redis_namespace
     ) as peer:
@@ -151,27 +155,7 @@ async def test_revocation_is_live_and_replay_is_owned_by_node(plane, http, admin
         await peer.call("reserve_request", uuid4(), a.api_key_id, a.model_id, 1, 4, 6)
     with pytest.raises(psycopg.errors.RaiseException, match="key_inactive"):
         await peer.call("start_attempt", a.request_id, uuid4(), 1, UUID(dep["id"]))
-    name = "nexus_node_" + uuid4().hex
-    password = secrets.token_urlsafe(32)
-    admin.execute(
-        sql.SQL("CREATE ROLE {} LOGIN PASSWORD {} IN ROLE nexus_gateway").format(
-            sql.Identifier(name), sql.Literal(password)
-        )
-    )
-    node = uuid4()
-    response = await client.put(
-        f"/api/v1/gateway-clusters/{cid}/principals/{node}",
-        headers=auth(root),
-        json={"database_role": name, "node_id": str(node)},
-    )
-    assert response.status_code == 200, response.text
-    dsn = psycopg.conninfo.make_conninfo(
-        host=admin.info.host,
-        port=admin.info.port,
-        dbname=admin.info.dbname,
-        user=name,
-        password=password,
-    )
+    dsn = await register_node(client, root, admin, cid)
     async with GatewaySimulator.connect(dsn, http[3].redis_url.get_secret_value()) as other:
         assert await other.call("get_request_status", a.request_id) is None
         with pytest.raises(psycopg.errors.RaiseException):

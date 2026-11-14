@@ -27,6 +27,7 @@ async def run_worker(
     interval: float,
     ttl: int,
     stop: asyncio.Event | None = None,
+    metrics: Callable[[], dict] | None = None,
     extra_consumers: dict[str, Callable[[], Awaitable[int]]] | None = None,
     consume: Callable[[], Awaitable[int]] | None = None,
 ) -> None:
@@ -71,6 +72,7 @@ async def run_worker(
                     "instance_id": instance_id,
                     "ready": ready,
                     "checks": checks,
+                    **({"metrics": metrics()} if metrics else {}),
                     "observed_at": datetime.now(UTC).isoformat(),
                 }
             )
@@ -107,6 +109,7 @@ async def serve_worker(settings: RuntimeSettings) -> None:
             worker_id=settings.worker_id,
             interval=settings.worker_interval,
             ttl=settings.worker_heartbeat_ttl,
+            metrics=application.database.metrics.snapshot,
             consume=application.process_billing,
             extra_consumers={
                 "report_projection": application.reports.project,

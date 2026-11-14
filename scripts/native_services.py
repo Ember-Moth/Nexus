@@ -25,7 +25,7 @@ def executable(name: str) -> str:
     if found:
         return found
     pg_config = shutil.which("pg_config")
-    if pg_config and name in {"postgres", "initdb", "pg_ctl"}:
+    if pg_config and name in {"postgres", "initdb", "pg_ctl", "pg_basebackup", "pg_verifybackup"}:
         bindir = subprocess.check_output([pg_config, "--bindir"], text=True).strip()
         candidate = Path(bindir) / name
         if candidate.is_file():
@@ -46,7 +46,8 @@ def write_private(path: Path, value: str) -> None:
 
 
 class NativeServices:
-    def __init__(self, root: Path, *, database: str = "nexus") -> None:
+    def __init__(self, root: Path, *, database: str = "nexus", track_commits: bool = False) -> None:
+        self.track_commits = track_commits
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.metadata = self.root / "services.json"
@@ -135,6 +136,7 @@ class NativeServices:
                     str(self.data["pg_port"]),
                     "-k",
                     str(self.socket_dir),
+                    *(["-c", "track_commit_timestamp=on"] if self.track_commits else []),
                 ]
             )
             self._run(
@@ -281,6 +283,9 @@ class NativeServices:
                         client.shutdown(nosave=True)
                 except RedisError, OSError:
                     pass
+        self.stop_postgres()
+
+    def stop_postgres(self) -> None:
         if (self.pg_data / "PG_VERSION").exists():
             status = self._run(
                 [executable("pg_ctl"), "-D", str(self.pg_data), "status"], check=False

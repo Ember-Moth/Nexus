@@ -22,7 +22,14 @@ def settings_factory():
     return create
 
 
-def pytest_collection_modifyitems(items):
+def pytest_addoption(parser):
+    parser.addoption("--capacity", action="store_true", help="run timed settlement load profiles")
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if "capacity" in item.keywords and not config.getoption("--capacity"):
+            item.add_marker(pytest.mark.skip(reason="select --capacity for the timed load run"))
     if not os.environ.get("NEXUS_TEST_SERVICES"):
         skip = pytest.mark.skip(
             reason="run through scripts/run_integration.py for isolated services"

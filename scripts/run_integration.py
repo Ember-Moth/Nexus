@@ -16,7 +16,9 @@ def main() -> int:
     }
     with tempfile.TemporaryDirectory(prefix="nexus-test-") as directory:
         workspace = Path(directory)
-        services = NativeServices(workspace, database=f"nexus_test_{uuid4().hex[:12]}")
+        services = NativeServices(
+            workspace, database=f"nexus_test_{uuid4().hex[:12]}", track_commits=True
+        )
         try:
             services.start()
             services.profiles(workspace)

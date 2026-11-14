@@ -1126,7 +1126,7 @@ async def test_payment_migration_cannot_erase_retained_remote_intents(
         await asyncio.to_thread(command.downgrade, config, "0006_pricing_reservations")
     assert (
         admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchone()[0]
-        == "0009_operations"
+        == "0010_settlement_backpressure"
     )
     assert (
         admin.execute(
@@ -1379,3 +1379,71 @@ async def test_resolved_refund_replay_and_independent_unfreeze(payments, admin):
     obj.update(reversed_minor=400, reversal_reference="reversal-002")
     assert (await notify(p, chan, p.provider.notice(item["merchant_order_ref"]))).status_code == 200
     assert (await balance(p.client, p.root, org))["status"] == "frozen"
+
+
+@pytest.mark.capacity
+async def test_confirmed_payment_posting_latency(payments, admin, service_directory):
+    from redis.asyncio import Redis
+    from test_control_plane_acceptance import worker
+
+    p = payments
+    org, chan = await enterprise(p), await channel(p)
+    records = [await order(p, org, chan) for _ in range(24)]
+    # Dispatch every creation; query compensation can run between two create operations.
+    async with asyncio.timeout(20):
+        while admin.execute(
+            "SELECT count(*) FROM billing.payment_orders WHERE checkout_state='ready'"
+        ).fetchone()[0] != len(records):
+            if not await p.app.state.payment_processor.process():
+                await asyncio.sleep(0.05)
+    ids = [row["id"] for row in records]
+    async with (
+        Redis.from_url(p.settings.redis_url.get_secret_value()) as redis,
+        worker(service_directory, redis, p.settings.redis_namespace, mock_url=p.provider.url),
+    ):
+        # Pace confirmations; create, query and credit use the actual local mock HTTP provider.
+        for item in records:
+            ref = item["merchant_order_ref"]
+            p.provider.paid(ref)
+            response = await notify(p, chan, p.provider.notice(ref))
+            assert response.status_code == 200, response.text
+            await asyncio.sleep(0.1)
+        for _ in range(200):
+            if admin.execute(
+                "SELECT count(*) FROM billing.payment_orders WHERE credit_state='credited'"
+            ).fetchone()[0] == len(ids):
+                break
+            await asyncio.sleep(0.05)
+        result = admin.execute(
+            """
+            SELECT count(l.id),count(*) FILTER (WHERE o.review_required),
+             percentile_disc(0.95) WITHIN GROUP (ORDER BY extract(epoch FROM
+                 pg_xact_commit_timestamp(l.xmin)-pg_xact_commit_timestamp(v.xmin))),
+             percentile_disc(0.95) WITHIN GROUP (ORDER BY extract(epoch FROM
+                 pg_xact_commit_timestamp(l.xmin)-e.created_at))
+             FROM billing.payment_orders o
+             LEFT JOIN billing.ledger_entries l ON l.id=o.ledger_entry_id
+             LEFT JOIN billing.funding_records f ON f.id=o.funding_record_id
+             LEFT JOIN billing.payment_receipts p ON p.id=f.payment_receipt_id
+             LEFT JOIN billing.payment_observations v ON v.id=p.observation_id
+             LEFT JOIN billing.payment_events e ON e.order_id=o.id
+             WHERE o.id=ANY(%s::uuid[])
+        """,
+            (ids,),
+        ).fetchone()
+        posted, review, confirmed_p95, webhook_p95 = result
+        print(
+            "payment",
+            {
+                "orders": len(ids),
+                "unfinished": len(ids) - posted,
+                "review": review,
+                "confirmation_commit_p95_s": str(confirmed_p95),
+                "notice_to_credit_p95_s": str(webhook_p95),
+            },
+        )
+        assert posted == len(ids) and review == 0 and confirmed_p95 <= 2
+        assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (
+            240,
+            0,
+        )

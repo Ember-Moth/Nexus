@@ -226,7 +226,18 @@ impl Generate {
         inputs: u32,
         outputs: u32,
     ) -> Result<(Value, ReservationBounds), ProtocolError> {
-        let bounds = ReservationBounds::for_deployment(inputs, outputs, self.requested_output)?;
+        self.prepare_bounded(upstream_model, inputs, outputs, self.requested_output)
+    }
+
+    /// Prepare the native body with an explicit output limit, such as one already reserved.
+    pub fn prepare_bounded(
+        &self,
+        upstream_model: &str,
+        inputs: u32,
+        outputs: u32,
+        requested_output: Option<u32>,
+    ) -> Result<(Value, ReservationBounds), ProtocolError> {
+        let bounds = ReservationBounds::for_deployment(inputs, outputs, requested_output)?;
         let mut body = self.body.clone();
         body["model"] = upstream_model.into();
         if self.endpoint == Endpoint::OpenaiResponses {

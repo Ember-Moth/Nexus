@@ -9,6 +9,8 @@ use thiserror::Error;
 pub enum UpstreamError {
     #[error("Bedrock request signing failed")]
     Signing,
+    #[error("upstream connection could not be established")]
+    Connect,
     #[error("upstream request timed out")]
     Timeout,
     #[error("upstream HTTP transport failed")]
@@ -27,12 +29,30 @@ pub enum UpstreamError {
 
 impl From<reqwest::Error> for UpstreamError {
     fn from(error: reqwest::Error) -> Self {
-        if error.is_timeout() {
+        // A connector failure (DNS, TCP, TLS or the connect timeout) precedes the request bytes.
+        if error.is_connect() {
+            Self::Connect
+        } else if error.is_timeout() {
             Self::Timeout
         } else {
             Self::Transport
         }
     }
+}
+
+impl UpstreamError {
+    /// True only when the generation provably never reached the upstream.
+    /// Any timeout or transport error after a connection was established may have executed it.
+    pub fn unsent(&self) -> bool {
+        matches!(self, Self::Connect | Self::Signing)
+    }
+}
+
+/// Response statuses with which an upstream declines a generation before executing it:
+/// rate limiting (429), an unavailable or overloaded service (502, 503) and Anthropic's
+/// overload signal (529). Every other status, including 500 and 504, may follow execution.
+pub fn declined(status: StatusCode) -> bool {
+    matches!(status.as_u16(), 429 | 502 | 503 | 529)
 }
 
 pub struct Upstream {

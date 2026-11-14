@@ -456,6 +456,30 @@ impl Index {
         ws: bool,
         pinned: Option<&Binding>,
     ) -> Result<Selection<'_>, Rejection> {
+        self.choose(secret, request, ws, pinned, None)
+    }
+    /// Choose the next HTTP candidate after the `failed` deployments provably did not execute
+    /// this request. The best remaining priority group is drawn by weight, so a group is left
+    /// only once all of its eligible members have failed. A candidate must also fit the frozen
+    /// reservation: its input ceiling cannot exceed it and the reserved output limit is sent.
+    pub fn fallback(
+        &self,
+        secret: &str,
+        request: &Generate,
+        failed: &[Uuid],
+        frozen: ReservationBounds,
+    ) -> Option<Selection<'_>> {
+        self.choose(secret, request, false, None, Some((failed, frozen)))
+            .ok()
+    }
+    fn choose(
+        &self,
+        secret: &str,
+        request: &Generate,
+        ws: bool,
+        pinned: Option<&Binding>,
+        retry: Option<(&[Uuid], ReservationBounds)>,
+    ) -> Result<Selection<'_>, Rejection> {
         let key = self.authenticate(secret)?;
         let m = self
             .models
@@ -511,6 +535,11 @@ impl Index {
                 || request
                     .requested_output
                     .is_some_and(|n| n > profile.output_ceiling)
+                || retry.is_some_and(|(failed, frozen)| {
+                    failed.contains(&dep.id)
+                        || profile.input_ceiling > frozen.inputs
+                        || profile.output_ceiling < frozen.outputs
+                })
                 || candidate.priority > best
             {
                 continue;
@@ -541,32 +570,33 @@ impl Index {
         } else {
             Rejection::Unavailable
         })?;
+        // A later attempt sends exactly the output limit already reserved for this request.
+        let requested = retry.map_or(request.requested_output, |(_, frozen)| Some(frozen.outputs));
         let (body, bounds) = if p.endpoint == UpstreamProtocol::BedrockConverse {
             let mut body = bedrock_body
                 .and_then(Result::ok)
                 .ok_or(Rejection::Unsupported)?;
-            let bounds = ReservationBounds::for_deployment(
-                p.input_ceiling,
-                p.output_ceiling,
-                request.requested_output,
-            )
-            .map_err(|_| Rejection::Unsupported)?;
+            let bounds =
+                ReservationBounds::for_deployment(p.input_ceiling, p.output_ceiling, requested)
+                    .map_err(|_| Rejection::Unsupported)?;
             body["inferenceConfig"]["maxTokens"] = bounds.outputs.into();
             (body, bounds)
         } else if p.endpoint == UpstreamProtocol::from(request.endpoint) {
             request
-                .prepare_native(&dep.upstream_model, p.input_ceiling, p.output_ceiling)
+                .prepare_bounded(
+                    &dep.upstream_model,
+                    p.input_ceiling,
+                    p.output_ceiling,
+                    requested,
+                )
                 .map_err(|_| Rejection::Unsupported)?
         } else {
             let mut body = conversion
                 .and_then(Result::ok)
                 .ok_or(Rejection::Unsupported)?;
-            let bounds = ReservationBounds::for_deployment(
-                p.input_ceiling,
-                p.output_ceiling,
-                request.requested_output,
-            )
-            .map_err(|_| Rejection::Unsupported)?;
+            let bounds =
+                ReservationBounds::for_deployment(p.input_ceiling, p.output_ceiling, requested)
+                    .map_err(|_| Rejection::Unsupported)?;
             body["model"] = dep.upstream_model.clone().into();
             body[match p.endpoint.representation() {
                 Endpoint::AnthropicMessages => "max_tokens",
@@ -582,7 +612,11 @@ impl Index {
             body,
             bounds,
         };
-        if pinned.is_some_and(|b| *b != selection.binding()) {
+        if pinned.is_some_and(|b| *b != selection.binding())
+            || retry.is_some_and(|(_, frozen)| {
+                selection.bounds.inputs > frozen.inputs || selection.bounds.outputs > frozen.outputs
+            })
+        {
             return Err(Rejection::Unavailable);
         }
         Ok(selection)

@@ -1,8 +1,10 @@
 import json
+from decimal import localcontext
 
 from nexus.shared.errors import ServiceError
 
 from .common import view
+from .money import rounded
 from .payment_schemas import CheckoutData, PaymentExpectation, PaymentOrderView
 
 
@@ -27,7 +29,10 @@ def expectation(order):
         **{
             name: getattr(order, "id" if name == "order_id" else name)
             for name in PaymentExpectation.model_fields
-        }
+            if name not in {"amount", "currency"}
+        },
+        amount=order.collection_amount,
+        currency=order.collection_currency,
     )
 
 
@@ -43,3 +48,10 @@ def order_view(order, now):
     ):
         checkout = None
     return view(PaymentOrderView, order, checkout=checkout)
+
+
+def wallet_value(order, collected):
+    """Convert a receipt exposure at the original, cent-rounded order quote."""
+    with localcontext() as ctx:
+        ctx.prec = 60
+        return rounded(collected * order.credit_amount / order.collection_amount)

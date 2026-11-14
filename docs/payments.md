@@ -2,19 +2,19 @@
 
 Nexus 为预付费账户提供两种资金入口：财务人工登记，以及支付网关确认成功后的自动入账。两条路径共用资金账本、币种规则、幂等约束和对账机制。
 
-M3P 已实现通用支付流程和测试专用 mock 适配器。真实支付渠道尚未接入；真实自动入账需要选择相应适配器并完成官方协议、沙箱和上线验收。下文区分当前接口与后续运营能力。
+已接入 Stripe Checkout、彩虹易支付 V1/V2 和 Antom 托管收银台。开发环境也可启用本机 mock。渠道参数通过管理 API 配置，API 和 Worker 共用加密后的凭据版本。
 
 职责划分参考 PPanel 的支付适配、回调、下单和共同结算逻辑，不要求相同的包目录。Nexus 中支付是 billing 的内部子域，与钱包、资金流水共用一个数据所有权边界；来源见 [PPanel 设计参考](ppanel-reference.md)。
 
 ## 当前运行与接口
 
-先执行 `uv run nexus --env-file .env.migrate migrate`，升级到 `0007_payment_admission`，再分别启动 API 与 Worker。升级保留原 M3 的人工入账、余额、流水和预算。存在任何支付订单时，降级会拒绝执行，避免抹掉在途或迟到收款的跟踪信息。
+先执行 `uv run nexus --env-file .env.migrate migrate`，升级到 `0011_payment_quotes`，再分别启动 API 与 Worker。升级保留原 M3 的人工入账、余额、流水和预算。存在任何支付订单时，降级会拒绝执行，避免抹掉在途或迟到收款的跟踪信息。
 
 API 与 Worker 使用相同的以下配置：
 
 | 配置 | 用途 |
 | --- | --- |
-| `NEXUS_PAYMENT_PUBLIC_BASE_URL` | 固定通知站点，例如 `https://control.example.com`；生成 `/webhooks/payments/{channel_id}` |
+| `NEXUS_PAYMENT_PUBLIC_BASE_URL` | 固定通知站点，例如 `https://control.example.com`；生成渠道通知地址，Antom 另带订单路径 |
 | `NEXUS_PAYMENT_RETURN_URL` | 固定前端返回地址，只用于订单展示和查询；客户端不能覆盖 |
 | `NEXUS_MOCK_PAYMENT_URL` | 仅 development/test 可用的模拟器地址，只接受 `http://127.0.0.1:{port}` |
 | `NEXUS_PAYMENT_NOTIFICATION_PER_CHANNEL` | 每个渠道每分钟通知上限，默认 1000 |
@@ -47,6 +47,27 @@ API 与 Worker 使用相同的以下配置：
 订单创建只接收 channel_id、amount 和 currency，金额必须是十进制字符串。渠道限额与金额精度都要通过；例如 mock 使用 USD 两位小数，`1.001` 被拒绝，不会被改成 `1.00`。组织消费折扣不改变充值额度。
 
 重试创建、渠道变更等命令时保留原 Idempotency-Key、请求体和 If-Match。重复调用返回同一资源；同键不同参数返回 409。缺少前提头返回 428，版本冲突返回 412。支付入口仅在未入账、未进入核对且期限有效时返回。
+
+## 托管收银台配置
+
+为 API 和 Worker 配置同一组数据库、加密密钥、`NEXUS_PAYMENT_PUBLIC_BASE_URL` 与 `NEXUS_PAYMENT_RETURN_URL`。平台管理员调用 `GET /api/v1/payment-gateway-types` 可取得配置 schema，再调用 `POST /api/v1/payment-channels` 创建渠道。渠道外层填写 name、adapter_type、stable_merchant_id、environment、currency、min_amount、max_amount 与 configuration。三个适配器当前的充值币种均为 USD，金额字段传十进制字符串。
+
+| adapter_type | stable_merchant_id | configuration 必填 | 可选 |
+| --- | --- | --- | --- |
+| stripe | Stripe 账户 ID，与 API 密钥对应的 acct_ 账户一致 | account_id、secret_key、webhook_secret | 无 |
+| epay，version=v1 | 彩虹易支付商户 PID | version、base_url、pid、environment、payment_type、cny_per_usd、merchant_key | 无 |
+| epay，version=v2 | 彩虹易支付商户 PID | version、base_url、pid、environment、payment_type、cny_per_usd、private_key、platform_public_key | 无 |
+| antom | Antom Dashboard 的 Client ID | client_id、region、environment、private_key、platform_public_key | key_version 默认 1，checkout_hosts 默认仅含 checkout.antom.com |
+
+**Stripe** 使用单次银行卡 Checkout Session。API 密钥需能读取账户、创建和查询 Checkout Session、读取关联的 PaymentIntent、Charge 和争议。到 Stripe Dashboard 为当前模式建立快照事件端点，填写 `/webhooks/payments/{channel_id}` 的完整 HTTPS URL，订阅 checkout.session.completed、checkout.session.expired、charge.refunded 与 charge.dispute.* 相关事件，并将此端点的签名密钥写入 webhook_secret。Nexus 用原始消息体验签，依据服务端查询中的订单元数据、币种、已捕获的 Charge 和实收金额过账。收据以 Charge ID 去重。创建结果丢失时，Worker 在原订单窗口内查找 Session，并受原始幂等键和期限约束。当前使用标准 checkout.stripe.com 域名。[Checkout Session](https://docs.stripe.com/api/checkout/sessions/create) · [Webhook 验签](https://docs.stripe.com/webhooks/signature)
+
+**EPay** 使用签名页面跳转。base_url 填部署方提供的 HTTPS 网关根地址，payment_type 填该商户开通的方式，例如 alipay 或 wxpay。V1 使用 submit.php、MD5 和经过 HTTPS 认证的 api.php 订单查询；V2 使用 api/pay/submit、RSA-SHA256 和签名的 api/pay/query。RSA 密钥支持 PEM 或 Base64 DER，至少 2048 位。支付回调允许 GET 或表单 POST，成功确认返回纯文本 success。网关必须能查回 PID、支付方式、外部交易号、商户订单号、原始金额和状态。收款命名空间包含网关地址、PID 与环境。不同网关实例可以使用相同的 PID。[V1 协议](https://www.jiangcen.cn/doc/v1_legacy_api.html) · [V2 查单字段](https://pay.lanfucai.com/doc/pay_query.html)
+
+`cny_per_usd` 表示每 1 USD 对应的 CNY，使用十进制字符串。创建订单时按渠道配置计算 CNY 实付额并四舍五入到分，同时锁定钱包 USD 入账额。在返回值中，amount、credit_amount、currency 使用钱包口径，collection_amount、collection_currency 使用支付口径，exchange_rate 为订单汇率。例如充值 10.00 USD、汇率 7.25 时须实收 72.50 CNY，随后把渠道汇率改为 8.00 只影响新单。收据保留人民币原值；部分退款按原始实付额占比折算为美元核对金额。已入账订单的退款通过引用原流水的调整处理。
+
+**Antom** 使用 AMS 的 Hosted Checkout Page。region 可取 na、us、asia、eu，按商户在 Dashboard 获配的端点选择。test 和 live 分别使用沙箱和生产路径。使用商户私钥对请求签名，并以 Antom 公钥验证原始响应和通知。checkout_hosts 可填写商户沙箱或生产收银台实际返回的主机名。Nexus 在下单时发送带订单 ID 的 paymentNotifyUrl，代理转发应保留完整路径，以便没有 paymentRequestId 的请款通知也能关联订单。查询以支付请求号或 paymentId 调用 inquiryPayment。银行卡须有全额成功 CAPTURE；已映射的单阶段钱包可按服务端最终支付结果入账。当前单阶段映射包括 ALIPAY_CN、ALIPAY_HK、GCASH、DANA、TNG 和 TRUEMONEY。退款、争议与无法绑定的通知均需核对，平台级退款通知若只有退款 ID 而无原支付引用，不能用于自动归属。[Hosted Checkout](https://docs.antom.com/ac/cashierpay/HOSTEDCKP) · [签名规则](https://docs.antom.com/ac/ams/digital_signature) · [查单与请款](https://docs.antom.com/ac/cashierpay/capture)
+
+本地协议测试使用真实 PostgreSQL、Redis、订单处理器与替代厂商网络的 HTTP 测试传输，覆盖渠道配置、签名、查单、重复通知、汇率轮换及资金流水。实际商户接入时需用对应凭据验证沙箱下单、托管页付款、通知投递和退款对账。
 
 ## 本机模拟支付
 

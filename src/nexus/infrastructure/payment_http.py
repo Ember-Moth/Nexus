@@ -1,4 +1,4 @@
-"""Bounded transport for the loopback mock protocol; destination is server configuration."""
+"""Bounded outbound transports for payment providers and the loopback mock."""
 
 import asyncio
 import json
@@ -48,3 +48,39 @@ class PaymentHttp:
 
     async def close(self):
         await self._client.aclose()
+
+
+class ProviderHttp:
+    """Bounded TLS requests. Never log credentials or signed checkout URLs."""
+
+    def __init__(self, *, transport=None):
+        self.transport = transport
+
+    async def send(self, method, url, *, headers=None, params=None, form=None, content=None):
+        # The V1 EPay query carries a merchant secret in the URL. Use the transport
+        # directly so the HTTP client's INFO request logger never receives this URL.
+        request = httpx.Request(
+            method, url, headers=headers, params=params, data=form, content=content
+        )
+        try:
+            async with asyncio.timeout(10):
+                if self.transport is not None:
+                    return await self._send(self.transport, request)
+                async with httpx.AsyncHTTPTransport(trust_env=False) as transport:
+                    return await self._send(transport, request)
+        except httpx.HTTPError, OSError, TimeoutError, ValueError:
+            raise ServiceError(
+                "payment_provider_unavailable", "Payment provider result is unavailable", 503
+            ) from None
+
+    async def _send(self, transport, request):
+        response = await transport.handle_async_request(request)
+        try:
+            chunks = bytearray()
+            async for part in response.aiter_bytes():
+                if len(chunks) + len(part) > 1048576:
+                    raise ValueError("oversize response")
+                chunks.extend(part)
+            return response.status_code, response.headers.multi_items(), bytes(chunks)
+        finally:
+            await response.aclose()

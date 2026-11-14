@@ -196,6 +196,7 @@ def create_webhook_router(get_service):
     router = APIRouter(tags=["payment notifications"])
     Service = Annotated[PaymentService, Depends(get_service)]
 
+    @router.post("/webhooks/payments/{channel_id}/orders/{order_id}", include_in_schema=False)
     @router.api_route(
         "/webhooks/payments/{channel_id}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE"],

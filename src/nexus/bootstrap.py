@@ -7,7 +7,7 @@ from nexus.config import RuntimeSettings
 from nexus.infrastructure.auth_limits import RedisAuthLimits
 from nexus.infrastructure.cache import Cache
 from nexus.infrastructure.credential_cipher import CredentialCipher
-from nexus.infrastructure.payment_http import PaymentHttp
+from nexus.infrastructure.payment_http import PaymentHttp, ProviderHttp
 from nexus.infrastructure.postgres import Database
 from nexus.modules import billing, catalog, identity, publication, reporting
 from nexus.shared.storage import ModuleName
@@ -185,6 +185,7 @@ class Application:
             ),
             currency=settings.billing_currency,
             environment=settings.environment,
+            provider_transport=ProviderHttp(),
             public_base_url=settings.payment_public_base_url,
             return_url=settings.payment_return_url,
             requests_per_minute=settings.payment_requests_per_merchant_per_minute,

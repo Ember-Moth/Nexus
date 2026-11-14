@@ -293,6 +293,9 @@ class PaymentOrder(Record, Versioned, Base):
     environment: Mapped[str] = mapped_column(String(10))
     receipt_namespace: Mapped[str] = mapped_column(String(160))
     amount: Mapped[Decimal] = mapped_column(Numeric(28, 12))
+    collection_amount: Mapped[Decimal] = mapped_column(Numeric(28, 12))
+    collection_currency: Mapped[str] = mapped_column(String(3))
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(28, 12))
     credit_amount: Mapped[Decimal] = mapped_column(Numeric(28, 12))
     currency: Mapped[str] = mapped_column(String(3))
     created_by: Mapped[UUID]

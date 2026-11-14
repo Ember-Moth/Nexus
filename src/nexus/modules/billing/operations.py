@@ -6,6 +6,7 @@ from nexus.shared.errors import ServiceError
 
 from .common import digest, found, replay, versioned
 from .money import usage_amount
+from .payment_support import wallet_value
 
 
 def conflict(message):
@@ -311,9 +312,9 @@ cost_price_version_id)
             or f.get("merchant_order_ref") != order.merchant_order_ref
             or f.get("merchant_id") != order.stable_merchant_id
             or f.get("environment") != order.environment
-            or f.get("currency") != order.currency
+            or f.get("currency") != order.collection_currency
             or f.get("amount") is None
-            or Decimal(f["amount"]) != order.amount
+            or Decimal(f["amount"]) != order.collection_amount
             or f.get("state")
             not in {"succeeded", "partially_reversed", "reversed", "cancelled", "failed"}
             or f.get("dispute_state") == "open"
@@ -370,7 +371,11 @@ cost_price_version_id)
             if f.get("dispute_state") == "lost"
             else Decimal(0),
         )
-        if original_receipt and not extra and max(order.reversed_amount, risk) > adjusted:
+        if (
+            original_receipt
+            and not extra
+            and wallet_value(order, max(order.reversed_amount, risk)) > adjusted
+        ):
             conflict("Post the source funding reversal before closing this case")
         if (
             row.reason == "reported_reversal_or_dispute"

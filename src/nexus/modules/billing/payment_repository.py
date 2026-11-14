@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 from . import models as m
 from .common import digest, found
 from .payment_schemas import PaymentClaim
+from .payment_support import wallet_value
 from .repository import BillingRepository
 
 
@@ -72,6 +73,30 @@ class PaymentRepository(BillingRepository):
                 )
             )
         ).scalar_one_or_none()
+
+    async def order_by_provider(self, namespace, provider_ref, transaction):
+        if transaction:
+            receipt = await self.receipt(namespace, transaction)
+            if receipt:
+                return await self.get("payment_order", receipt.order_id)
+        if provider_ref:
+            rows = (
+                (
+                    await self._session.execute(
+                        select(m.PaymentOrder)
+                        .where(
+                            m.PaymentOrder.receipt_namespace == namespace,
+                            m.PaymentOrder.provider_payment_ref == provider_ref,
+                        )
+                        .limit(2)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if len(rows) == 1:
+                return rows[0]
+        return None
 
     async def operation(self, order_id, kind, operation_key="main", *, lock=False):
         query = (
@@ -400,7 +425,7 @@ class PaymentRepository(BillingRepository):
                 default=Decimal(0),
             )
             total += receipt.amount - min(receipt.amount, reversed_amount)
-        return total
+        return wallet_value(order, total)
 
     async def reconcile(self, account):
         issues = await super().reconcile(account)
@@ -439,7 +464,8 @@ class PaymentRepository(BillingRepository):
                 or receipt.order_id != order.id
                 or receipt.transaction_id != funding.external_reference
                 or receipt.receipt_namespace != funding.receipt_namespace
-                or receipt.amount != funding.amount
+                or receipt.amount != order.collection_amount
+                or receipt.currency != order.collection_currency
             ):
                 issues.append({"kind": "payment_receipt", "order_id": str(order.id)})
         return issues

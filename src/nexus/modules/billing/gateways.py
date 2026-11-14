@@ -170,6 +170,23 @@ class GatewayRegistry:
             )
         return config, gateway
 
+    @staticmethod
+    def receipt_scope(gateway, merchant, environment):
+        scope = [merchant, environment]
+        if host := getattr(gateway, "receipt_host", None):
+            scope.append(host)
+        return scope
+
+    @staticmethod
+    def quote(gateway, amount, currency):
+        quote = getattr(gateway, "quote", None)
+        return quote(amount, currency) if quote else (amount, currency, Decimal(1))
+
+    @staticmethod
+    def validate_channel(gateway, merchant, environment):
+        if hasattr(gateway, "validate_channel"):
+            gateway.validate_channel(merchant, environment)
+
     def validate_environment(self, name, environment):
         definition = self._definition(name)
         if self._production and environment != "live":

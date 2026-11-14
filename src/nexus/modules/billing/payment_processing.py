@@ -12,7 +12,7 @@ from .funding import post_funding_record
 from .gateways import GatewayFailure, validate_checkout
 from .money import MAX_AMOUNT
 from .payment_schemas import PaymentExecution
-from .payment_support import expectation, open_gateway
+from .payment_support import expectation, open_gateway, wallet_value
 
 
 class PaymentProcessor:
@@ -240,7 +240,8 @@ class PaymentProcessor:
                 await repo.finish(operation, delay=1, error="credentials_changed")
                 return
             if (
-                order.provider_payment_ref
+                result.provider_payment_ref
+                and order.provider_payment_ref
                 and order.provider_payment_ref != result.provider_payment_ref
             ):
                 await repo.open_case(
@@ -256,7 +257,9 @@ class PaymentProcessor:
                 order.version == execution.order_version
                 and order.checkout_generation == execution.checkout_generation
             ):
-                order.provider_payment_ref = result.provider_payment_ref
+                order.provider_payment_ref = (
+                    order.provider_payment_ref or result.provider_payment_ref
+                )
                 checkout = validate_checkout(
                     result.checkout, gateway.capabilities, await repo.now()
                 )
@@ -342,7 +345,7 @@ class PaymentProcessor:
                         order,
                         "receipt_conflict",
                         {"observation_id": str(observation.id), "receipt_id": str(existing.id)},
-                        fact.amount,
+                        wallet_value(order, fact.amount),
                     )
                     order.block_credit = True
                 return None
@@ -377,7 +380,9 @@ class PaymentProcessor:
         order.disputed_amount = max(order.disputed_amount, fact.disputed_amount)
         if reversal:
             order.payment_state = (
-                "reversed" if order.reversed_amount >= order.amount else "partially_reversed"
+                "reversed"
+                if order.reversed_amount >= order.collection_amount
+                else "partially_reversed"
             )
         adjusted = (
             await repo.adjusted_amount(order.ledger_entry_id)
@@ -394,14 +399,14 @@ class PaymentProcessor:
                 order,
                 "payment_reversed",
                 evidence,
-                max(order.reversed_amount - adjusted, Decimal(0)),
+                max(wallet_value(order, order.reversed_amount) - adjusted, Decimal(0)),
             )
         if dispute:
             await repo.open_case(
                 order,
                 "payment_disputed",
                 evidence,
-                max(order.disputed_amount - adjusted, Decimal(0)),
+                max(wallet_value(order, order.disputed_amount) - adjusted, Decimal(0)),
             )
         if order.credit_state == "credited":
             await repo.restrict(account, "payment", order.id)
@@ -485,6 +490,29 @@ class PaymentProcessor:
                 order.version += 1
                 if operation:
                     await repo.finish(operation, review=True, error="manual_review")
+                return None
+            if fact.lookup_result == "awaiting_customer":
+                now = await repo.now()
+                if order.credit_state == "credited" or (
+                    order.provider_payment_ref is None
+                    and not order.checkout_result
+                    and not fact.checkout
+                ):
+                    await self._defer(repo, order, operation, "provider_unconfirmed")
+                elif now >= order.expires_at:
+                    order.checkout_state = "closed"
+                    await repo.finish(operation, delay=300, reset_attempts=True)
+                else:
+                    if fact.checkout and not order.review_required and not order.block_credit:
+                        checkout = validate_checkout(fact.checkout, gateway.capabilities, now)
+                        if checkout:
+                            order.checkout_result = checkout.model_dump(mode="json")
+                            order.checkout_state = "ready"
+                    if execution.operation_kind == "create":
+                        await repo.finish(operation)
+                        await repo.wake_query(order)
+                    else:
+                        await repo.finish(operation, delay=30, reset_attempts=True)
                 return None
             if fact.lookup_result == "not_found":
                 if execution.operation_kind == "create":

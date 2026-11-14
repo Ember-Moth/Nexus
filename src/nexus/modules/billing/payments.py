@@ -83,11 +83,13 @@ class PaymentService:
         self._registry.validate_environment(body.adapter_type, body.environment)
         for amount in (body.min_amount, body.max_amount):
             validate_amount(amount, body.currency, gateway.capabilities)
+            self._registry.quote(gateway, amount, body.currency)
 
     async def create_channel(self, token, body, key):
         actor = await self._access.authorize(token, operation="payment_admin")
         config, gateway = self._registry.normalize(body.adapter_type, body.configuration)
         self._validate_channel(body, gateway)
+        self._registry.validate_channel(gateway, body.stable_merchant_id, body.environment)
         values = body.model_dump(mode="json")
         values["configuration"] = storage_values(config)
         async with self._transactions() as repo:
@@ -99,7 +101,9 @@ class PaymentService:
                 "gateway:"
                 + body.adapter_type
                 + ":"
-                + digest([body.stable_merchant_id, body.environment])
+                + digest(
+                    self._registry.receipt_scope(gateway, body.stable_merchant_id, body.environment)
+                )
             )
             row = await repo.create(
                 "payment_channel",
@@ -163,6 +167,9 @@ class PaymentService:
                 )
             if body.configuration is not None:
                 config, gateway = self._registry.normalize(row.adapter_type, body.configuration)
+                self._registry.validate_channel(gateway, row.stable_merchant_id, row.environment)
+                if hasattr(gateway, "validate_rotation"):
+                    gateway.validate_rotation(current.public_configuration)
                 _, verification = await repo.verification_versions(channel_id)
                 old_count = sum(item.id != current.id for item in verification)
                 if (
@@ -296,7 +303,13 @@ class PaymentService:
                 raise ServiceError(
                     "payment_amount_outside_limits", "Payment amount is outside channel limits", 422
                 )
+            collection_amount, collection_currency, rate = self._registry.quote(
+                gateway, body.amount, body.currency
+            )
             order_id = uuid4()
+            callback_url = self._public_base_url + "/webhooks/payments/" + str(channel.id)
+            if channel.adapter_type == "antom":
+                callback_url += f"/orders/{order_id}"
             row = await repo.create(
                 "payment_order",
                 {
@@ -311,9 +324,12 @@ class PaymentService:
                     "receipt_namespace": channel.receipt_namespace,
                     "amount": body.amount,
                     "credit_amount": body.amount,
+                    "collection_amount": collection_amount,
+                    "collection_currency": collection_currency,
+                    "exchange_rate": rate,
                     "currency": body.currency,
                     "created_by": scope.actor_id,
-                    "callback_url": self._public_base_url + "/webhooks/payments/" + str(channel.id),
+                    "callback_url": callback_url,
                     "return_url": self._return_url,
                     "expires_at": await repo.now() + timedelta(minutes=30),
                 },
@@ -434,6 +450,14 @@ class PaymentService:
                     if verified.merchant_order_ref
                     else None
                 )
+                if order is None and verified.relevant and not verified.merchant_order_ref:
+                    order = await repo.order_by_provider(
+                        channel.receipt_namespace,
+                        verified.provider_payment_ref,
+                        verified.transaction_id,
+                    )
+                    if order is None and (verified.provider_payment_ref or verified.transaction_id):
+                        return gateway.build_notification_response("temporary_failure")
                 ignored = order is None or not verified.relevant
                 if order is not None:
                     account, order = await repo.payment_lock(order.id)
@@ -443,9 +467,9 @@ class PaymentService:
                         conflict = True
                     if (
                         verified.amount is not None
-                        and verified.amount != order.amount
+                        and verified.amount != order.collection_amount
                         or verified.currency is not None
-                        and verified.currency != order.currency
+                        and verified.currency != order.collection_currency
                     ):
                         conflict = True
                 operation = None

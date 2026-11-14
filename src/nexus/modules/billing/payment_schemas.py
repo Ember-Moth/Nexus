@@ -65,7 +65,7 @@ class PaymentExpectation(Schema):
 
 
 class CheckoutResult(Schema):
-    provider_payment_ref: str = Field(min_length=1, max_length=255)
+    provider_payment_ref: str | None = Field(default=None, min_length=1, max_length=255)
     checkout: CheckoutData | None = None
     state: PaymentState = "pending"
 
@@ -103,7 +103,7 @@ class VerifiedNotice(Schema):
 
 
 class PaymentObservation(VerifiedNotice):
-    lookup_result: Literal["found", "not_found", "unconfirmed"] = "found"
+    lookup_result: Literal["found", "not_found", "unconfirmed", "awaiting_customer"] = "found"
     observed_at: AwareDatetime
     received_at: AwareDatetime | None = None
     fee_amount: Money | None = None
@@ -217,6 +217,9 @@ class PaymentOrderView(Schema):
     channel_id: UUID
     merchant_order_ref: str
     amount: Money
+    collection_amount: Money
+    collection_currency: Currency
+    exchange_rate: Money
     credit_amount: Money
     currency: str
     checkout_state: str

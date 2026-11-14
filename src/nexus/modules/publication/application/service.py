@@ -172,6 +172,12 @@ class PublicationService:
                 required.append("relay.sse.v1")
             if any("websocket" in p["transports"] for p in profiles):
                 required.append("relay.responses-ws.v1")
+            for source, capability in [
+                ("anthropic_messages", "relay.messages-to-responses.v1"),
+                ("openai_responses", "relay.responses-to-messages.v1"),
+            ]:
+                if any(p.get("convert_from") == source for p in profiles):
+                    required.append(capability)
             if any(not set(required) <= set(n["capabilities"]) for n in nodes):
                 raise ServiceError(
                     "unsupported_capability", "A node lacks required capabilities", 409

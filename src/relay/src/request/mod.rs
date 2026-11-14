@@ -8,7 +8,10 @@ use crate::{
         database::Gateway,
         snapshot::{Index, Rejection},
     },
-    protocol::request::Generate,
+    protocol::{
+        convert::{self, Exchange},
+        request::Generate,
+    },
     server::Node,
 };
 use http::StatusCode;
@@ -89,7 +92,12 @@ pub async fn run(
             return;
         }
     };
-    let endpoint = request.endpoint;
+    let endpoint = selected.upstream;
+    let exchange = Exchange {
+        client: request.endpoint,
+        upstream: endpoint,
+        public_model: &request.model,
+    };
     let (reservation, credential) =
         match lifecycle::Reservation::reserve(node.clone(), &index, &selected, endpoint).await {
             Ok(v) => v,
@@ -115,7 +123,7 @@ pub async fn run(
             node,
             run,
             base,
-            endpoint,
+            exchange,
             &credential,
             &selected.body,
             sender,
@@ -127,14 +135,43 @@ pub async fn run(
         tokio::select!{_=sender.closed()=>None,r=node.upstream.generate(base,endpoint,&credential,&selected.body)=>r.ok()}
     }).await;
     if let Ok(Some(reply)) = result {
-        deliver(run, sender, reply).await;
+        deliver(run, sender, reply, exchange, node.upstream.response_limit()).await;
     } else {
         let _ = sender.send(Err(Failure::upstream()));
         run.ended(None, false).await;
     }
 }
 
-async fn deliver(run: lifecycle::Run, sender: Channel, reply: crate::upstream::Reply) {
+async fn deliver(
+    run: lifecycle::Run,
+    sender: Channel,
+    mut reply: crate::upstream::Reply,
+    exchange: Exchange<'_>,
+    limit: usize,
+) {
+    if exchange.converts() {
+        let converted = serde_json::from_slice(&reply.body).ok().and_then(|body| {
+            convert::response::convert(exchange, &body, &reply.usage, reply.status.as_u16()).ok()
+        });
+        let converted = converted
+            .map(|(body, status)| (body.to_string().into_bytes(), status))
+            .filter(|(wire, _)| wire.len() <= limit);
+        let Some((body, status)) = converted else {
+            let _ = sender.send(Err(Failure::upstream()));
+            // The upstream may have completed and incurred cost even though the client
+            // received no equivalent response. Retain its raw evidence and charge no customer.
+            run.finish(
+                reply.outcome,
+                "upstream_failed",
+                reply.response_id.as_deref(),
+                reply.usage,
+            )
+            .await;
+            return;
+        };
+        reply.body = body;
+        reply.status = StatusCode::from_u16(status).expect("HTTP status");
+    }
     let (receipt, received) = oneshot::channel();
     let sent = sender
         .send(Ok(Response::Buffered {

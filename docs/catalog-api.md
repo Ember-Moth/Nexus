@@ -9,7 +9,7 @@
 5. 企业 owner 根据需要添加 customer 策略；获授权 developer 可以收窄其项目或 Key 范围。
 6. 企业成员携带组织、项目或 Key 上下文查询可见模型。
 
-当前协议族元数据支持 openai_compatible、anthropic 和 gemini，Token 模型使用 tokens.v1 计量定义。这些是控制平面的目录标签。Rust Relay 首期仅规划 Anthropic Messages 和 OpenAI Responses；部署能否执行请求还取决于实际端点及已验收的能力。[Relay 协议范围](relay-design.md#协议覆盖与交付条件)
+当前协议族元数据支持 openai_compatible、anthropic 和 gemini，Token 模型使用 tokens.v1 计量定义。这些是控制平面的目录标签。Rust Relay 支持 Anthropic Messages 和 OpenAI Responses；部署能否执行请求还取决于实际端点及已验收的能力。[Relay 协议范围](relay-design.md#协议覆盖与交付条件)
 
 模型限制和能力由管理员填写，尚未通过真实上游调用验证。
 
@@ -32,6 +32,8 @@
 单资源响应包含 ETag，更新和撤销使用 If-Match。列表使用 limit/cursor，部署可按 model_id、upstream_id 筛选。资源采用停用和归档，归档后不再修改；凭据即使属于已归档上游，仍可撤销。
 
 上游地址只接受 HTTPS，拒绝 URL 中的用户名、密码、查询参数和 fragment。变更地址前必须先停用上游。当前不请求地址、探测 DNS 或验证真实连通性；内网 HTTPS 地址也仅作为配置保存。
+
+部署的 `relay_profile.convert_from` 可显式启用另一种客户端协议。各方向的端点值、节点能力和开关示例见 [Relay 配置](relay-development.md#启用-http-和-sse-协议转换)。
 
 部署凭据必须属于其上游，协议族必须在公开模型的支持范围内。修改模型协议时，如果仍有不兼容的启用部署，返回冲突；应先停用这些映射。停用或归档部署不要求旧凭据仍有效，避免失效配置无法收起。
 

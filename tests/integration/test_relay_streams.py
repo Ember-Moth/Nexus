@@ -18,7 +18,7 @@ pytestmark = pytest.mark.integration
 
 
 @asynccontextmanager
-async def stream_plane(http, admin, binary, ca, port, family, *, ws=False):
+async def stream_plane(http, admin, binary, ca, port, family, *, ws=False, convert_from=None):
     client, root, app, settings = http
     async with provision_plane(
         http, admin, family, base_url=f"https://127.0.0.1:{port}/v1"
@@ -37,6 +37,8 @@ async def stream_plane(http, admin, binary, ca, port, family, *, ws=False):
             "bound_reference": "isolated-stream",
             "count_rule": "deployment_ceiling.v1",
         }
+        if convert_from:
+            profile["convert_from"] = convert_from
         r = await client.patch(
             f"/api/v1/deployments/{dep['id']}",
             headers=auth(root, dep["version"]),
@@ -56,6 +58,25 @@ async def stream_plane(http, admin, binary, ca, port, family, *, ws=False):
             json={"node_id": str(nid), "database_role": role, "capabilities": caps},
         )
         assert r.status_code == 200, r.text
+        if convert_from:
+            blocked = await client.post(
+                f"/api/v1/gateway-clusters/{cid}/releases",
+                headers=headers(root, "old-node"),
+                json={},
+            )
+            assert blocked.status_code == 409, blocked.text
+            direction = (
+                "messages-to-responses"
+                if convert_from == "anthropic_messages"
+                else "responses-to-messages"
+            )
+            caps.append(f"relay.{direction}.v1")
+            r = await client.put(
+                f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
+                headers=auth(root),
+                json={"node_id": str(nid), "database_role": role, "capabilities": caps},
+            )
+            assert r.status_code == 200, r.text
         r = await client.post(
             f"/api/v1/organizations/{org['id']}/quota-policies",
             headers=auth(root),

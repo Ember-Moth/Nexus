@@ -15,6 +15,8 @@ pub const CAPABILITIES: &[&str] = &[
     "relay.native.v1",
     "relay.sse.v1",
     "relay.responses-ws.v1",
+    "relay.messages-to-responses.v1",
+    "relay.responses-to-messages.v1",
 ];
 
 #[derive(Deserialize)]
@@ -132,6 +134,7 @@ pub struct Deployment {
 
 #[derive(Deserialize)]
 struct Profile {
+    convert_from: Option<Endpoint>,
     #[serde(default)]
     streaming: bool,
     #[serde(default)]
@@ -210,6 +213,7 @@ pub struct Binding {
 }
 
 pub struct Selection<'a> {
+    pub upstream: Endpoint,
     pub deployment: &'a Deployment,
     pub model: Uuid,
     pub key: &'a Key,
@@ -306,6 +310,21 @@ impl Index {
                     Endpoint::AnthropicMessages => "anthropic",
                     Endpoint::OpenaiResponses => "openai_compatible",
                 };
+                if let Some(source) = p.convert_from {
+                    let capability = match source {
+                        Endpoint::AnthropicMessages => "relay.messages-to-responses.v1",
+                        Endpoint::OpenaiResponses => "relay.responses-to-messages.v1",
+                    };
+                    if source == p.endpoint
+                        || !p.transports.iter().any(|t| t == "http")
+                        || !snapshot
+                            .required_capabilities
+                            .iter()
+                            .any(|c| c == capability)
+                    {
+                        return Err(ControlError::Invalid("conversion profile"));
+                    }
+                }
                 if d.protocol_family != family
                     || d.usage_format.as_deref() != Some(p.endpoint.usage_format())
                     || !snapshot
@@ -409,6 +428,8 @@ impl Index {
             .get(&(key.organization_id, m.id))
             .ok_or(Rejection::Forbidden)?;
         let mut selected = None;
+        let mut conversion = None;
+        let mut incompatible = false;
         let mut best = u32::MAX;
         let mut weight = 0;
         for candidate in route {
@@ -416,7 +437,8 @@ impl Index {
             let Some(profile) = &dep.relay_profile else {
                 continue;
             };
-            if profile.endpoint != request.endpoint
+            let cross = profile.endpoint != request.endpoint;
+            if (cross && (ws || profile.convert_from != Some(request.endpoint)))
                 || !profile
                     .transports
                     .iter()
@@ -432,6 +454,10 @@ impl Index {
             {
                 continue;
             }
+            if cross && conversion.get_or_insert_with(|| request.convert()).is_err() {
+                incompatible = true;
+                continue;
+            }
             if candidate.priority < best {
                 best = candidate.priority;
                 weight = 0;
@@ -441,11 +467,34 @@ impl Index {
                 selected = Some((dep, profile));
             }
         }
-        let (dep, p) = selected.ok_or(Rejection::Unavailable)?;
-        let (body, bounds) = request
-            .prepare_native(&dep.upstream_model, p.input_ceiling, p.output_ceiling)
+        let (dep, p) = selected.ok_or(if incompatible {
+            Rejection::Unsupported
+        } else {
+            Rejection::Unavailable
+        })?;
+        let (body, bounds) = if p.endpoint == request.endpoint {
+            request
+                .prepare_native(&dep.upstream_model, p.input_ceiling, p.output_ceiling)
+                .map_err(|_| Rejection::Unsupported)?
+        } else {
+            let mut body = conversion
+                .and_then(Result::ok)
+                .ok_or(Rejection::Unsupported)?;
+            let bounds = ReservationBounds::for_deployment(
+                p.input_ceiling,
+                p.output_ceiling,
+                request.requested_output,
+            )
             .map_err(|_| Rejection::Unsupported)?;
+            body["model"] = dep.upstream_model.clone().into();
+            body[match p.endpoint {
+                Endpoint::AnthropicMessages => "max_tokens",
+                Endpoint::OpenaiResponses => "max_output_tokens",
+            }] = bounds.outputs.into();
+            (body, bounds)
+        };
         let selection = Selection {
+            upstream: p.endpoint,
             deployment: dep,
             key,
             model: m.id,

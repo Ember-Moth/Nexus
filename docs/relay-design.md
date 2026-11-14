@@ -2,7 +2,7 @@
 
 首期 Relay 只支持 **Anthropic Messages** 和 **OpenAI Responses**，范围同时适用于客户端入口、上游部署、路由候选和协议转换。Messages 提供 `POST /v1/messages`，Responses 在 `/v1/responses` 同时提供 HTTP POST 和 GET WebSocket Upgrade。首期要求客户端到 Relay、Relay 到 Responses 上游均支持原生 WebSocket。
 
-**首期设计已于 2026-11-14 定稿。** Rust 节点已实现两种原生 HTTP/SSE 链路及 Responses 双端 WebSocket。各传输共用节点准入和结算契约。 在 `src/relay/` 先跑通两条原生链路，各自从企业调用 Key、资金预留走到可核对的 USD 消费流水，再分别验证两个转换方向。每条链路单独声明可用能力。[开发计划与验收用例](relay-development.md)
+**首期设计已于 2026-11-14 定稿。** Rust 节点已实现两种原生 HTTP/SSE 链路、Messages 与 Responses 双向 HTTP/SSE 转换及 Responses 双端 WebSocket。各传输共用节点准入和结算契约。 在 `src/relay/` 先跑通两条原生链路，各自从企业调用 Key、资金预留走到可核对的 USD 消费流水，再分别验证两个转换方向。每条链路单独声明可用能力。[开发计划与验收用例](relay-development.md)
 
 ## 代码复用范围与维护归属
 
@@ -64,7 +64,7 @@ HTTP POST 路径延迟写出响应头，直到拿到可交付的上游响应。W
 
 ## 协议覆盖与交付条件
 
-下表的箭头表示请求从客户端到上游的方向，响应沿原路返回。先验收两条原生链路；双向转换属于后续设计步骤，各方向分别启用。
+下表的箭头表示请求从客户端到上游的方向，响应沿原路返回。双向转换以对应原生链路为验收基准，两个方向分别按部署启用。
 
 | 客户端入口 | 上游端点 | 首期处理与验收 |
 | --- | --- | --- |

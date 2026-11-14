@@ -1,7 +1,7 @@
 use super::{Channel, Failure, Response, lifecycle::Run};
 use crate::{
     protocol::{
-        Endpoint,
+        convert::{Exchange, stream::Stream},
         sse::{Decoder, Event},
         stream::{Completion, Observer},
     },
@@ -72,12 +72,15 @@ impl Downstream {
 }
 async fn pump(
     mut upstream: reqwest::Response,
-    ep: Endpoint,
+    exchange: Exchange<'_>,
     downstream: &mut Downstream,
     limit: usize,
     idle: Duration,
     done: &mut Option<Completion>,
+    mut converter: Option<Stream>,
 ) -> Result<(), ()> {
+    let ep = exchange.upstream;
+
     let mut decoder = Decoder::new(limit);
     let mut observer = Observer::new(ep);
     let mut tools = crate::protocol::tools::ToolLimits::new(ep, limit);
@@ -102,7 +105,22 @@ async fn pump(
                 *done = observer
                     .observe(e.name.as_deref(), &value)
                     .map_err(|_| ())?;
-                downstream.event(encode(e), idle).await?;
+                if let Some(converter) = converter.as_mut() {
+                    let events = converter.event(&value, done.as_ref()).map_err(|_| ())?;
+                    for event in events {
+                        let name = event["type"].as_str().ok_or(())?.to_owned();
+                        let wire = encode(Event {
+                            name: Some(name),
+                            data: event.to_string(),
+                        });
+                        if wire.len() > limit {
+                            return Err(());
+                        }
+                        downstream.event(wire, idle).await?;
+                    }
+                } else {
+                    downstream.event(encode(e), idle).await?;
+                }
                 if done.is_some() {
                     return Ok(());
                 }
@@ -115,11 +133,12 @@ pub async fn forward(
     node: Arc<Node>,
     mut run: Run,
     base: &url::Url,
-    ep: Endpoint,
+    exchange: Exchange<'_>,
     credential: &str,
     body: &Value,
     mut sender: Channel,
 ) {
+    let ep = exchange.upstream;
     let opened=run.reservation.guarded(async{
         tokio::select!{_=sender.closed()=>Err(()),r=node.upstream.open(base,ep,credential,body,true)=>r}
     }).await;
@@ -137,7 +156,7 @@ pub async fn forward(
             ))
             .await;
         if let Ok(Ok(Ok(reply))) = result {
-            super::deliver(run, sender, reply).await;
+            super::deliver(run, sender, reply, exchange, node.upstream.response_limit()).await;
         } else {
             let _ = sender.send(Err(Failure::upstream()));
             run.ended(None, false).await;
@@ -164,11 +183,18 @@ pub async fn forward(
         .reservation
         .guarded(pump(
             response,
-            ep,
+            exchange,
             &mut downstream,
             node.event_bytes,
             node.stream_idle,
             &mut done,
+            exchange.converts().then(|| {
+                Stream::new(
+                    exchange.client,
+                    exchange.public_model,
+                    node.upstream.response_limit(),
+                )
+            }),
         ))
         .await;
     if let Some((sender, _)) = downstream.pending.take() {

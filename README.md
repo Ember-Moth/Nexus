@@ -2,7 +2,7 @@
 
 Nexus 是企业 AI API 的控制平面。平台管理员配置模型、上游和访问权限，企业按项目签发调用 Key。网关为每次调用预留资金，Worker 根据用量结算 USD 预付费账户。充值支持人工登记、Stripe、彩虹易支付 V1/V2 和 Antom。
 
-控制平面由 Python 管理 API 和独立 Worker 构成。PostgreSQL 保存授权、价格、用量和账本，Redis 分发配置并协调限额。Rust 节点 `nexus-relay` 提供 Anthropic Messages 和 OpenAI Responses 的原生 HTTP、SSE 转发，以及 Responses 双端 WebSocket。每个 HTTP 请求和每个 WebSocket 生成轮次独立准入、计量和结算。Python 网关模拟器用于验证两平面协议。
+控制平面由 Python 管理 API 和独立 Worker 构成。PostgreSQL 保存授权、价格、用量和账本，Redis 分发配置并协调限额。Rust 节点 `nexus-relay` 提供 Anthropic Messages 和 OpenAI Responses 的原生转发与双向 HTTP/SSE 转换，以及 Responses 双端 WebSocket。每个 HTTP 请求和每个 WebSocket 生成轮次独立准入、计量和结算。Python 网关模拟器用于验证两平面协议。
 
 ## 从本机开始
 

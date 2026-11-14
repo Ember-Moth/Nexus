@@ -28,6 +28,21 @@ WS 握手使用企业 Bearer Key，空闲和 ping/pong 不触发资金预留。�
 
 获授权真实部署可运行 `tests/integration/test_live_relay_ws.py`。设置 `RELAY_ACCEPTANCE_WS_RUN=1`、`RELAY_ACCEPTANCE_WS_URL`、`RELAY_ACCEPTANCE_WS_MODEL` 和 `RELAY_ACCEPTANCE_WS_KEY`，使用上述隔离集成命令并指定该测试文件。测试只在一个连接串行发送两次生成，`RELAY_ACCEPTANCE_WS_OUTPUT` 默认每轮 64。商户 Key 写入本次隔离 catalog。给出 `wss://` 时 Relay 直接拨 TLS，给出回环 `ws://` 时测试搭建临时 TLS 入口，保留原始握手、帧和端点的升级状态。测试余额和真实上游计费分别核对。[Responses 续接语义](https://developers.openai.com/api/docs/guides/websocket-mode)
 
+## 启用 HTTP 和 SSE 协议转换
+
+`relay_profile.endpoint` 始终是部署的真实上游协议。`convert_from` 可省略，省略时只接受原生请求。要让同一部署额外服务另一种客户端，在部署上设置下表对应的值，登记集群节点能力，然后发布新修订。移除 `convert_from` 并发布新修订即可关闭该方向。
+
+| 客户端 → 上游 | `endpoint` | `convert_from` | 额外节点能力 |
+| --- | --- | --- | --- |
+| Messages → Responses | `openai_responses` | `anthropic_messages` | `relay.messages-to-responses.v1` |
+| Responses → Messages | `anthropic_messages` | `openai_responses` | `relay.responses-to-messages.v1` |
+
+两种转换均要求 `transports` 包含 `http`。流式和工具调用还需模型、部署分别开启对应能力。WebSocket 继续走原生 Responses 路径。转换可处理显式文本历史、系统指令、自定义函数声明、调用及文本结果。工具 ID 在历史中必须唯一，结果须匹配此前的调用。Responses 工具的 `strict` 建议显式填写；省略时，可将属性均为必填的受支持对象 schema 规范化为严格模式。含可选属性或复杂约束的 schema 需要显式指定严格性。私有推理历史、媒体、托管工具、不可映射的停止参数会在预留前返回 400。
+
+客户端看到公开模型名、自己的内容块或输出项、工具调用 ID 和终态。Messages 工具流按 Responses 输出项和参数事件传送，Responses 的交错输出在有界缓冲内按 Messages 内容块顺序写出。转换器使用 `NEXUS_RELAY_RESPONSE_BYTES` 约束需要保存的输出，不完整 EOF 会中断流。输出达到上限分别映射为 `max_tokens` 或 `incomplete` 加 `max_output_tokens`。客户可见的 usage 按目标协议的计数语义换算。Responses 允许缺失时返回 null；Messages SDK 要求数值对象，流开始时的计数和缺失时的占位计数为零，终态有可信 usage 时发送实际计数。Worker 始终读取单独保存的上游原始证据；缺失时保留预留并进入核对。
+
+从仓库根目录运行 `cargo test --locked --manifest-path src/relay/Cargo.toml --test conversion`，以及 `uv run python scripts/run_integration.py -q tests/integration/test_relay_conversion.py`。后者用相同的本地 HTTPS 部署对照原生与转换的 JSON、SSE、上游尝试、消费和预算。[Responses 函数工具](https://developers.openai.com/api/docs/guides/function-calling) · [Messages 流事件](https://platform.claude.com/docs/en/build-with-claude/streaming)
+
 ## 阶段、依赖与交付
 
 | 阶段 | 依赖 | 实施任务及归属 | 验收与退出条件 |

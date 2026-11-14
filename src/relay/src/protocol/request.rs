@@ -178,10 +178,9 @@ impl Generate {
             .get("tools")
             .and_then(Value::as_array)
             .is_some_and(|tools| !tools.is_empty())
-            || self
-                .body
-                .get("tool_choice")
-                .is_some_and(|choice| choice != "none")
+            || self.body.get("tool_choice").is_some_and(|choice| {
+                choice != "none" && choice.get("type").is_none_or(|kind| kind != "none")
+            })
             || self
                 .body
                 .get("input")
@@ -205,6 +204,10 @@ impl Generate {
                         .flatten()
                         .any(|b| matches!(b["type"].as_str(), Some("tool_use" | "tool_result")))
                 })
+    }
+
+    pub fn convert(&self) -> Result<Value, ProtocolError> {
+        super::convert::request::convert(self.endpoint, &self.body)
     }
 
     pub fn previous_response_id(&self) -> Option<&str> {

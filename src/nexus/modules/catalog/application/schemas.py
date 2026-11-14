@@ -174,6 +174,7 @@ class CredentialView(Schema):
 
 
 class RelayProfile(Schema):
+    convert_from: Literal["anthropic_messages", "openai_responses"] | None = None
     endpoint: Literal["anthropic_messages", "openai_responses"]
     transports: list[Literal["http", "websocket"]] = Field(min_length=1, max_length=2)
     streaming: bool = False
@@ -189,6 +190,10 @@ class RelayProfile(Schema):
     @model_validator(mode="after")
     def supported(self):
         ws = "websocket" in self.transports
+        if self.convert_from is not None and (
+            self.convert_from == self.endpoint or "http" not in self.transports
+        ):
+            raise ValueError("Conversion requires HTTP and the other native endpoint")
         if len(set(self.transports)) != len(self.transports):
             raise ValueError("duplicate transports")
         if self.endpoint == "anthropic_messages" and (

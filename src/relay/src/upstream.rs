@@ -18,6 +18,10 @@ pub struct Reply {
 }
 
 impl Upstream {
+    pub(crate) fn response_limit(&self) -> usize {
+        self.max_bytes
+    }
+
     pub fn new(
         max_bytes: usize,
         root: Option<Vec<u8>>,

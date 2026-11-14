@@ -4,7 +4,7 @@
 
 ## 运行现有实现
 
-从仓库根目录执行 `cargo build --release --locked --manifest-path src/relay/Cargo.toml`，生成 `src/relay/target/release/nexus-relay`。节点通过 HTTP/1.1 提供 `POST /v1/messages`、`POST /v1/responses` 和 `GET /v1/responses` Upgrade。POST 支持普通 JSON 和 `stream=true` 的 SSE。Upgrade 建立串行多轮会话，首轮准入后才拨部署的 WSS。对外 TLS 由入口负载均衡终止，`GET /ready` 提供就绪状态。
+从仓库根目录执行 `cargo build --release --locked --manifest-path src/relay/Cargo.toml`，生成 `src/relay/target/release/nexus-relay`。节点通过 HTTP/1.1 提供 `POST /v1/messages`、`POST /v1/responses` 和 `GET /v1/responses` Upgrade。POST 支持普通 JSON 和 `stream=true` 的 SSE。Upgrade 建立串行多轮会话，首轮准入后才拨部署的 WSS。对外 TLS 由入口负载均衡终止，`GET /live` 和 `GET /ready` 分别提供存活和就绪状态。Prometheus 指标在独立的指标监听上提供，日志为 stderr 上逐行 JSON，字段、指标清单和探针用法见[Relay 可观测性](operations.md#relay-可观测性)。
 
 | 环境变量 | 节点配置 |
 | --- | --- |
@@ -12,6 +12,8 @@
 | `NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_NAMESPACE` | 与控制平面相同的 Redis 和命名空间，命名空间默认 `nexus:v1` |
 | `NEXUS_RELAY_CLUSTER_ID`、`NEXUS_RELAY_PRIVATE_KEY` | 已登记的集群 UUID 和对应的 base64 编码 32 字节 Curve25519 私钥 |
 | `NEXUS_RELAY_LISTEN`、`NEXUS_RELAY_POOL_SIZE` | 默认监听 `127.0.0.1:8081`，每个节点默认最多 8 个数据库连接 |
+| `NEXUS_RELAY_METRICS_LISTEN` | 指标监听，默认 `127.0.0.1:9464`，只提供 `GET /metrics` 和 `GET /live`，不承载企业流量也不鉴权。容器部署时绑定 Pod 内网地址，用网络策略只放行 Prometheus 和 kubelet，不要经由入口负载均衡暴露 |
+| `NEXUS_RELAY_LOG` | 日志级别过滤，默认 `info`。以逗号分隔，单独的级别作为默认值，`target=level` 单独设置模块，例如 `info,nexus_relay::server=debug,sqlx=warn`。取值无效时节点拒绝启动 |
 | `NEXUS_RELAY_REQUEST_BYTES`、`NEXUS_RELAY_RESPONSE_BYTES` | 默认请求上限 2 MiB，解压后非流式响应上限 8 MiB |
 | `NEXUS_RELAY_CONCURRENCY`、`NEXUS_RELAY_LEASE_MS` | 默认最多 128 个并发任务，Redis 租期默认 15000 毫秒，范围 100 至 60000 毫秒 |
 | `NEXUS_RELAY_EVENT_BYTES`、`NEXUS_RELAY_STREAM_IDLE_MS` | 每个 SSE 事件和 WS 消息默认上限 1 MiB，上游事件和下游写出空闲时限默认 30000 毫秒 |

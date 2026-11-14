@@ -43,4 +43,103 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 
 平台管理员可从 `GET /internal/metrics` 查询当前 API 进程请求耗时与错误、连接取得耗时、等待锁数量、配置发布和节点滞后、用量积压与结算延迟、支付延迟、超期预留、重复与冲突事件、核对差异数。耗时样本取最近 24 小时的数据库事实，API 进程计数自启动累计。
 
+`GET /internal/metrics/prometheus` 以 Prometheus 文本格式（0.0.4）返回同一份数据，原 JSON 接口不变。两者使用同一鉴权：单个 `Authorization: Bearer` 管理会话，且必须是平台管理员；缺少凭据返回 401，其他角色返回 403。导出的名称固定，唯一的标签是取值有界的 HTTP 方法，不含组织、项目或 Key 标识。
+
+| 指标 | 类型 | 来源 |
+| --- | --- | --- |
+| `nexus_api_http_requests_total`、`nexus_api_http_errors_total`、`nexus_api_http_request_seconds_total` | counter，标签 `method` | 当前 API 进程自启动累计；错误指状态码不低于 400 |
+| `nexus_api_db_connection_acquisitions_total`、`nexus_api_db_connection_acquire_seconds_total` | counter | 当前 API 进程取得数据库连接的次数和耗时 |
+| `nexus_api_db_pool_checked_out`、`nexus_db_waiting_locks` | gauge | 进程连接池占用、全库等待中的锁 |
+| `nexus_billing_usage_backlog`、`_usage_waiting_for_facts`、`_usage_review`、`_overdue_holds`、`_consumption_cases_open`、`_payment_cases_open`、`_reconciliation_differences`、`_conflicting_events`、`_duplicate_events` | gauge | 数据库当前计数 |
+| `nexus_billing_payment_query_seconds`、`_notice_receive_seconds`、`_event_receive_seconds`、`_settlement_seconds`、`_payment_confirmation_to_credit_seconds`、`_payment_posting_seconds` | gauge | 最近 24 小时平均值，单位秒；没有样本时省略该行 |
+| `nexus_publication_backlog`、`nexus_publication_lag_seconds`、`nexus_publication_lagging_nodes` | gauge | 未分发的配置版本、最旧一项的等待时长、落后于期望修订的活跃节点 |
+
+Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Prometheus 可读的文件：
+
+```yaml
+- job_name: nexus-api
+  metrics_path: /internal/metrics/prometheus
+  authorization:
+    type: Bearer
+    credentials_file: /etc/prometheus/nexus-admin-session
+  static_configs:
+    - targets: ["nexus-api.internal:8000"]
+```
+
+会话按 `NEXUS_SESSION_TTL_SECONDS` 过期（最长 24 小时），部署方须在到期前用专用的平台管理员账号重新登录并替换该文件。每次抓取会执行与 JSON 接口相同的三组数据库查询，抓取间隔建议不短于 30 秒。`/internal/` 前缀应继续只在内网入口开放。
+
 网关新增预留时检查全库 ready 结算任务数。达到 `billing.settings.settlement_backlog_limit` 时返回 `settlement_backlog`。默认阈值为 1024，部署方可在该单行配置中按实测容量设置正整数。已有请求可继续上报、重放或结算，积压下降后自动恢复新预留。该阈值按准入事务可见的已提交事实判断，已授权请求继续产生事件时，队列可以超过阈值。Worker 的 Redis 心跳包含进程累计的数据库连接取得次数与耗时。
+
+## Relay 可观测性
+
+### 存活与就绪
+
+| 路径 | 监听 | 含义与用法 |
+| --- | --- | --- |
+| `GET /live` | 主监听和指标监听 | 进程与事件循环能应答即返回 200，不访问 PostgreSQL 或 Redis。用作存活探针，连续失败才重启进程 |
+| `GET /ready` | 主监听 | 最近一次快照刷新和心跳成功且仍有并发余量时返回 200，否则 503。用作负载均衡摘流，不应据此重启 |
+| `GET /metrics` | 指标监听 | Prometheus 文本格式指标 |
+
+收到 SIGTERM 后节点开始排空：主监听停止接受连接，`/ready` 和主监听上的 `/live` 不再应答；指标监听继续提供 `/live` 和 `/metrics`，直到在途请求和完成上报结束、进程退出。存活探针指向指标监听时，排空期间不会被误判为失效。
+
+### 指标
+
+指标监听由 `NEXUS_RELAY_METRICS_LISTEN` 设置，默认只绑定 `127.0.0.1:9464`，因此企业客户端经入口负载均衡无法访问。该端口不鉴权，生产部署绑定内网地址并限制来源，例如容器内绑定 Pod 地址，用网络策略只放行 Prometheus 和 kubelet。不放在主监听上：入口会把主监听的所有路径转给企业客户端，而指标不应被客户端访问；单独监听也不受请求连接的超时和关闭策略影响，排空时仍可抓取。
+
+标签取值都是固定集合，不使用请求、组织、项目、部署或 Key 标识，序列数量在构建时确定：
+
+- `endpoint`：客户端调用的端点，`anthropic_messages` 或 `openai_responses`
+- `transport`：`http`、`sse` 或 `websocket`（Responses 的 WebSocket 轮次）
+- `outcome`：前四个值即 `request.closed` 上报的交付结果 `succeeded`、`upstream_failed`、`client_cancelled`、`unknown`；`rejected` 表示在发起上游尝试之前被拒绝，原因包括 Key、请求参数、限额、预算、节点容量和依赖不可用。尝试开始前客户端离开计为 `client_cancelled`，WebSocket 上游握手失败计为 `upstream_failed`
+- `dependency` 与 `operation`：`database` 的操作名是 `gateway_v1` 函数名；`redis` 为 `acquire`、`renew`、`finish`、`heartbeat`、`subscribe`
+- `kind`：`rejected` 表示网关契约返回了业务错误码（SQLSTATE P0001，例如余额不足），`unavailable` 表示连接、超时或协议失败
+
+| 指标 | 类型 | 标签 | 含义 |
+| --- | --- | --- | --- |
+| `nexus_relay_requests_total` | counter | endpoint、transport、outcome | 生成请求和 WebSocket 轮次，每个计一次 |
+| `nexus_relay_upstream_first_byte_seconds` | histogram | endpoint、transport | 从发出上游请求到收到响应头，WebSocket 为该轮第一个上游帧 |
+| `nexus_relay_upstream_duration_seconds` | histogram | endpoint、transport | 从发出上游请求到完成、失败或放弃，包含未收到响应的请求 |
+| `nexus_relay_sse_streams_active` | gauge | | 正在向客户端写出的 SSE 响应 |
+| `nexus_relay_websocket_sessions_active` | gauge | | 占用节点会话槽位的客户端 WebSocket 会话 |
+| `nexus_relay_websocket_turns_active` | gauge | | 占用租户轮次槽位的 WebSocket 活跃轮次 |
+| `nexus_relay_control_errors_total` | counter | dependency、operation、kind | 失败的 `gateway_v1` 调用和 Redis 命令 |
+| `nexus_relay_snapshot_revision` | gauge | | 节点已安装的配置修订，首次加载前为 0 |
+| `nexus_relay_control_plane_healthy` | gauge | | 最近一次快照刷新和心跳成功时为 1 |
+| `nexus_relay_draining` | gauge | | 开始排空后为 1 |
+| `nexus_relay_completion_events_pending` | gauge | | 完成事件尚未被网关确认的请求 |
+| `nexus_relay_completion_event_replays_total` | counter | | 提交失败或结果未知后重放完成事件的次数 |
+| `nexus_relay_completion_events_abandoned_total` | counter | reason | 因冲突（`conflict`）或 60 秒重放期限（`deadline`）放弃的完成事件，需要核对 |
+| `nexus_relay_capacity_in_use`、`nexus_relay_capacity_limit` | gauge | | 节点并发信号量的占用数与上限（`NEXUS_RELAY_CONCURRENCY`），占用包括在途请求、轮次和待上报任务 |
+
+建议告警：`nexus_relay_control_plane_healthy == 0` 持续一分钟；`completion_events_abandoned_total` 增加；`completion_events_pending` 持续上升；`capacity_in_use / capacity_limit` 接近 1；`requests_total` 中 `unknown` 或 `upstream_failed` 的比例上升。
+
+### 日志
+
+节点把日志逐行写到 stderr，每行一个 JSON 对象，固定包含 `timestamp`（UTC，毫秒）、`level`、`target`、`message`。级别由 `NEXUS_RELAY_LOG` 控制，默认 `info`。其余字段只允许下表名称保留取值；任何其他字段，包括依赖库自带的字段，都写成 `"[redacted]"`。消息是固定文本，不内插变量。`src/relay/tests/logging.rs` 检查源码中每个日志事件只用允许的字段名、消息不插值、取值不来自持有密钥或正文的变量，并禁止 `println!` 一类绕过日志的输出；单元测试另外验证未列入的字段被替换。
+
+| 字段 | 内容 |
+| --- | --- |
+| `request_id`、`attempt_id` | 与 billing 中请求和尝试一致的 UUID |
+| `deployment_id`、`cluster_id`、`node_id`、`session_id` | 部署、集群、节点 UUID 和 WebSocket 会话的随机 UUID |
+| `endpoint`、`transport`、`outcome`、`delivery`、`event_type` | 与指标相同的枚举、尝试结果、交付结果、完成事件类型 |
+| `reason`、`error` | 固定原因码、网关契约错误码或错误类型的固定描述，不含驱动或上游返回的正文 |
+| `revision`、`elapsed_ms`、`replays`、`turns`、`in_flight`、`reused`、`reusable` | 修订号、耗时、计数和布尔值 |
+| `listen`、`version` | 监听地址与版本 |
+
+日志中不会出现企业调用 Key（包括摘要）、上游凭据、集群私钥、数据库或 Redis 口令、请求或响应正文和工具参数；排查时用 `request_id` 关联 billing 中的请求和尝试。
+
+| 事件 `message` | 级别 | 时机 |
+| --- | --- | --- |
+| `relay starting`、`relay listening`、`metrics listening` | info | 启动，含 `cluster_id`、`version`、`listen` |
+| `configuration snapshot applied` / `configuration snapshot rejected` | info / warn | 确认新快照，或以 `unsupported_capability`、`invalid_resources`、`credential_unavailable` 拒绝；被拒的快照在每次刷新重试时再记一次 |
+| `control-plane refresh failed` / `control-plane refresh recovered` | warn / info | 每次刷新失败，`reason=heartbeat` 表示 Redis 心跳失败；恢复后的首次成功 |
+| `request finished` | info | 每个开始了上游尝试的请求或轮次结束，含交付结果和耗时 |
+| `upstream request failed`、`upstream response rejected`、`upstream stream interrupted`、`upstream request interrupted`、`upstream websocket handshake failed`、`upstream websocket turn interrupted` | warn | 上游失败，含 `request_id`、`deployment_id` 和原因 |
+| `completion event replay scheduled` / `completion event accepted after replay` | warn / info | 完成事件第一次提交失败开始重放，以及重放后被接受 |
+| `completion event conflicts with recorded facts`、`completion event abandoned after replay deadline` | error | 放弃上报，请求需进入核对 |
+| `reservation cancellation unconfirmed`、`quota lease finalization unavailable` | warn | 取消预留或释放 Redis 租约未得到确认 |
+| `websocket session opened`、`websocket turn ended`、`websocket session closed` | info | WebSocket 会话建立、每轮结束和会话关闭；`websocket turn started` 为 debug |
+| `shutdown signal received`、`drain started`、`drain finished` | info | 排空开始与结束，`drain deadline reached; ...` 为 warn |
+| `relay stopped with an error` | error | 启动或运行失败，进程以非零状态退出 |
+
+生产环境保持依赖库在 `info` 或更高级别。临时开启 `debug` 排查时，依赖库的字段仍被替换，但事件数量会显著增加。

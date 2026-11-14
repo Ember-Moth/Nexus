@@ -13,7 +13,7 @@ from pydantic import (
     model_validator,
 )
 
-type ProtocolFamily = Literal["openai_compatible", "anthropic", "gemini"]
+type ProtocolFamily = Literal["openai_compatible", "anthropic", "gemini", "aws_bedrock"]
 type Status = Literal["active", "disabled", "archived"]
 type Dimension = Literal[
     "input_uncached_tokens",
@@ -42,7 +42,7 @@ class Capabilities(Schema):
 class ModelCreate(Schema):
     public_name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
     display_name: str = Field(min_length=1, max_length=200)
-    protocols: list[ProtocolFamily] = Field(min_length=1, max_length=3)
+    protocols: list[ProtocolFamily] = Field(min_length=1, max_length=4)
     capabilities: Capabilities = Field(default_factory=Capabilities)
     usage_schema: Literal["tokens.v1"] = "tokens.v1"
     token_dimensions: list[Dimension] = Field(
@@ -78,7 +78,7 @@ class ModelCreate(Schema):
 class ModelPatch(Schema):
     display_name: str | None = Field(default=None, min_length=1, max_length=200)
     capabilities: Capabilities | None = None
-    protocols: list[ProtocolFamily] | None = Field(default=None, min_length=1, max_length=3)
+    protocols: list[ProtocolFamily] | None = Field(default=None, min_length=1, max_length=4)
     token_dimensions: list[Dimension] | None = Field(default=None, min_length=2, max_length=5)
     max_input_tokens: int | None = Field(default=None, ge=1, le=1_000_000_000, strict=True)
     max_output_tokens: int | None = Field(default=None, ge=1, le=1_000_000_000, strict=True)
@@ -175,7 +175,7 @@ class CredentialView(Schema):
 
 class RelayProfile(Schema):
     convert_from: Literal["anthropic_messages", "openai_responses"] | None = None
-    endpoint: Literal["anthropic_messages", "openai_responses"]
+    endpoint: Literal["anthropic_messages", "openai_responses", "bedrock_converse"]
     transports: list[Literal["http", "websocket"]] = Field(min_length=1, max_length=2)
     streaming: bool = False
     tools: bool = False
@@ -190,6 +190,10 @@ class RelayProfile(Schema):
     @model_validator(mode="after")
     def supported(self):
         ws = "websocket" in self.transports
+        if self.endpoint == "bedrock_converse" and (
+            ws or self.convert_from is not None or self.count_rule != "deployment_ceiling.v1"
+        ):
+            raise ValueError("Bedrock Converse serves both HTTP protocols using deployment bounds")
         if self.convert_from is not None and (
             self.convert_from == self.endpoint or "http" not in self.transports
         ):

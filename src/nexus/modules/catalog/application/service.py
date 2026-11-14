@@ -1,3 +1,5 @@
+import json
+import re
 from uuid import uuid4
 
 from nexus.shared.errors import ServiceError
@@ -158,6 +160,31 @@ class CatalogService:
                 raise ServiceError(
                     "resource_archived", "Archived upstreams cannot receive credentials", 409
                 )
+            if (
+                upstream.protocol_family == "aws_bedrock"
+                and body.secret.get_secret_value().startswith("{")
+            ):
+                try:
+                    material = json.loads(body.secret.get_secret_value())
+                    valid = (
+                        isinstance(material, dict)
+                        and {"access_key_id", "secret_access_key"} <= material.keys()
+                        and material.keys()
+                        <= {"access_key_id", "secret_access_key", "session_token"}
+                        and all(
+                            isinstance(v, str)
+                            and v
+                            and v.isascii()
+                            and all(33 <= ord(c) <= 126 for c in v)
+                            for v in material.values()
+                        )
+                    )
+                except ValueError:
+                    valid = False
+                if not valid:
+                    raise ServiceError(
+                        "invalid_credential", "Invalid Bedrock signing credential", 422
+                    )
             result = await repo.create_credential(
                 credential_id, upstream_id, body.name, key_version, ciphertext
             )
@@ -207,7 +234,17 @@ class CatalogService:
                 "protocol_mismatch", "Upstream protocol is not supported by the public model", 409
             )
         if profile := values.get("relay_profile"):
-            family = {"openai_responses": "openai_compatible", "anthropic_messages": "anthropic"}
+            family = {
+                "openai_responses": "openai_compatible",
+                "anthropic_messages": "anthropic",
+                "bedrock_converse": "aws_bedrock",
+            }
+            if profile["endpoint"] == "bedrock_converse" and not re.fullmatch(
+                r"[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+", values["region"]
+            ):
+                raise ServiceError(
+                    "invalid_region", "Bedrock deployments require an AWS region", 422
+                )
             if family[profile["endpoint"]] != upstream.protocol_family:
                 raise ServiceError(
                     "protocol_mismatch", "Relay endpoint conflicts with upstream", 409

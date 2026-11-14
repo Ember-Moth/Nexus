@@ -4,13 +4,13 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 
 #[derive(Default)]
-struct Calls<'a> {
+pub(crate) struct Calls<'a> {
     seen: HashSet<&'a str>,
     pending: HashSet<&'a str>,
     answering: bool,
 }
 impl<'a> Calls<'a> {
-    fn call(&mut self, id: &'a str) -> Result<()> {
+    pub(crate) fn call(&mut self, id: &'a str) -> Result<()> {
         if self.answering && !self.pending.is_empty() {
             return Err(ProtocolError::Invalid("interrupted tool results"));
         }
@@ -21,14 +21,14 @@ impl<'a> Calls<'a> {
         self.pending.insert(id);
         Ok(())
     }
-    fn result(&mut self, id: &str) -> Result<()> {
+    pub(crate) fn result(&mut self, id: &str) -> Result<()> {
         self.answering = true;
         if !self.pending.remove(id) {
             return Err(ProtocolError::Invalid("unmatched tool result"));
         }
         Ok(())
     }
-    fn resolved(&self) -> Result<()> {
+    pub(crate) fn resolved(&self) -> Result<()> {
         if self.pending.is_empty() {
             Ok(())
         } else {

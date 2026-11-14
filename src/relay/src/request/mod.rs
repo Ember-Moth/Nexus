@@ -92,7 +92,7 @@ pub async fn run(
             return;
         }
     };
-    let endpoint = selected.upstream;
+    let endpoint = selected.upstream.representation();
     let exchange = Exchange {
         client: request.endpoint,
         upstream: endpoint,
@@ -117,12 +117,13 @@ pub async fn run(
             return;
         }
     };
-    let base = &selected.deployment.base_url;
+    let dep = selected.deployment;
+    let bedrock = dep.is_bedrock();
     if request.stream {
         sse::forward(
             node,
             run,
-            base,
+            dep,
             exchange,
             &credential,
             &selected.body,
@@ -131,9 +132,36 @@ pub async fn run(
         .await;
         return;
     }
-    let result=run.reservation.guarded(async{
-        tokio::select!{_=sender.closed()=>None,r=node.upstream.generate(base,endpoint,&credential,&selected.body)=>r.ok()}
-    }).await;
+    let rid = run.reservation.id.to_string();
+    let generation = async {
+        if bedrock {
+            let res = crate::bedrock::transport::open(
+                &node.upstream.client,
+                dep,
+                &credential,
+                &selected.body,
+                false,
+            )
+            .await?;
+            crate::bedrock::transport::buffered(
+                res,
+                &request.model,
+                &rid,
+                node.upstream.response_limit(),
+            )
+            .await
+        } else {
+            node.upstream
+                .generate(&dep.base_url, endpoint, &credential, &selected.body)
+                .await
+        }
+    };
+    let result = run
+        .reservation
+        .guarded(async {
+            tokio::select! {_=sender.closed()=>None,r=generation=>r.ok()}
+        })
+        .await;
     if let Ok(Some(reply)) = result {
         deliver(run, sender, reply, exchange, node.upstream.response_limit()).await;
     } else {
@@ -182,6 +210,7 @@ async fn deliver(
         .is_ok();
     let written = sent && received.await.is_ok();
     let delivery = match (reply.outcome, written) {
+        ("succeeded", _) if !reply.status.is_success() => "upstream_failed",
         ("succeeded", true) => "succeeded",
         ("failed", _) => "upstream_failed",
         _ => "unknown",

@@ -206,6 +206,10 @@ impl Generate {
                 })
     }
 
+    pub(crate) fn body(&self) -> &Value {
+        &self.body
+    }
+
     pub fn convert(&self) -> Result<Value, ProtocolError> {
         super::convert::request::convert(self.endpoint, &self.body)
     }

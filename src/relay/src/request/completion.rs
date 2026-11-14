@@ -15,7 +15,7 @@ pub struct Attempt {
     pub request: Uuid,
     pub attempt: Uuid,
     pub revision: i64,
-    pub endpoint: Endpoint,
+    pub usage_format: &'static str,
     pub started: Instant,
 }
 
@@ -97,7 +97,7 @@ impl Attempt {
             false,
             None,
             UsageEvidence {
-                usage_format: self.endpoint.usage_format(),
+                usage_format: self.usage_format,
                 raw_usage: None,
             },
         )
@@ -107,6 +107,9 @@ impl Attempt {
 
 // TPM counts physical tokens, including both cache classes exactly once.
 pub fn confirmed_tokens(endpoint: Endpoint, usage: &UsageEvidence) -> Option<u64> {
+    if usage.usage_format == crate::bedrock::FORMAT {
+        return crate::bedrock::wire::total(usage);
+    }
     let raw = usage.raw_usage.as_ref()?;
     let n = |k: &str| raw.get(k).copied().map(u64::from);
     let input = n("input_tokens")?;

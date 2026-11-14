@@ -21,7 +21,7 @@ impl Exchange<'_> {
     }
 }
 
-fn fields<'a>(v: &'a Value, allowed: &[&str]) -> Result<&'a Map<String, Value>> {
+pub(crate) fn fields<'a>(v: &'a Value, allowed: &[&str]) -> Result<&'a Map<String, Value>> {
     let obj = v
         .as_object()
         .ok_or(ProtocolError::Invalid("protocol object"))?;
@@ -30,19 +30,19 @@ fn fields<'a>(v: &'a Value, allowed: &[&str]) -> Result<&'a Map<String, Value>> 
     }
     Ok(obj)
 }
-fn text<'a>(v: &'a Value, key: &'static str) -> Result<&'a str> {
+pub(crate) fn text<'a>(v: &'a Value, key: &'static str) -> Result<&'a str> {
     v.get(key)
         .and_then(Value::as_str)
         .ok_or(ProtocolError::Invalid(key))
 }
-fn id<'a>(v: &'a Value, key: &'static str) -> Result<&'a str> {
+pub(crate) fn id<'a>(v: &'a Value, key: &'static str) -> Result<&'a str> {
     let s = text(v, key)?;
     if s.is_empty() || s.len() > 256 {
         return Err(ProtocolError::Invalid(key));
     }
     Ok(s)
 }
-fn array<'a>(v: &'a Value, what: &'static str) -> Result<&'a Vec<Value>> {
+pub(crate) fn array<'a>(v: &'a Value, what: &'static str) -> Result<&'a Vec<Value>> {
     v.as_array().ok_or(ProtocolError::Invalid(what))
 }
 fn arguments(v: &Value) -> Result<Value> {

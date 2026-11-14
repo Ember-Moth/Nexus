@@ -14,8 +14,13 @@ def normalize(payload, dimensions, expected_format=None):
         type(v) is not int or not 0 <= v <= 1_000_000_000 for v in raw.values()
     ):
         raise ValueError("invalid_token_count")
-    if expected_format in {"anthropic.messages.v1", "openai.responses.v1"}:
-        counts = _messages(raw) if expected_format == "anthropic.messages.v1" else _responses(raw)
+    native_rules = {
+        "anthropic.messages.v1": _messages,
+        "openai.responses.v1": _responses,
+        "aws.bedrock.converse.v1": _bedrock,
+    }
+    if expected_format in native_rules:
+        counts = native_rules[expected_format](raw)
         if set(dimensions) - counts.keys() or any(
             count for key, count in counts.items() if key not in dimensions
         ):
@@ -108,3 +113,29 @@ def _messages(raw):
         "input_cache_write_1h_tokens": long,
         "output_tokens": raw["output_tokens"],
     }
+
+
+def _bedrock(raw):
+    _require(
+        raw,
+        {"input_tokens", "output_tokens", "total_tokens"},
+        {
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+            "cache_write_5m_tokens",
+            "cache_write_1h_tokens",
+        },
+    )
+    read = raw.get("cache_read_input_tokens", 0)
+    written = raw.get("cache_creation_input_tokens", 0)
+    if raw["total_tokens"] != raw["input_tokens"] + raw["output_tokens"] + read + written:
+        raise ValueError("conflicting_token_total")
+    # Converse omits cache counters on deployments without caching. The
+    # provider total above must account for every token before zeros can be inferred.
+    return _messages(
+        {k: v for k, v in raw.items() if k != "total_tokens"}
+        | {
+            "cache_read_input_tokens": read,
+            "cache_creation_input_tokens": written,
+        }
+    )

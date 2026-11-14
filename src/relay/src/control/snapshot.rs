@@ -13,6 +13,7 @@ pub const CAPABILITIES: &[&str] = &[
     "reservation.v1",
     "usage-events.v1",
     "relay.native.v1",
+    "relay.bedrock-converse.v1",
     "relay.sse.v1",
     "relay.responses-ws.v1",
     "relay.messages-to-responses.v1",
@@ -122,6 +123,8 @@ pub struct Deployment {
     pub id: Uuid,
     model_id: Uuid,
     pub upstream_model: String,
+    #[serde(default)]
+    pub region: String,
     pub base_url: url::Url,
     pub credential_id: Uuid,
     pub credential_version: i32,
@@ -130,6 +133,39 @@ pub struct Deployment {
     protocol_family: String,
     usage_format: Option<String>,
     relay_profile: Option<Profile>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamProtocol {
+    AnthropicMessages,
+    OpenaiResponses,
+    BedrockConverse,
+}
+
+impl UpstreamProtocol {
+    // The Bedrock adapter translates frames to Messages before the existing
+    // downstream response/SSE conversion; metering always uses the actual upstream.
+    pub fn representation(self) -> Endpoint {
+        match self {
+            Self::AnthropicMessages | Self::BedrockConverse => Endpoint::AnthropicMessages,
+            Self::OpenaiResponses => Endpoint::OpenaiResponses,
+        }
+    }
+    pub fn usage_format(self) -> &'static str {
+        match self {
+            Self::BedrockConverse => crate::bedrock::FORMAT,
+            _ => self.representation().usage_format(),
+        }
+    }
+}
+impl From<Endpoint> for UpstreamProtocol {
+    fn from(ep: Endpoint) -> Self {
+        match ep {
+            Endpoint::AnthropicMessages => Self::AnthropicMessages,
+            Endpoint::OpenaiResponses => Self::OpenaiResponses,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -141,7 +177,7 @@ struct Profile {
     continuation: bool,
     #[serde(default)]
     cancellation: bool,
-    endpoint: Endpoint,
+    endpoint: UpstreamProtocol,
     transports: Vec<String>,
     tools: bool,
     input_ceiling: u32,
@@ -213,12 +249,20 @@ pub struct Binding {
 }
 
 pub struct Selection<'a> {
-    pub upstream: Endpoint,
+    pub upstream: UpstreamProtocol,
     pub deployment: &'a Deployment,
     pub model: Uuid,
     pub key: &'a Key,
     pub bounds: ReservationBounds,
     pub body: serde_json::Value,
+}
+
+impl Deployment {
+    pub(crate) fn is_bedrock(&self) -> bool {
+        self.relay_profile
+            .as_ref()
+            .is_some_and(|p| p.endpoint == UpstreamProtocol::BedrockConverse)
+    }
 }
 
 impl Selection<'_> {
@@ -307,15 +351,30 @@ impl Index {
             }
             if let Some(p) = &d.relay_profile {
                 let family = match p.endpoint {
-                    Endpoint::AnthropicMessages => "anthropic",
-                    Endpoint::OpenaiResponses => "openai_compatible",
+                    UpstreamProtocol::BedrockConverse => "aws_bedrock",
+                    UpstreamProtocol::AnthropicMessages => "anthropic",
+                    UpstreamProtocol::OpenaiResponses => "openai_compatible",
                 };
+                if p.endpoint == UpstreamProtocol::BedrockConverse
+                    && (p.convert_from.is_some()
+                        || p.transports.as_slice() != ["http"]
+                        || p.continuation
+                        || p.cancellation
+                        || p.count_rule != "deployment_ceiling.v1"
+                        || d.region.is_empty()
+                        || !snapshot
+                            .required_capabilities
+                            .iter()
+                            .any(|c| c == "relay.bedrock-converse.v1"))
+                {
+                    return Err(ControlError::Invalid("Bedrock profile"));
+                }
                 if let Some(source) = p.convert_from {
                     let capability = match source {
                         Endpoint::AnthropicMessages => "relay.messages-to-responses.v1",
                         Endpoint::OpenaiResponses => "relay.responses-to-messages.v1",
                     };
-                    if source == p.endpoint
+                    if UpstreamProtocol::from(source) == p.endpoint
                         || !p.transports.iter().any(|t| t == "http")
                         || !snapshot
                             .required_capabilities
@@ -334,7 +393,7 @@ impl Index {
                     || p.transports.is_empty()
                     || p.transports.iter().any(|t| t != "http" && t != "websocket")
                     || (p.transports.iter().any(|t| t == "websocket")
-                        && (p.endpoint != Endpoint::OpenaiResponses
+                        && (p.endpoint != UpstreamProtocol::OpenaiResponses
                             || !snapshot
                                 .required_capabilities
                                 .iter()
@@ -429,6 +488,7 @@ impl Index {
             .ok_or(Rejection::Forbidden)?;
         let mut selected = None;
         let mut conversion = None;
+        let mut bedrock_body = None;
         let mut incompatible = false;
         let mut best = u32::MAX;
         let mut weight = 0;
@@ -437,7 +497,8 @@ impl Index {
             let Some(profile) = &dep.relay_profile else {
                 continue;
             };
-            let cross = profile.endpoint != request.endpoint;
+            let cross = profile.endpoint != UpstreamProtocol::BedrockConverse
+                && profile.endpoint != UpstreamProtocol::from(request.endpoint);
             if (cross && (ws || profile.convert_from != Some(request.endpoint)))
                 || !profile
                     .transports
@@ -452,6 +513,14 @@ impl Index {
                     .is_some_and(|n| n > profile.output_ceiling)
                 || candidate.priority > best
             {
+                continue;
+            }
+            if profile.endpoint == UpstreamProtocol::BedrockConverse
+                && bedrock_body
+                    .get_or_insert_with(|| crate::bedrock::prepare(request))
+                    .is_err()
+            {
+                incompatible = true;
                 continue;
             }
             if cross && conversion.get_or_insert_with(|| request.convert()).is_err() {
@@ -472,7 +541,19 @@ impl Index {
         } else {
             Rejection::Unavailable
         })?;
-        let (body, bounds) = if p.endpoint == request.endpoint {
+        let (body, bounds) = if p.endpoint == UpstreamProtocol::BedrockConverse {
+            let mut body = bedrock_body
+                .and_then(Result::ok)
+                .ok_or(Rejection::Unsupported)?;
+            let bounds = ReservationBounds::for_deployment(
+                p.input_ceiling,
+                p.output_ceiling,
+                request.requested_output,
+            )
+            .map_err(|_| Rejection::Unsupported)?;
+            body["inferenceConfig"]["maxTokens"] = bounds.outputs.into();
+            (body, bounds)
+        } else if p.endpoint == UpstreamProtocol::from(request.endpoint) {
             request
                 .prepare_native(&dep.upstream_model, p.input_ceiling, p.output_ceiling)
                 .map_err(|_| Rejection::Unsupported)?
@@ -487,7 +568,7 @@ impl Index {
             )
             .map_err(|_| Rejection::Unsupported)?;
             body["model"] = dep.upstream_model.clone().into();
-            body[match p.endpoint {
+            body[match p.endpoint.representation() {
                 Endpoint::AnthropicMessages => "max_tokens",
                 Endpoint::OpenaiResponses => "max_output_tokens",
             }] = bounds.outputs.into();

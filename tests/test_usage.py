@@ -98,3 +98,48 @@ def test_missing_or_conflicting_native_evidence_is_not_settled(fmt, raw):
         normalize(
             {"usage_format": fmt, "raw_usage": raw}, {"input_uncached_tokens", "output_tokens"}, fmt
         )
+
+
+def test_bedrock_counts_uncached_reads_and_writes_once():
+    fmt = "aws.bedrock.converse.v1"
+    raw = {
+        "input_tokens": 11,
+        "cache_read_input_tokens": 7,
+        "cache_creation_input_tokens": 5,
+        "cache_write_5m_tokens": 2,
+        "cache_write_1h_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 27,
+    }
+    counts = {
+        "input_uncached_tokens": 11,
+        "input_cache_read_tokens": 7,
+        "input_cache_write_5m_tokens": 2,
+        "input_cache_write_1h_tokens": 3,
+        "output_tokens": 4,
+    }
+    fact = {"raw_usage": raw, "usage_format": fmt}
+    assert normalize(fact, counts, fmt) == (fmt + "/1", counts)
+    for change in ({"total_tokens": 15}, {"cache_write_1h_tokens": 4}, {"extra_tokens": 1}):
+        with pytest.raises(ValueError):
+            normalize({**fact, "raw_usage": raw | change}, counts, fmt)
+    with pytest.raises(ValueError, match="missing_cache_counter"):
+        normalize(
+            {**fact, "raw_usage": {k: v for k, v in raw.items() if k != "cache_write_5m_tokens"}},
+            counts,
+            fmt,
+        )
+    with pytest.raises(ValueError, match="usage_format_mismatch"):
+        normalize(fact, counts, "anthropic.messages.v1")
+
+
+def test_bedrock_no_cache_counters_require_a_matching_total():
+    fmt = "aws.bedrock.converse.v1"
+    dimensions = {"input_uncached_tokens", "output_tokens"}
+    raw = {"input_tokens": 12, "output_tokens": 4, "total_tokens": 16}
+    assert normalize({"usage_format": fmt, "raw_usage": raw}, dimensions, fmt)[1] == {
+        "input_uncached_tokens": 12,
+        "output_tokens": 4,
+    }
+    with pytest.raises(ValueError, match="conflicting_token_total"):
+        normalize({"usage_format": fmt, "raw_usage": raw | {"total_tokens": 17}}, dimensions, fmt)

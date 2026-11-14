@@ -1,6 +1,6 @@
 # Rust Relay 迁移与设计方案
 
-首期 Relay 只支持 **Anthropic Messages** 和 **OpenAI Responses**，范围同时适用于客户端入口、上游部署、路由候选和协议转换。Messages 提供 `POST /v1/messages`，Responses 在 `/v1/responses` 同时提供 HTTP POST 和 GET WebSocket Upgrade。首期要求客户端到 Relay、Relay 到 Responses 上游均支持原生 WebSocket。
+Relay 对外提供 Anthropic Messages 和 OpenAI Responses。Messages 提供 `POST /v1/messages`，Responses 在 `/v1/responses` 同时提供 HTTP POST 和 GET WebSocket Upgrade。部署可使用原生 Messages、原生 Responses 或 Amazon Bedrock Converse；Responses WebSocket 使用具备原生 WSS 能力的部署。
 
 **首期设计已于 2026-11-14 定稿。** Rust 节点已实现两种原生 HTTP/SSE 链路、Messages 与 Responses 双向 HTTP/SSE 转换及 Responses 双端 WebSocket。各传输共用节点准入和结算契约。 在 `src/relay/` 先跑通两条原生链路，各自从企业调用 Key、资金预留走到可核对的 USD 消费流水，再分别验证两个转换方向。每条链路单独声明可用能力。[开发计划与验收用例](relay-development.md)
 

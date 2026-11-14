@@ -166,6 +166,8 @@ class PublicationService:
             nodes = await repo.capabilities(cid)
             required = list(CAPABILITIES)
             profiles = [d["relay_profile"] for d in current["deployments"] if "relay_profile" in d]
+            if any(p["endpoint"] == "bedrock_converse" for p in profiles):
+                required.append("relay.bedrock-converse.v1")
             if profiles:
                 required.append("relay.native.v1")
             if any(p.get("streaming") and "http" in p["transports"] for p in profiles):

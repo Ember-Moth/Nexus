@@ -52,6 +52,7 @@ def create_catalog_source(database, cipher):
                 else:
                     d["usage_format"] = {
                         "openai_responses": "openai.responses.v1",
+                        "bedrock_converse": "aws.bedrock.converse.v1",
                         "anthropic_messages": "anthropic.messages.v1",
                     }[profile["endpoint"]]
                 cid = d["credential_id"]

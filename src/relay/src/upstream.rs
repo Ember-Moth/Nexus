@@ -7,6 +7,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum UpstreamError {
+    #[error("Bedrock request signing failed")]
+    Signing,
     #[error("upstream request timed out")]
     Timeout,
     #[error("upstream HTTP transport failed")]
@@ -34,7 +36,7 @@ impl From<reqwest::Error> for UpstreamError {
 }
 
 pub struct Upstream {
-    client: Client,
+    pub(crate) client: Client,
     max_bytes: usize,
     tls: std::sync::Arc<rustls::ClientConfig>,
 }
@@ -182,30 +184,11 @@ impl Upstream {
     }
     pub(crate) async fn buffered(
         &self,
-        mut res: reqwest::Response,
+        res: reqwest::Response,
         endpoint: Endpoint,
     ) -> Result<Reply, UpstreamError> {
         let status = res.status();
-        if res
-            .content_length()
-            .is_some_and(|n| n > self.max_bytes as u64)
-        {
-            return Err(UpstreamError::ResponseTooLarge);
-        }
-        if res
-            .headers()
-            .get("content-encoding")
-            .is_some_and(|h| h != "identity")
-        {
-            return Err(UpstreamError::UnsupportedEncoding);
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = res.chunk().await? {
-            if chunk.len() > self.max_bytes - bytes.len() {
-                return Err(UpstreamError::ResponseTooLarge);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
+        let bytes = read_body(res, self.max_bytes).await?;
         let mut data: Value = serde_json::from_slice(&bytes)?;
         // Preserve the delivery fact even if a new or malformed meter cannot be billed.
         let done = match response::observe(endpoint, &data) {
@@ -236,3 +219,27 @@ impl Upstream {
 
 pub(crate) type UpstreamSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+pub(crate) async fn read_body(
+    mut res: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, UpstreamError> {
+    if res.content_length().is_some_and(|n| n > limit as u64) {
+        return Err(UpstreamError::ResponseTooLarge);
+    }
+    if res
+        .headers()
+        .get("content-encoding")
+        .is_some_and(|h| h != "identity")
+    {
+        return Err(UpstreamError::UnsupportedEncoding);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = res.chunk().await? {
+        if chunk.len() > limit - bytes.len() {
+            return Err(UpstreamError::ResponseTooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}

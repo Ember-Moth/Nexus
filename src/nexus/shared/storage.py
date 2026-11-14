@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0013_relay_contract"
+SCHEMA_REVISION = "0014_bedrock_converse"

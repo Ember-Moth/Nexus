@@ -96,6 +96,9 @@ pub(super) fn response_status(reason: &str, has_tool: bool) -> Result<(&'static 
 
 // Produce client-visible usage only when its dimensions can be expressed from observed facts.
 pub(super) fn usage(client: Endpoint, evidence: &UsageEvidence) -> Value {
+    if evidence.usage_format == crate::bedrock::FORMAT {
+        return crate::bedrock::wire::client_usage(client, evidence);
+    }
     let Some(raw) = evidence.raw_usage.as_ref() else {
         return Value::Null;
     };

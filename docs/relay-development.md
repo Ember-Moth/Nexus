@@ -28,6 +28,14 @@ WS 握手使用企业 Bearer Key，空闲和 ping/pong 不触发资金预留。�
 
 获授权真实部署可运行 `tests/integration/test_live_relay_ws.py`。设置 `RELAY_ACCEPTANCE_WS_RUN=1`、`RELAY_ACCEPTANCE_WS_URL`、`RELAY_ACCEPTANCE_WS_MODEL` 和 `RELAY_ACCEPTANCE_WS_KEY`，使用上述隔离集成命令并指定该测试文件。测试只在一个连接串行发送两次生成，`RELAY_ACCEPTANCE_WS_OUTPUT` 默认每轮 64。商户 Key 写入本次隔离 catalog。给出 `wss://` 时 Relay 直接拨 TLS，给出回环 `ws://` 时测试搭建临时 TLS 入口，保留原始握手、帧和端点的升级状态。测试余额和真实上游计费分别核对。[Responses 续接语义](https://developers.openai.com/api/docs/guides/websocket-mode)
 
+## Bedrock Converse 上游
+
+Messages 和 Responses 的 HTTP 请求通过 Bedrock `Converse` 转发，`stream=true` 通过 `ConverseStream` 转成客户端原有 SSE 格式。适配范围包括显式文本对话、系统指令、函数工具与结果、采样参数和输出上限。Responses 的原生 WebSocket 轮次仍要求 Responses WSS 部署。媒体、模型专有推理参数与不能等价表达的工具选项在预留前拒绝。[配置步骤](catalog-api.md#amazon-bedrock-部署) · [Converse](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html) · [ConverseStream](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html)
+
+节点按 AWS EventStream 的帧长度、校验和、事件类型和内容块索引解码。`messageStop` 记录停止原因，收到后续 `metadata` 才提交终态。缺失总量、已计量维度相互矛盾、流被截断或缓存写入无法对应冻结价格时，Worker 保留证据并进入核对。客户端可见的 usage 与结算证据分别生成，尝试固定使用 `aws.bedrock.converse.v1`。部署使用的计数规则要求普通输入、缓存读取、缓存写入及输出之和等于 `totalTokens`；缓存写入按 `cacheDetails` 的 5m、1h 分项核对。生产部署应使用实际模型的计量样本确认这些维度与价格。[AWS TokenUsage](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_TokenUsage.html)
+
+运行 `uv run python scripts/run_integration.py -q tests/integration/test_bedrock_relay.py` 可验证两种入口、两种鉴权、普通及流式响应、异常流和 Worker 账本。该用例使用隔离 PostgreSQL、Redis 及本地 HTTPS 上游。
+
 ## 启用 HTTP 和 SSE 协议转换
 
 `relay_profile.endpoint` 始终是部署的真实上游协议。`convert_from` 可省略，省略时只接受原生请求。要让同一部署额外服务另一种客户端，在部署上设置下表对应的值，登记集群节点能力，然后发布新修订。移除 `convert_from` 并发布新修订即可关闭该方向。

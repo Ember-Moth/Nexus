@@ -9,7 +9,7 @@
 5. 企业 owner 根据需要添加 customer 策略；获授权 developer 可以收窄其项目或 Key 范围。
 6. 企业成员携带组织、项目或 Key 上下文查询可见模型。
 
-当前协议族元数据支持 openai_compatible、anthropic 和 gemini，Token 模型使用 tokens.v1 计量定义。这些是控制平面的目录标签。Rust Relay 支持 Anthropic Messages 和 OpenAI Responses；部署能否执行请求还取决于实际端点及已验收的能力。[Relay 协议范围](relay-design.md#协议覆盖与交付条件)
+当前协议族元数据支持 openai_compatible、anthropic、gemini 和 aws_bedrock，Token 模型使用 tokens.v1 计量定义。这些是控制平面的目录标签。客户端协议为 Anthropic Messages 和 OpenAI Responses，Relay 另可连接 Amazon Bedrock Runtime；部署能否执行请求还取决于实际端点及已验收的能力。[Relay 协议范围](relay-design.md#协议覆盖与交付条件)
 
 模型限制和能力由管理员填写，尚未通过真实上游调用验证。
 
@@ -38,6 +38,14 @@
 部署凭据必须属于其上游，协议族必须在公开模型的支持范围内。修改模型协议时，如果仍有不兼容的启用部署，返回冲突；应先停用这些映射。停用或归档部署不要求旧凭据仍有效，避免失效配置无法收起。
 
 模型和部署的 configured 字段根据启停状态、协议匹配和已加载的加密密钥版本计算。它表示配置前提是否满足，不表示已验证密文可解密、厂商在线、价格已生效或具有调用额度。客户目录仅显示有效且 configured 的授权模型。
+
+## Amazon Bedrock 部署
+
+在公开模型的 `protocols` 中添加 `aws_bedrock`。创建同协议族的上游，填写区域 Runtime 的 HTTPS 基础地址，例如 `https://bedrock-runtime.us-east-1.amazonaws.com`。部署的 `region` 填 AWS 区域，`upstream_model` 填该区域支持的模型 ID、推理配置文件 ID 或受支持的 ARN。两种客户端分别使用已有的 `POST /v1/messages` 和 `POST /v1/responses`。
+
+部署凭据的 `secret` 支持 Bedrock API Key，也支持紧凑 JSON 字符串形式的 AWS 签名凭据，字段为 `access_key_id`、`secret_access_key`，以及临时凭据的 `session_token`。这两种凭据均由 catalog 加密并随集群密文包发给节点；签名凭据使用官方 SigV4 签名器、部署的区域和服务名 `bedrock`。临时凭据到期前按现有凭据轮换流程更换。[AWS 的 Bedrock API Key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)
+
+`relay_profile.endpoint` 设为 `bedrock_converse`，`transports` 设为 `["http"]`，`count_rule` 使用 `deployment_ceiling.v1`。按已验证模型填写 `input_ceiling`、`output_ceiling` 和 `bound_reference`。该上游直接服务两个客户端协议，省略 `convert_from`。需要工具或流式输出时，同时开启模型和部署的相应能力。集群节点须登记 `relay.bedrock-converse.v1` 及 `relay.native.v1`；启用流式时另需 `relay.sse.v1`。先升级控制平面到 `0014_bedrock_converse` 和相应 Worker，再发布快照。
 
 ## 凭据加密与轮换
 

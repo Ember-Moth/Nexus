@@ -22,6 +22,7 @@ pub struct Reservation {
     revision: i64,
     endpoint: Endpoint,
     deployment: Uuid,
+    usage_format: &'static str,
     lease: Lease,
 }
 
@@ -78,6 +79,7 @@ impl Reservation {
                 revision: index.revision,
                 endpoint,
                 deployment: dep.id,
+                usage_format: selected.upstream.usage_format(),
                 lease,
             },
             secret,
@@ -98,7 +100,7 @@ impl Reservation {
             request: self.id,
             attempt: Uuid::new_v4(),
             revision: self.revision,
-            endpoint: self.endpoint,
+            usage_format: self.usage_format,
             started: Instant::now(),
         };
         let start = || {
@@ -157,7 +159,7 @@ impl Run {
                 false,
                 None,
                 UsageEvidence {
-                    usage_format: r.endpoint.usage_format(),
+                    usage_format: r.usage_format,
                     raw_usage: None,
                 },
             )
@@ -224,6 +226,7 @@ impl Run {
     }
     pub async fn ended(self, done: Option<Completion>, written: bool) {
         let ep = self.reservation.endpoint;
+        let format = self.reservation.usage_format;
         if let Some(done) = done {
             let outcome = done.outcome(ep);
             let delivery = delivery(outcome, written);
@@ -235,7 +238,7 @@ impl Run {
                 "unknown",
                 None,
                 UsageEvidence {
-                    usage_format: ep.usage_format(),
+                    usage_format: format,
                     raw_usage: None,
                 },
             )

@@ -1,0 +1,24 @@
+{
+  "handshake": {
+    "method": "GET", "path": "/v1/responses",
+    "headers": {"connection":"Upgrade","upgrade":"websocket","sec-websocket-version":"13","sec-websocket-key":"MDEyMzQ1Njc4OWFiY2RlZg=="}
+  },
+  "turns": [
+    {
+      "create":{"type":"response.create","event_id":"first","model":"public-text","input":"Look up the status","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{}}}]},
+      "events":[
+        {"type":"response.created","response":{"id":"resp_one","status":"in_progress"}},
+        {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"item_lookup","call_id":"call_lookup","name":"lookup","arguments":"{}"}},
+        {"type":"response.completed","response":{"id":"resp_one","status":"completed","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":0},"output_tokens":3,"total_tokens":13}}}
+      ]
+    },
+    {
+      "create":{"type":"response.create","event_id":"second","model":"public-text","previous_response_id":"resp_one","input":[{"type":"function_call_output","call_id":"call_lookup","output":"available"}]},
+      "events":[
+        {"type":"response.created","response":{"id":"resp_two","status":"in_progress"}},
+        {"type":"response.completed","response":{"id":"resp_two","status":"completed","usage":{"input_tokens":15,"input_tokens_details":{"cached_tokens":0},"output_tokens":4,"total_tokens":19}}}
+      ]
+    }
+  ],
+  "cancel":{"type":"response.cancel","event_id":"stop-two","response_id":"resp_two"}
+}

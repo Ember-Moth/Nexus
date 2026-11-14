@@ -2,7 +2,7 @@
 
 首期 Relay 只支持 **Anthropic Messages** 和 **OpenAI Responses**，范围同时适用于客户端入口、上游部署、路由候选和协议转换。Messages 提供 `POST /v1/messages`，Responses 在 `/v1/responses` 同时提供 HTTP POST 和 GET WebSocket Upgrade。首期要求客户端到 Relay、Relay 到 Responses 上游均支持原生 WebSocket。
 
-**首期设计已于 2026-11-14 定稿，Rust 实现尚未开始。** 在 `src/relay/` 先跑通两条原生链路，各自从企业调用 Key、资金预留走到可核对的 USD 消费流水，再分别验证两个转换方向。每条链路单独声明可用能力。[开发计划与验收用例](relay-development.md)
+**首期设计已于 2026-11-14 定稿。** Rust 协议库和受限 SQL 客户端已落地，当前可运行离线协议测试和节点到 Worker 的数据库契约测试。 在 `src/relay/` 先跑通两条原生链路，各自从企业调用 Key、资金预留走到可核对的 USD 消费流水，再分别验证两个转换方向。每条链路单独声明可用能力。[开发计划与验收用例](relay-development.md)
 
 ## 代码复用范围与维护归属
 
@@ -113,7 +113,7 @@ new-api 的控制器在 Upgrade 后为每轮创建独立请求上下文，Relay 
 
 ### 结算证据
 
-P1 将实现下表定义的 **Relay 到 Worker 的证据格式**。保留现有 `attempt.finished` 和 `request.closed` 信封。Relay 仅提取白名单整数，Worker 拥有归一化与舍入规则。
+下表定义了 **Relay 到 Worker 的证据格式**。保留现有 `attempt.finished` 和 `request.closed` 信封。Relay 仅提取白名单整数，Worker 拥有归一化与舍入规则。
 
 | usage_format | 采集与归一化 | 共享样本的预期 |
 | --- | --- | --- |
@@ -149,13 +149,13 @@ P1 将实现下表定义的 **Relay 到 Worker 的证据格式**。保留现有 
 
 ## 控制平面改动与上线顺序
 
-以下变更由 P1 实施。现有 `gateway_v1` 八个函数保持调用签名；真实厂商规则随控制平面先行发布。
+以下是 P1 的控制平面与节点契约。现有 `gateway_v1` 八个函数保持调用签名；真实厂商规则随控制平面先行发布。
 
 | 属主 | 当前能力 | P1 交付内容 |
 | --- | --- | --- |
 | catalog | 上游有 `protocol_family`、地址和加密凭据；公开模型有流式/工具标志和 Token 上限。 | 在部署上声明经过验证的上游端点、传输、支持的功能及上界规则的版本；Responses 单独标记原生 WebSocket 能力。端点取值限定 Messages 或 Responses。既有部署升级后保留原配置；端点未经声明的部署不进入真实转发候选。 |
 | publication | 按集群发布不可变快照、凭据引用和 required_capabilities。 | 发布上述部署能力，并按集群检查节点是否理解新字段。现有模拟集群仍能使用 v1 资源，将双端 WS 流量仅发给确认相应能力的节点。旧节点不得确认带未知必需能力的发布。回滚使用更高修订号，重新校验实时权限与凭据。 |
-| billing | v1 收件箱接受两个事件类型；Worker 目前仅归一化两种 fixture 格式。 | 新增上表两种版本化格式及样本。依据尝试的 deployment_id、原请求的集群和修订核验允许的格式；在开始尝试的 SQL 事务中，从已授权修订的部署描述取得期望格式，由 billing 持久化到尝试。Worker 仅查询本模块事实。旧尝试沿用其原始规则。 |
+| billing | v1 收件箱接受两个事件类型；Worker 兼容两种历史 fixture 格式与已绑定的原生格式。 | 新增上表两种版本化格式及样本。依据尝试的 deployment_id、原请求的集群和修订核验允许的格式；在开始尝试的 SQL 事务中，从已授权修订的部署描述取得期望格式，由 billing 持久化到尝试。Worker 仅查询本模块事实。旧尝试沿用其原始规则。 |
 | Rust Relay | Python 模拟器已验证 SQL 与 Redis 契约。 | 在 Rust 实现受限 SQL 调用、sealed box 和 Redis 原子租约。跨语言测试覆盖键布局、策略排序、指纹字节编码、租约 owner、Redis TIME 与恢复窗口；过期租约不能释放接替者的占用。 |
 
 **发布次序。** 先部署兼容旧记录的迁移、管理 API 和支持新格式的 Worker；再登记具备相应能力的 Relay，在单一测试集群启用新快照；最后按部署逐项启用收费组合。回滚时先停止新准入，限时排空在途请求和待提交事件，再发布更高修订号切回已验收配置。未核清的预留继续由原尝试的证据和冻结价格处理。[配置发布](../src/nexus/modules/publication/application/service.py) · [结算消费者](../src/nexus/modules/billing/application/usage.py)

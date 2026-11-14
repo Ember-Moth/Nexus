@@ -1,0 +1,12 @@
+{
+  "request":{"model":"public-text","input":"hello","max_output_tokens":20},
+  "events":[
+    {"type":"response.created","response":{"id":"resp_example","status":"in_progress"}},
+    {"type":"response.output_text.delta","item_id":"item_example","delta":"hello"},
+    {"type":"response.completed","response":{"id":"resp_example","status":"completed","usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":25},"output_tokens":20,"output_tokens_details":{"reasoning_tokens":6},"total_tokens":120}}}
+  ],
+  "response":{"id":"resp_example","status":"completed","usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":25},"output_tokens":20,"output_tokens_details":{"reasoning_tokens":6},"total_tokens":120},"object":"response","output":[{"type":"message","id":"item_example","role":"assistant","content":[{"type":"output_text","text":"hello","annotations":[]}]}]},
+  "error":{"error":{"code":"server_error","message":"test failure"}},
+  "evidence":{"usage_format":"openai.responses.v1","raw_usage":{"input_tokens":100,"cached_input_tokens":25,"output_tokens":20,"reasoning_tokens":6,"total_tokens":120}},
+  "normalized":{"input_uncached_tokens":75,"input_cache_read_tokens":25,"output_tokens":20}
+}

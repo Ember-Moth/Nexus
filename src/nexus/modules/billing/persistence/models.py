@@ -241,6 +241,7 @@ class BudgetHold(Base):
 
 
 class Attempt(Record, Base):
+    expected_usage_format: Mapped[str | None] = mapped_column(String(80))
     __tablename__ = "request_attempts"
     __table_args__ = {"schema": "billing"}
     request_id: Mapped[UUID]

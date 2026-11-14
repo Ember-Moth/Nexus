@@ -173,7 +173,35 @@ class CredentialView(Schema):
     created_at: datetime
 
 
+class RelayProfile(Schema):
+    endpoint: Literal["anthropic_messages", "openai_responses"]
+    transports: list[Literal["http", "websocket"]] = Field(min_length=1, max_length=2)
+    streaming: bool = False
+    tools: bool = False
+    continuation: bool = False
+    cancellation: bool = False
+    count_rule: Literal["o200k_base.v1", "cl100k_base.v1", "deployment_ceiling.v1"]
+    input_ceiling: int = Field(ge=1, le=1_000_000_000, strict=True)
+    output_ceiling: int = Field(ge=1, le=1_000_000_000, strict=True)
+    # Operator reference to evidence for these limits on this upstream model version.
+    bound_reference: str = Field(min_length=1, max_length=200, pattern=r"\S")
+
+    @model_validator(mode="after")
+    def supported(self):
+        ws = "websocket" in self.transports
+        if len(set(self.transports)) != len(self.transports):
+            raise ValueError("duplicate transports")
+        if self.endpoint == "anthropic_messages" and (
+            ws or self.count_rule != "deployment_ceiling.v1"
+        ):
+            raise ValueError("unsupported Messages transport or counting rule")
+        if not ws and (self.continuation or self.cancellation):
+            raise ValueError("WebSocket controls require WebSocket transport")
+        return self
+
+
 class DeploymentCreate(Schema):
+    relay_profile: RelayProfile | None = None
     name: str = Field(min_length=1, max_length=200)
     model_id: UUID
     upstream_id: UUID
@@ -189,6 +217,7 @@ class DeploymentCreate(Schema):
 
 
 class DeploymentPatch(Schema):
+    relay_profile: RelayProfile | None = None
     name: str | None = Field(default=None, min_length=1, max_length=200)
     credential_id: UUID | None = None
     upstream_model: str | None = Field(
@@ -200,13 +229,14 @@ class DeploymentPatch(Schema):
     @model_validator(mode="after")
     def changes(self):
         if not self.model_fields_set or any(
-            getattr(self, key) is None for key in self.model_fields_set
+            getattr(self, key) is None for key in self.model_fields_set - {"relay_profile"}
         ):
             raise ValueError("supply non-null changes")
         return self
 
 
 class DeploymentView(Schema):
+    relay_profile: RelayProfile | None = None
     id: UUID
     name: str
     model_id: UUID

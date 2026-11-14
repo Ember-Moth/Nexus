@@ -1,0 +1,16 @@
+{
+  "request": {"model":"public-text","messages":[{"role":"user","content":"你好"}],"max_tokens":7},
+  "events": [
+    {"type":"message_start","message":{"type":"message","id":"msg_example","usage":{"input_tokens":80,"cache_read_input_tokens":20,"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_5m_input_tokens":10,"ephemeral_1h_input_tokens":0},"output_tokens":0}}},
+    {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},
+    {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你好"}},
+    {"type":"content_block_stop","index":0},
+    {"type":"message_delta","delta":{},"usage":{"output_tokens":2}},
+    {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}},
+    {"type":"message_stop"}
+  ],
+  "response":{"type":"message","id":"msg_example","role":"assistant","content":[{"type":"text","text":"你好"}],"stop_reason":"end_turn","usage":{"input_tokens":80,"cache_read_input_tokens":20,"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_5m_input_tokens":10,"ephemeral_1h_input_tokens":0},"output_tokens":7}},
+  "error":{"type":"error","error":{"type":"overloaded_error","message":"test failure"}},
+  "evidence":{"usage_format":"anthropic.messages.v1","raw_usage":{"input_tokens":80,"cache_read_input_tokens":20,"cache_creation_input_tokens":10,"cache_write_5m_tokens":10,"cache_write_1h_tokens":0,"output_tokens":7}},
+  "normalized":{"input_uncached_tokens":80,"input_cache_read_tokens":20,"input_cache_write_5m_tokens":10,"input_cache_write_1h_tokens":0,"output_tokens":7}
+}

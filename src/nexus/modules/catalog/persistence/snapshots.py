@@ -23,7 +23,7 @@ def create_catalog_source(database, cipher):
             ).scalar_one()
             data = await rows("""
                 SELECT d.id, d.version, d.model_id, d.upstream_id, d.upstream_model, d.region,
-                d.credential_id,
+                d.credential_id, d.relay_profile,
                 u.version upstream_version, u.base_url, u.protocol_family, c.version
                 credential_version, c.key_version, c.ciphertext
                 FROM catalog.deployments d JOIN catalog.upstreams u ON u.id=d.upstream_id
@@ -45,6 +45,15 @@ def create_catalog_source(database, cipher):
             box = SealedBox(PublicKey(public_key))
             envelopes = {}
             for d in data:
+                profile = d.get("relay_profile")
+                if profile is None:
+                    # Preserve the resource shape of pre-relay manifests and rollback targets.
+                    del d["relay_profile"]
+                else:
+                    d["usage_format"] = {
+                        "openai_responses": "openai.responses.v1",
+                        "anthropic_messages": "anthropic.messages.v1",
+                    }[profile["endpoint"]]
                 cid = d["credential_id"]
                 material = d.pop("ciphertext")
                 root = d.pop("key_version")

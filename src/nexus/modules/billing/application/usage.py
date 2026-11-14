@@ -50,7 +50,7 @@ class UsageProcessor:
             attempt, price = priced[event.attempt_id]
             payload = event.envelope["payload"]
             try:
-                rule, counts = normalize(payload, price.rates)
+                rule, counts = normalize(payload, price.rates, attempt.expected_usage_format)
                 reason = None
             except ValueError as error:
                 rule, counts, reason = "usage-normalizer/1", None, str(error)

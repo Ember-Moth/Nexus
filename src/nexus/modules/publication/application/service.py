@@ -164,7 +164,13 @@ class PublicationService:
             ):
                 raise ServiceError("cluster_changed", "Cluster changed during publication", 409)
             nodes = await repo.capabilities(cid)
-            if any(not set(CAPABILITIES) <= set(n["capabilities"]) for n in nodes):
+            required = list(CAPABILITIES)
+            profiles = [d["relay_profile"] for d in current["deployments"] if "relay_profile" in d]
+            if profiles:
+                required.append("relay.native.v1")
+            if any("websocket" in p["transports"] for p in profiles):
+                required.append("relay.responses-ws.v1")
+            if any(not set(required) <= set(n["capabilities"]) for n in nodes):
                 raise ServiceError(
                     "unsupported_capability", "A node lacks required capabilities", 409
                 )
@@ -173,7 +179,7 @@ class PublicationService:
                 "schema_version": 1,
                 "cluster_id": str(cid),
                 "revision": str(rev),
-                "required_capabilities": list(CAPABILITIES),
+                "required_capabilities": required,
                 "created_at": datetime.now(UTC).isoformat(),
                 "resources": current,
             }

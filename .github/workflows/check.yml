@@ -30,6 +30,12 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
           uv run pytest -m 'not integration' -q
+      - name: Rust relay protocol checks
+        working-directory: src/relay
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
       - name: Isolated PostgreSQL and Redis integration tests
         run: uv run python scripts/run_integration.py -q
       - name: Build distributions

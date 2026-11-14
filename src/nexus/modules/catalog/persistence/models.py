@@ -51,6 +51,7 @@ class Credential(Resource, Base):
 
 
 class Deployment(Resource, Base):
+    relay_profile: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     __tablename__ = "deployments"
     __table_args__ = {"schema": "catalog"}
     name: Mapped[str] = mapped_column(String(200))

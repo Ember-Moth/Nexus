@@ -2,6 +2,12 @@
 
 目标是交付可独立部署的 `nexus-relay`，为企业提供 Anthropic Messages 和 OpenAI Responses 请求转发。首期含 Responses 原生双端 WebSocket，即客户端升级到 Relay，由 Relay 使用部署凭据拨上游 WSS。本计划于 2026-11-14 随首期设计定稿，各阶段按下表验收。协议覆盖、模块职责、计数口径、CC Switch 代码复用及 new-api 行为对照见[Relay 设计](relay-design.md)。以下任务按依赖推进，可独立验收的产物作为合并单位。
 
+## 运行现有实现
+
+从仓库根目录运行 `cargo test --locked --manifest-path src/relay/Cargo.toml` 验证协议样本。安装 Rust 和控制平面开发依赖后，运行 `uv run python scripts/run_integration.py -q tests/integration/test_plane.py`。隔离集成测试会在配置好节点数据库角色、快照和集群私钥后调用 Rust，用 Python Worker 核对结算。
+
+部署可通过 catalog 的 `relay_profile` 声明端点、传输、分词规则、输入输出上界和验证依据。未配置的历史部署沿用 v1 资源。含原生部署的集群要求节点声明 `relay.native.v1`，含 WebSocket 的集群另要求 `relay.responses-ws.v1`。当前节点库提供协议解析、八个 SQL 调用和 sealed box 解密。Redis 租约和转发监听仍在后续阶段实施。
+
 ## 阶段、依赖与交付
 
 | 阶段 | 依赖 | 实施任务及归属 | 验收与退出条件 |

@@ -206,6 +206,17 @@ class CatalogService:
             raise ServiceError(
                 "protocol_mismatch", "Upstream protocol is not supported by the public model", 409
             )
+        if profile := values.get("relay_profile"):
+            family = {"openai_responses": "openai_compatible", "anthropic_messages": "anthropic"}
+            if family[profile["endpoint"]] != upstream.protocol_family:
+                raise ServiceError(
+                    "protocol_mismatch", "Relay endpoint conflicts with upstream", 409
+                )
+            if (
+                profile["input_ceiling"] > model.max_input_tokens
+                or profile["output_ceiling"] > model.max_output_tokens
+            ):
+                raise ServiceError("invalid_bounds", "Deployment exceeds public model limits", 422)
         if credential.status != "active" or not self._cipher.supports(credential.key_version):
             raise ServiceError(
                 "credential_unavailable",
@@ -239,7 +250,13 @@ class CatalogService:
             editable(current, version)
             changes = body.model_dump(exclude_unset=True)
             # Archive keeps its historical binding, even when its credential is already revoked.
-            candidate = {name: getattr(current, name) for name in DeploymentCreate.model_fields}
+            candidate = current.model_dump(include=set(DeploymentCreate.model_fields))
+            if (
+                current.relay_profile
+                and changes.get("upstream_model", current.upstream_model) != current.upstream_model
+                and "relay_profile" not in changes
+            ):
+                raise ServiceError("relay_profile_required", "Revalidate the new model bounds", 422)
             candidate.update(changes)
             if candidate["status"] == "archived":
                 if set(changes) != {"status"}:

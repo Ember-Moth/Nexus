@@ -1,7 +1,12 @@
+import asyncio
 import base64
+import hashlib
 import json
+import os
 import secrets
 from decimal import Decimal
+from pathlib import Path
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import psycopg
@@ -14,6 +19,7 @@ from test_identity_api import auth
 from nexus.gateway_simulator import GatewaySimulator
 
 pytestmark = pytest.mark.integration
+RELAY_CRATE = Path(__file__).resolve().parents[2] / "src" / "relay"
 
 
 async def register_node(client, root, admin, cid):
@@ -666,3 +672,178 @@ async def test_attempt_rechecks_wallet_after_concurrent_freeze(plane, admin):
     assert admin.execute(
         "SELECT balance,held_amount FROM billing.accounts WHERE organization_id=%s", (org["id"],)
     ).fetchone() == (100, 10)
+
+
+async def test_native_profile_publication_attempt_binding_and_worker_replay(plane, http, admin):
+    peer, private, _, model, dep, admission, _, cid = plane
+    client, root, app, _ = http
+    profile = {
+        "endpoint": "openai_responses",
+        "transports": ["http", "websocket"],
+        "input_ceiling": 4,
+        "output_ceiling": 6,
+        "count_rule": "deployment_ceiling.v1",
+        "bound_reference": "isolated-contract-v1",
+    }
+    path = f"/api/v1/deployments/{dep['id']}"
+    result = await client.patch(
+        path, headers=auth(root, dep["version"]), json={"relay_profile": profile}
+    )
+    assert result.status_code == 200, result.text
+    version = result.json()["version"]
+    release = f"/api/v1/gateway-clusters/{cid}/releases"
+    blocked = await client.post(release, headers=headers(root, "native"), json={})
+    assert blocked.status_code == 409
+    node_id, role = admin.execute(
+        "SELECT node_id, database_role FROM publication.gateway_principals WHERE cluster_id=%s",
+        (cid,),
+    ).fetchone()
+    caps = ["reservation.v1", "usage-events.v1", "relay.native.v1"]
+    node_path = f"/api/v1/gateway-clusters/{cid}/principals/{node_id}"
+    for extra, status in [([], 409), (["relay.responses-ws.v1"], 202)]:
+        result = await client.put(
+            node_path,
+            headers=auth(root),
+            json={"node_id": str(node_id), "database_role": role, "capabilities": caps + extra},
+        )
+        assert result.status_code == 200, result.text
+        result = await client.post(release, headers=headers(root, "native"), json={})
+        assert result.status_code == status, result.text
+    with pytest.raises(ValueError, match="Unsupported snapshot"):
+        await peer.refresh()
+    config = await peer.call("get_config_snapshot")
+    manifest = config["manifest"]
+    deployment = manifest["resources"]["deployments"][0]
+    assert deployment["usage_format"] == "openai.responses.v1"
+    assert deployment["relay_profile"]["transports"] == profile["transports"]
+    rev = int(manifest["revision"])
+    await peer.call("ack_config", rev, config["sha256"], True, "")
+    for inputs, outputs in [(3, 6), (4, 7), (4, 0)]:
+        rejected = uuid4()
+        with pytest.raises(psycopg.errors.RaiseException, match="deployment_unavailable"):
+            await peer.call(
+                "reserve_request",
+                rejected,
+                admission.api_key_id,
+                UUID(model["id"]),
+                rev,
+                inputs,
+                outputs,
+            )
+        assert await peer.call("get_request_status", rejected) is None
+    valid = {
+        "usage_format": "openai.responses.v1",
+        "raw_usage": {
+            "input_tokens": 2,
+            "cached_input_tokens": 0,
+            "output_tokens": 3,
+            "reasoning_tokens": 1,
+        },
+    }
+    spoof = {
+        "usage_format": "fixture.dimensions.v1",
+        "raw_usage": {"input_uncached_tokens": 2, "output_tokens": 3},
+    }
+    await check_rust_gateway(peer, private, cid, admission, model, dep, valid, rev, app)
+    attempts = []
+    for evidence in [valid, spoof]:
+        rid, aid = uuid4(), uuid4()
+        await peer.call("reserve_request", rid, admission.api_key_id, UUID(model["id"]), rev, 4, 6)
+        for replay in [False, True]:
+            result = await peer.call("start_attempt", rid, aid, 1, UUID(dep["id"]))
+            assert result["replayed"] == replay
+        attempts.append((rid, aid, evidence))
+
+    # Configuration is removed while requests are in flight. The Worker reads the attempt's binding.
+    result = await client.patch(path, headers=auth(root, version), json={"relay_profile": None})
+    assert result.status_code == 200, result.text
+    for rid, aid, evidence in attempts:
+        event = peer.prepare_event(
+            rid,
+            "attempt.finished",
+            {
+                "outcome": "succeeded",
+                "elapsed_ms": 3,
+                "upstream_request_id": "native-test",
+                **evidence,
+            },
+            attempt_id=aid,
+            revision=str(rev),
+        )
+        for _ in range(2):
+            assert (await peer.call("append_usage_event", event))["status"] == "accepted"
+        await peer.event(
+            rid,
+            "request.closed",
+            {
+                "delivery_outcome": "succeeded",
+                "delivered_attempt_id": str(aid),
+                "attempt_ids": [str(aid)],
+            },
+            revision=str(rev),
+        )
+    assert await app.state.usage.process() == 2
+    valid_status = await peer.call("get_request_status", attempts[0][0])
+    assert Decimal(valid_status["charged_amount"]) == 5
+    invalid_status = await peer.call("get_request_status", attempts[1][0])
+    assert (invalid_status["state"], invalid_status["reservation_state"]) == ("review", "held")
+    assert admin.execute("SELECT balance,held_amount FROM billing.accounts").fetchone() == (90, 10)
+
+
+async def check_rust_gateway(peer, private, cid, admission, model, dep, valid, rev, app):
+    # Drive the Rust adapter through the restricted login against this same publication.
+    rid, aid = uuid4(), uuid4()
+    info = peer.connection.info
+    login = f"{info.user}:{quote(info.password, safe='')}"
+    url = f"postgresql://{login}@{info.host}:{info.port}/{info.dbname}"
+    test_inputs = {
+        "url": url,
+        "cluster": cid,
+        "key": str(admission.api_key_id),
+        "model": model["id"],
+        "deployment": dep["id"],
+        "request": str(rid),
+        "attempt": str(aid),
+        "unstarted": str(uuid4()),
+        "private": base64.b64encode(bytes(private)).decode(),
+        "secret_digest": hashlib.sha256(b"provider-secret-do-not-echo").hexdigest(),
+        "events": [
+            peer.prepare_event(
+                rid,
+                "request.closed",
+                {
+                    "delivery_outcome": "succeeded",
+                    "delivered_attempt_id": str(aid),
+                    "attempt_ids": [str(aid)],
+                },
+                revision=str(rev),
+            ),
+            peer.prepare_event(
+                rid,
+                "attempt.finished",
+                {
+                    "outcome": "succeeded",
+                    "elapsed_ms": 3,
+                    "upstream_request_id": "rust-contract",
+                    **valid,
+                },
+                attempt_id=aid,
+                revision=str(rev),
+            ),
+        ],
+    }
+    process = await asyncio.create_subprocess_exec(
+        "cargo",
+        "test",
+        "--locked",
+        "--test",
+        "control",
+        "isolated_gateway_contract",
+        "--",
+        "--ignored",
+        cwd=RELAY_CRATE,
+        env={**os.environ, "NEXUS_RELAY_TEST_INPUT": json.dumps(test_inputs)},
+    )
+    assert await process.wait() == 0
+    assert await app.state.usage.process() == 1
+    assert Decimal((await peer.call("get_request_status", rid))["charged_amount"]) == 5

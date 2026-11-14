@@ -71,7 +71,7 @@ NEXUS_API_URL=http://127.0.0.1:8000 NEXUS_ADMIN_PASSWORD_FILE=<存放管理员�
 | --- | --- | --- |
 | 类型化请求 | `src/lib/api/client.ts` | `nexus.GET/POST/...`（openapi-fetch，路径、参数、请求体均来自生成类型）；`call()` 把错误信封转成 `ApiError` 并返回 `{data, etag, status}` |
 | 错误与 trace_id | `src/lib/api/errors.ts`、`src/components/feedback.tsx` | `ApiError{status, code, message, traceId, fields}`；`ErrorAlert` 和 `useErrorToast` 显示可复制的追踪 ID，已知错误码映射到文案键 |
-| ETag / If-Match | 各写操作 | 打开对话框时读取单体资源拿 ETag，提交时原样放入 `if-match`；412 显示 `ConflictAlert`，重新加载后再提交 |
+| ETag / If-Match | 各写操作 | 打开对话框时读取单体资源拿 ETag，提交时原样放入 `If-Match`；412 显示 `ConflictAlert`，重新加载后再提交 |
 | Idempotency-Key | `useIdempotentMutation`（`src/lib/api/hooks.ts`） | 每个业务操作生成一个键；变量（含 If-Match 版本）不变时重试复用同一个键，结果未知（网络错误、502–504、429）自动重试；成功或关闭对话框后换新键 |
 | 202 轮询 | `pollUntil()` | 2 秒 → 5 秒 → 10 秒逐步放慢，到终态停止；用于充值订单和导出任务 |
 | 游标分页 | `useCursorList()` | `next_cursor` 作为下一页的 `cursor`，筛选条件放进 query key 保持一致；页脚“加载更多”，不显示总数 |
@@ -88,7 +88,9 @@ pnpm api:types:check                                 # CI：生成结果必须�
 
 契约快照和生成文件都已提交。`/openapi.json` 只在开发环境开放。
 
-> 另一个会话正在修订 OpenAPI 契约：给 reporting、财务运营、publication、routing 的 27 个操作补响应模型，路由/限额策略改为 PUT，统一分页和路径参数命名。合并后重新运行 `pnpm api:types`。目前这些接口在 `src/lib/api/types.ts` 中用手写类型（按运行中的 API 实际返回整理），届时替换为生成类型。
+`src/lib/api/types.ts` 只是生成类型的别名，没有手写的响应类型。契约变化后重新运行 `pnpm api:types`，`pnpm typecheck` 会指出受影响的调用（路径模板键、`If-Match` 等请求头名称都来自契约）。
+
+路由策略和限额只用自然键上的 `PUT` 写入：不带 `If-Match` 只创建（201；已存在返回 428，界面提示到列表中编辑），带 `If-Match: "<version>"` 才更新（200；版本过期返回 412，界面显示冲突提示）。已废弃的 `POST /route-policies` 和 `POST /organizations/{organization_id}/quota-policies` 不再使用。
 
 ## 文案与多语言
 
@@ -112,8 +114,11 @@ pnpm api:types:check                                 # CI：生成结果必须�
 | 充值 `recharge` | 已实现，未联调支付 | 支付方式、按精度校验金额、创建订单（202 + Idempotency-Key）、轮询订单、订单列表；本地未配置支付渠道，只验证了“无可用支付方式”状态 |
 | 审计与导出 `audit` | 已完成 | 审计事件（按动作筛选、分页）；导出任务创建、轮询、下载 |
 | 平台 · 企业 `platform/organizations` | 已完成 | 列表、新建（开通中自动刷新）、进入工作区 |
-| 用量、可用模型与价格、费用明细、预算、成员、访问策略、限额 | 骨架 | 页面内列出计划使用的接口 |
-| 平台：用户与平台角色、模型、上游与凭据、部署、路由策略、售价/成本价版本、企业折扣、集群与发布、收款账户、人工入账、调整、核对事项、支付异常、支付渠道、审计事件、运行指标 | 骨架 | 同上；设计稿见第一阶段画布 |
+| 限额 `quotas` | 已完成 | 游标分页列表；新建与修改用 `PUT …/quota-policies/{layer}/{scope_type}/{scope_id}/{metric}`（已验证 201、带 If-Match 的 200、重复创建的 428） |
+| 平台 · 路由策略 `platform/routes` | 已完成 | 游标分页列表；部署候选编辑（优先级、权重）用 `PUT /route-policies/{organization_id}/{model_id}`（已验证 201 与 200） |
+| 平台 · 集群与发布 `platform/clusters` | 已完成（只读） | 游标分页列表，期望/已分发修订；发布状态抽屉轮询到全部节点确认。本地没有登记节点，节点行未实测；发起发布、登记节点、编辑集群尚未做 |
+| 用量、可用模型与价格、费用明细、预算、成员、访问策略 | 骨架 | 页面内列出计划使用的接口 |
+| 平台：用户与平台角色、模型、上游与凭据、部署、售价/成本价版本、企业折扣、收款账户、人工入账、调整、核对事项、支付异常、支付渠道、审计事件、运行指标 | 骨架 | 同上；设计稿见第一阶段画布 |
 
 ## 发现的 API 缺口
 
@@ -122,10 +127,10 @@ pnpm api:types:check                                 # CI：生成结果必须�
 1. **成员和授权没有人名**：`MemberView`、`GrantView` 只有 `user_id` / `membership_id`，`GET /users` 仅平台管理员可用；企业所有者的成员页、项目授权、审计和流水的“操作人”只能显示 ID。`/me` 的成员关系也不带企业名称。
 2. **导出任务没有列表接口**：只有 `GET /organizations/{org}/exports/{id}`，后台只能在本次浏览器会话里记住创建过的任务。
 3. **调用 Key**：`KeyView` 没有状态字段（需由 `revoked_at`/`rotated_at`/`expires_at` 推导）和 `last_used_at`；列表不能按状态筛选。签发和轮换的幂等重放返回 200，契约只声明了 201。
-4. **发布**：没有发布历史列表、`GET /gateway-clusters/{id}` 单体接口和节点（principals）列表，节点只出现在某个修订的状态里。
+4. **发布**：集群列表已分页，但仍没有发布历史列表、`GET /gateway-clusters/{cluster_id}` 单体接口和节点（principals）列表，节点只出现在某个修订的状态里。
 5. **聚合与 N+1**：没有计数（服务账号下的有效 Key 数等）；预算概览需先列策略再逐个查周期；流水不能按类型筛选；请求和流水只返回项目、Key、模型的 ID。
 6. **登录限流与 BFF**：API 按直连地址做每 IP 限流且不信任转发头，经 BFF 登录时所有用户共享 BFF 的地址。部署时需要为 BFF 配置可信代理，或由 API 提供受信的客户端地址传递方式。
-7. **响应模型**：reporting、导出、审计、publication、核对事项等接口没有响应模型，错误响应也未声明（api-contract 会话处理中）。
+7. **价格版本列表返回 500**：`GET /sale-price-versions` 和 `GET /cost-price-versions`（带不带 `scope_id` 都一样）抛出 `TypeError: BillingRepository.page() got multiple values for argument 'kind'`——`pricing.list_prices` 把 `kind` 放进了 `**filters`，与 `page(self, kind, …)` 的参数同名。创建和发布价格不受影响。价格版本页目前是骨架，接入前需要先修。
 
 ## 检查
 
@@ -149,7 +154,7 @@ src/
     (console)/platform/...                           平台管理
   components/   ui/（shadcn）、shell/（导航外壳）、data-table、feedback、money …
   i18n/         文案与语言切换
-  lib/api/      生成类型、客户端、hooks、手写类型
+  lib/api/      生成类型及其别名、客户端、hooks
   lib/server/   仅服务端使用的配置与会话工具
   proxy.ts      未登录重定向
 openapi/        契约快照

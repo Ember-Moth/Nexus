@@ -2,7 +2,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use crypto_box::SecretKey;
 use nexus_relay::{
     control::{database::Gateway, limits::Limits},
-    server::{Node, serve},
+    server::{Node, NodeLimits, serve},
     upstream::Upstream,
 };
 use std::{env, error::Error, time::Duration};
@@ -35,9 +35,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .await?;
     let root = env::var_os("NEXUS_RELAY_UPSTREAM_CA")
-        .map(|path| -> Result<_, Box<dyn Error>> {
-            Ok(reqwest::Certificate::from_pem(&std::fs::read(path)?)?)
-        })
+        .map(std::fs::read)
         .transpose()?;
     let upstream = Upstream::new(
         setting("NEXUS_RELAY_RESPONSE_BYTES", 8 * 1024 * 1024)?,
@@ -49,8 +47,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         private,
         upstream,
         cluster,
-        setting("NEXUS_RELAY_LEASE_MS", 15000)?,
-        setting("NEXUS_RELAY_CONCURRENCY", 128)?,
+        NodeLimits {
+            lease_ms: setting("NEXUS_RELAY_LEASE_MS", 15000)?,
+            capacity: setting("NEXUS_RELAY_CONCURRENCY", 128)?,
+            stream_idle: Duration::from_millis(setting("NEXUS_RELAY_STREAM_IDLE_MS", 30000)?),
+            event_bytes: setting("NEXUS_RELAY_EVENT_BYTES", 1024 * 1024)?,
+            sessions: setting("NEXUS_RELAY_WS_SESSIONS", 128)?,
+            sessions_per_tenant: setting("NEXUS_RELAY_WS_SESSIONS_PER_TENANT", 16)?,
+            turns_per_tenant: setting("NEXUS_RELAY_WS_TURNS_PER_TENANT", 16)?,
+        },
     )?;
     let listener = TcpListener::bind(
         env::var("NEXUS_RELAY_LISTEN").unwrap_or_else(|_| "127.0.0.1:8081".into()),

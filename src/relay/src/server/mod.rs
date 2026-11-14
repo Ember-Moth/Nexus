@@ -1,4 +1,5 @@
 mod delivery;
+mod websocket;
 
 use crate::{
     control::{
@@ -17,14 +18,14 @@ use crate::{
 use axum::{
     Extension, Json, Router,
     body::{Body, to_bytes},
-    extract::{OriginalUri, State},
+    extract::{Request, State},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use crypto_box::SecretKey;
 use delivery::{Delivery, Socket};
 use futures_util::StreamExt;
-use http::{HeaderMap, StatusCode, header};
+use http::{StatusCode, header};
 use hyper_util::{
     rt::{TokioIo, TokioTimer},
     service::TowerToHyperService,
@@ -38,10 +39,20 @@ use std::{
 use tokio::{
     net::TcpListener,
     sync::{Semaphore, oneshot},
-    time::{Instant, sleep, timeout},
+    time::{sleep, timeout},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use uuid::Uuid;
+
+pub struct NodeLimits {
+    pub lease_ms: u32,
+    pub capacity: usize,
+    pub stream_idle: Duration,
+    pub event_bytes: usize,
+    pub sessions: usize,
+    pub sessions_per_tenant: usize,
+    pub turns_per_tenant: usize,
+}
 
 pub struct Node {
     pub(crate) db: Gateway,
@@ -49,11 +60,16 @@ pub struct Node {
     pub(crate) private: SecretKey,
     pub(crate) upstream: Upstream,
     pub(crate) lease_ms: u32,
+    pub(crate) stream_idle: Duration,
+    pub(crate) event_bytes: usize,
     cluster: Uuid,
     healthy: AtomicBool,
     index: RwLock<Option<Arc<Index>>>,
     capacity: Arc<Semaphore>,
-    tasks: TaskTracker,
+    pub(crate) tasks: TaskTracker,
+    sessions: Arc<websocket::Sessions>,
+    turns: Arc<websocket::Sessions>,
+    draining_deadline: CancellationToken,
 }
 
 impl Node {
@@ -63,10 +79,27 @@ impl Node {
         private: SecretKey,
         upstream: Upstream,
         cluster: Uuid,
-        lease_ms: u32,
-        capacity: usize,
+        limits_config: NodeLimits,
     ) -> Result<Arc<Self>, ControlError> {
-        if !(100..=60_000).contains(&lease_ms) || capacity == 0 || capacity > Semaphore::MAX_PERMITS
+        let NodeLimits {
+            lease_ms,
+            capacity,
+            stream_idle,
+            event_bytes,
+            sessions,
+            sessions_per_tenant,
+            turns_per_tenant,
+        } = limits_config;
+        if stream_idle.is_zero()
+            || event_bytes == 0
+            || event_bytes > usize::MAX / 2
+            || sessions == 0
+            || sessions > Semaphore::MAX_PERMITS
+            || sessions_per_tenant == 0
+            || turns_per_tenant == 0
+            || !(100..=60_000).contains(&lease_ms)
+            || capacity == 0
+            || capacity > Semaphore::MAX_PERMITS
         {
             return Err(ControlError::Invalid("node limits"));
         }
@@ -77,13 +110,24 @@ impl Node {
             upstream,
             lease_ms,
             cluster,
+            stream_idle,
+            event_bytes,
             healthy: AtomicBool::new(false),
             index: RwLock::new(None),
             capacity: Arc::new(Semaphore::new(capacity)),
             tasks: TaskTracker::new(),
+            draining_deadline: CancellationToken::new(),
+            turns: Arc::new(websocket::Sessions::new(capacity, turns_per_tenant)),
+            sessions: Arc::new(websocket::Sessions::new(sessions, sessions_per_tenant)),
         }))
     }
 
+    fn current(&self) -> Option<Arc<Index>> {
+        if !self.healthy.load(Ordering::Acquire) {
+            return None;
+        }
+        self.index.read().unwrap().clone()
+    }
     async fn refresh(&self) -> Result<(), ControlError> {
         let mut snapshot = self.db.snapshot(self.cluster, None).await?;
         let current = self.index.read().unwrap().clone();
@@ -154,21 +198,23 @@ fn error(endpoint: Endpoint, failure: Failure) -> Response {
 
 #[derive(Clone, Copy)]
 struct BodyLimit(usize);
+#[derive(Clone)]
+struct Streaming(CancellationToken);
 
 async fn generate(
     State(node): State<Arc<Node>>,
     Extension(wire): Extension<Delivery>,
-    OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
+    Extension(streaming): Extension<Streaming>,
     Extension(BodyLimit(max_bytes)): Extension<BodyLimit>,
-    body: Body,
+    incoming: Request,
 ) -> Response {
-    let endpoint = if uri.path() == "/v1/messages" {
+    let (parts, body) = incoming.into_parts();
+    let endpoint = if parts.uri.path() == "/v1/messages" {
         Endpoint::AnthropicMessages
     } else {
         Endpoint::OpenaiResponses
     };
-    let Ok(key) = Route::Generate(endpoint).key(&headers) else {
+    let Ok(key) = Route::Generate(endpoint).key(&parts.headers) else {
         return error(
             endpoint,
             Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"),
@@ -198,6 +244,18 @@ async fn generate(
             Failure(StatusCode::BAD_REQUEST, "invalid_request"),
         );
     };
+    if request.stream {
+        streaming.0.cancel();
+        if parts.version != http::Version::HTTP_11 {
+            return error(
+                endpoint,
+                Failure(
+                    StatusCode::HTTP_VERSION_NOT_SUPPORTED,
+                    "sse_requires_http_1_1",
+                ),
+            );
+        }
+    }
     let (tx, rx) = oneshot::channel();
     let tracker = node.tasks.clone();
     let key = key.to_owned();
@@ -210,14 +268,34 @@ async fn generate(
         Ok(Err(e)) => return error(endpoint, e),
         Err(_) => return error(endpoint, Failure::unavailable()),
     };
-    let length = result.body.len();
-    wire.track(length, result.receipt);
-    Response::builder()
-        .status(result.status)
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CONTENT_LENGTH, length)
-        .body(Body::from(result.body))
-        .expect("validated response metadata")
+    match result {
+        request::Response::Buffered {
+            status,
+            body,
+            receipt,
+        } => {
+            let length = body.len();
+            wire.track(length, receipt);
+            Response::builder()
+                .status(status)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CONTENT_LENGTH, length)
+                .body(Body::from(body))
+                .expect("validated response metadata")
+        }
+        request::Response::Stream { body, receipt } => {
+            wire.track_stream(receipt);
+            let stream = futures_util::stream::unfold(body, |mut rx| async move {
+                rx.recv().await.map(|item| (item, rx))
+            });
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .header(header::TRANSFER_ENCODING, "chunked")
+                .body(Body::from_stream(stream))
+                .expect("SSE response metadata")
+        }
+    }
 }
 
 async fn ready(State(node): State<Arc<Node>>) -> StatusCode {
@@ -238,9 +316,10 @@ pub async fn serve(
     node.healthy.store(true, Ordering::Release);
     let router = Router::new()
         .route("/v1/messages", post(generate))
-        .route("/v1/responses", post(generate))
+        .route("/v1/responses", post(generate).get(websocket::upgrade))
         .route("/ready", get(ready))
         .layer(Extension(BodyLimit(max_body)))
+        .layer(Extension(stop.clone()))
         .with_state(node.clone());
     let refresh = node.clone();
     let refresh_stop = stop.clone();
@@ -277,8 +356,14 @@ pub async fn serve(
             stream,
             delivery: wire.clone(),
         });
-        let service = TowerToHyperService::new(router.clone().layer(Extension(wire)));
-        let shutdown = stop.clone();
+        let streaming = CancellationToken::new();
+        let service = TowerToHyperService::new(
+            router
+                .clone()
+                .layer(Extension(wire))
+                .layer(Extension(Streaming(streaming.clone()))),
+        );
+        let abort = node.draining_deadline.clone();
         sockets.spawn(async move {
             let mut builder = hyper::server::conn::http1::Builder::new();
             // Each buffered response has one final write receipt on its connection.
@@ -286,24 +371,31 @@ pub async fn serve(
                 .keep_alive(false)
                 .timer(TokioTimer::new())
                 .header_read_timeout(Duration::from_secs(10));
-            let connection = builder.serve_connection(io, service);
+            let connection = builder.serve_connection(io, service).with_upgrades();
             tokio::pin!(connection);
-            tokio::select! {
-                _ = &mut connection => {},
-                _ = shutdown.cancelled() => {
-                    connection.as_mut().graceful_shutdown();
-                    let _ = connection.await;
-                },
-                _ = sleep(Duration::from_secs(180)) => {},
-            }
+            let exchange = async {
+                tokio::select! {
+                    _ = &mut connection => return,
+                    _ = streaming.cancelled() => {},
+                    _ = sleep(Duration::from_secs(180)) => return,
+                }
+                let _ = connection.await;
+            };
+            tokio::select! {_=exchange=>{},_=abort.cancelled()=>{}}
         });
     }
     sockets.close();
     node.capacity.close();
-    let deadline = Instant::now() + Duration::from_secs(90);
-    let _ = tokio::time::timeout_at(deadline, sockets.wait()).await;
+    node.healthy.store(false, Ordering::Release);
+    if timeout(Duration::from_secs(15), sockets.wait())
+        .await
+        .is_err()
+    {
+        node.draining_deadline.cancel();
+        sockets.wait().await;
+    }
     node.tasks.close();
-    let _ = tokio::time::timeout_at(deadline, node.tasks.wait()).await;
+    let _ = timeout(Duration::from_secs(90), node.tasks.wait()).await;
     maintenance.abort();
     let _ = timeout(Duration::from_secs(1), maintenance).await;
     Ok(())

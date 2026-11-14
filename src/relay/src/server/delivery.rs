@@ -17,16 +17,69 @@ use tokio::{
 pub struct Delivery(Arc<Mutex<Option<Pending>>>);
 struct Pending {
     complete: oneshot::Sender<()>,
-    remaining: usize,
+    body: Framing,
     header_tail: u32,
     in_body: bool,
 }
 
+enum Framing {
+    Fixed(usize),
+    Chunked(Chunk),
+}
+enum Chunk {
+    Size(usize),
+    SizeLf(usize),
+    Data(usize),
+    DataCr,
+    DataLf,
+    EndCr,
+    EndLf,
+    Invalid,
+}
+impl Chunk {
+    fn wrote(&mut self, mut data: &[u8]) -> bool {
+        while !data.is_empty() {
+            if let Self::Data(n) = self {
+                let used = data.len().min(*n);
+                *n -= used;
+                data = &data[used..];
+                if *n == 0 {
+                    *self = Self::DataCr;
+                }
+                continue;
+            }
+            let byte = data[0];
+            data = &data[1..];
+            *self = match (&self, byte) {
+                (Self::Size(n), b'\r') => Self::SizeLf(*n),
+                (Self::Size(n), b) if b.is_ascii_hexdigit() => {
+                    Self::Size(n * 16 + (b as char).to_digit(16).unwrap() as usize)
+                }
+                (Self::SizeLf(0), b'\n') => Self::EndCr,
+                (Self::SizeLf(n), b'\n') => Self::Data(*n),
+                (Self::DataCr, b'\r') => Self::DataLf,
+                (Self::DataLf, b'\n') => Self::Size(0),
+                (Self::EndCr, b'\r') => Self::EndLf,
+                (Self::EndLf, b'\n') => return true,
+                _ => Self::Invalid,
+            }
+        }
+        false
+    }
+}
 impl Delivery {
+    pub fn track_stream(&self, complete: oneshot::Sender<()>) {
+        *self.0.lock().unwrap() = Some(Pending {
+            complete,
+            body: Framing::Chunked(Chunk::Size(0)),
+            header_tail: 0,
+            in_body: false,
+        });
+    }
     pub fn track(&self, length: usize, complete: oneshot::Sender<()>) {
         *self.0.lock().unwrap() = Some(Pending {
             complete,
-            remaining: length,
+            body: Framing::Fixed(length),
             header_tail: 0,
             in_body: false,
         });
@@ -46,8 +99,14 @@ impl Delivery {
             p.in_body = true;
             body = &bytes[end + 1..];
         }
-        p.remaining = p.remaining.saturating_sub(body.len());
-        if p.remaining == 0 {
+        let finished = match &mut p.body {
+            Framing::Fixed(n) => {
+                *n = n.saturating_sub(body.len());
+                *n == 0
+            }
+            Framing::Chunked(parser) => parser.wrote(body),
+        };
+        if finished {
             let _ = state.take().unwrap().complete.send(());
         }
     }
@@ -112,5 +171,30 @@ mod tests {
         }
         wire.wrote(b"e");
         assert!(result.try_recv().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    #[test]
+    fn partial_chunk_and_terminator_inside_payload_never_acknowledge() {
+        let wire = Delivery::default();
+        let (tx, mut rx) = oneshot::channel();
+        wire.track_stream(tx);
+        for chunk in [
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r".as_slice(),
+            b"\n\r\n7\r\n",
+            b"x0\r\n\r\ny",
+            b"\r\n0\r\n\r",
+        ] {
+            wire.wrote(chunk);
+            assert!(matches!(
+                rx.try_recv(),
+                Err(oneshot::error::TryRecvError::Empty)
+            ));
+        }
+        wire.wrote(b"\n");
+        assert!(rx.try_recv().is_ok());
     }
 }

@@ -323,3 +323,43 @@ fn websocket_turns_have_separate_native_evidence_and_explicit_parent() {
     };
     assert_eq!(response_id, parent);
 }
+
+#[test]
+fn responses_usage_item_attribution_and_cache_write_breakdown_do_not_double_count() {
+    let endpoint = Endpoint::OpenaiResponses;
+    let mut usage = json!({"input_tokens":10,"output_tokens":5,"total_tokens":15,
+        "input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"cache_write_tokens_details":{"ttl_30m_tokens":0,"ttl_12h_tokens":0}},
+        "output_tokens_details":{"reasoning_tokens":0},
+        "attribution":{"items":{"test_item":{"input_tokens":10,"output_tokens":5,"cached_tokens":0,"cache_write_tokens":0,"content":[{"input_tokens":10,"output_tokens":5}]}}}});
+    let counts = UsageEvidence::extract(endpoint, Some(&usage))
+        .unwrap()
+        .raw_usage
+        .unwrap();
+    assert_eq!(
+        (
+            counts["input_tokens"],
+            counts["output_tokens"],
+            counts["cache_write_tokens"]
+        ),
+        (10, 5, 0)
+    );
+    usage["attribution"]["items"]["test_item"]["output_tokens"] = 6.into();
+    assert!(UsageEvidence::extract(endpoint, Some(&usage)).is_err());
+    usage["attribution"] = Value::Null;
+    usage["input_tokens_details"]["cache_write_tokens_details"]["ttl_12h_tokens"] = 1.into();
+    assert!(UsageEvidence::extract(endpoint, Some(&usage)).is_err());
+}
+
+#[test]
+fn interleaved_tool_arguments_share_a_bounded_budget_until_done() {
+    use nexus_relay::protocol::tools::ToolLimits;
+    let mut limits = ToolLimits::new(Endpoint::OpenaiResponses, 8);
+    let delta = |id: &str, part: &str| json!({"type":"response.function_call_arguments.delta","item_id":id,"delta":part});
+    limits.observe(&delta("one", "1234")).unwrap();
+    limits.observe(&delta("two", "1234")).unwrap();
+    assert!(limits.observe(&delta("one", "x")).is_err());
+    limits
+        .observe(&json!({"type":"response.function_call_arguments.done","item_id":"two"}))
+        .unwrap();
+    limits.observe(&delta("one", "x")).unwrap();
+}

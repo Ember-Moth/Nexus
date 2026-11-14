@@ -3,6 +3,7 @@ pub mod response;
 pub mod sse;
 pub mod stream;
 pub mod tokens;
+pub mod tools;
 pub mod usage;
 pub mod websocket;
 

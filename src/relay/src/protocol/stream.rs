@@ -6,6 +6,7 @@ pub enum Terminal {
     Completed,
     Failed,
     Incomplete,
+    Cancelled,
 }
 
 #[derive(Debug)]
@@ -14,6 +15,36 @@ pub struct Completion {
     pub response_id: Option<String>,
     pub usage: UsageEvidence,
     pub stop_reason: Option<String>,
+}
+
+impl Completion {
+    pub fn outcome(&self, endpoint: Endpoint) -> &'static str {
+        match self.terminal {
+            Terminal::Failed => "failed",
+            Terminal::Cancelled => "cancelled",
+            Terminal::Completed
+                if endpoint == Endpoint::OpenaiResponses
+                    || matches!(
+                        self.stop_reason.as_deref(),
+                        Some(
+                            "end_turn"
+                                | "max_tokens"
+                                | "stop_sequence"
+                                | "tool_use"
+                                | "pause_turn"
+                                | "refusal"
+                                | "model_context_window_exceeded"
+                        )
+                    ) =>
+            {
+                "succeeded"
+            }
+            Terminal::Incomplete if self.stop_reason.as_deref() == Some("max_output_tokens") => {
+                "succeeded"
+            }
+            _ => "unknown",
+        }
+    }
 }
 
 /// Observes native events before any downstream conversion. Partial streams never
@@ -135,7 +166,10 @@ impl Observer {
             }
             (
                 Endpoint::OpenaiResponses,
-                "response.completed" | "response.failed" | "response.incomplete",
+                "response.completed"
+                | "response.failed"
+                | "response.incomplete"
+                | "response.cancelled",
             ) => {
                 let r = &event["response"];
                 self.set_id(r)?;
@@ -149,6 +183,7 @@ impl Observer {
                 match kind {
                     "response.completed" => Terminal::Completed,
                     "response.failed" => Terminal::Failed,
+                    "response.cancelled" => Terminal::Cancelled,
                     _ => Terminal::Incomplete,
                 }
             }
@@ -160,7 +195,12 @@ impl Observer {
             terminal,
             response_id: self.id.clone(),
             stop_reason: self.stop_reason.clone(),
-            usage: UsageEvidence::extract(self.endpoint, self.usage.as_ref())?,
+            usage: UsageEvidence::extract(self.endpoint, self.usage.as_ref()).unwrap_or(
+                UsageEvidence {
+                    usage_format: self.endpoint.usage_format(),
+                    raw_usage: None,
+                },
+            ),
         }))
     }
 

@@ -1,4 +1,4 @@
-use crate::protocol::{Endpoint, response, stream::Terminal, usage::UsageEvidence};
+use crate::protocol::{Endpoint, response, usage::UsageEvidence};
 use http::StatusCode;
 use reqwest::{Client, Url};
 use serde_json::Value;
@@ -7,6 +7,7 @@ use std::time::Duration;
 pub struct Upstream {
     client: Client,
     max_bytes: usize,
+    tls: std::sync::Arc<rustls::ClientConfig>,
 }
 pub struct Reply {
     pub status: StatusCode,
@@ -19,25 +20,123 @@ pub struct Reply {
 impl Upstream {
     pub fn new(
         max_bytes: usize,
-        root: Option<reqwest::Certificate>,
-    ) -> Result<Self, reqwest::Error> {
+        root: Option<Vec<u8>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut builder = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .pool_max_idle_per_host(8)
             .no_proxy()
             .https_only(true)
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(120));
-        if let Some(root) = root {
-            builder = builder.add_root_certificate(root);
+            .connect_timeout(Duration::from_secs(5));
+        use rustls::pki_types::{CertificateDer, pem::PemObject};
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+        if let Some(bytes) = root {
+            for cert in CertificateDer::pem_slice_iter(&bytes) {
+                roots.add(cert?)?;
+            }
+            builder = builder.add_root_certificate(reqwest::Certificate::from_pem(&bytes)?);
         }
+        let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
         Ok(Self {
             client: builder.build()?,
             max_bytes,
+            tls: std::sync::Arc::new(tls),
         })
     }
 
+    pub(crate) async fn websocket(
+        &self,
+        base: &Url,
+        secret: &str,
+        limit: usize,
+    ) -> Result<UpstreamSocket, ()> {
+        use tokio_tungstenite::{
+            Connector, connect_async_tls_with_config,
+            tungstenite::{client::IntoClientRequest, protocol::WebSocketConfig},
+        };
+        let mut url = Self::endpoint(base, Endpoint::OpenaiResponses);
+        url.set_scheme("wss").map_err(|_| ())?;
+        let mut req = url.as_str().into_client_request().map_err(|_| ())?;
+        req.headers_mut().insert(
+            "authorization",
+            format!("Bearer {secret}").parse().map_err(|_| ())?,
+        );
+        let config = WebSocketConfig::default()
+            .max_message_size(Some(limit))
+            .max_frame_size(Some(limit))
+            .write_buffer_size(0)
+            .max_write_buffer_size(limit + 1024);
+        let (ws, _) = tokio::time::timeout(
+            Duration::from_secs(10),
+            connect_async_tls_with_config(
+                req,
+                Some(config),
+                true,
+                Some(Connector::Rustls(self.tls.clone())),
+            ),
+        )
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+        Ok(ws)
+    }
+    pub(crate) fn endpoint(base: &Url, endpoint: Endpoint) -> Url {
+        let mut url = base.clone();
+        let path = url.path().trim_end_matches('/');
+        let prefix = if path.ends_with("/v1") {
+            path.to_string()
+        } else {
+            format!("{path}/v1")
+        };
+        let resource = match endpoint {
+            Endpoint::AnthropicMessages => "messages",
+            Endpoint::OpenaiResponses => "responses",
+        };
+        url.set_path(&format!("{prefix}/{resource}"));
+        url
+    }
+    pub(crate) async fn open(
+        &self,
+        base: &Url,
+        endpoint: Endpoint,
+        secret: &str,
+        body: &Value,
+        stream: bool,
+    ) -> Result<reqwest::Response, ()> {
+        let mut call = self.client.post(Self::endpoint(base, endpoint));
+        call = match endpoint {
+            Endpoint::AnthropicMessages => call
+                .header("x-api-key", secret)
+                .header("anthropic-version", "2023-06-01"),
+            Endpoint::OpenaiResponses => call.bearer_auth(secret),
+        };
+        if !stream {
+            call = call.timeout(Duration::from_secs(120));
+        }
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            call.header(
+                "accept",
+                if stream {
+                    "text/event-stream"
+                } else {
+                    "application/json"
+                },
+            )
+            .json(body)
+            .send(),
+        )
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())
+    }
     pub async fn generate(
         &self,
         base: &Url,
@@ -45,28 +144,14 @@ impl Upstream {
         secret: &str,
         body: &Value,
     ) -> Result<Reply, ()> {
-        let mut url = base.clone();
-        let path = url.path().trim_end_matches('/');
-        let prefix = if path.ends_with("/v1") {
-            path.to_owned()
-        } else {
-            format!("{path}/v1")
-        };
-        let mut call = match endpoint {
-            Endpoint::AnthropicMessages => {
-                url.set_path(&format!("{prefix}/messages"));
-                self.client
-                    .post(url)
-                    .header("x-api-key", secret)
-                    .header("anthropic-version", "2023-06-01")
-            }
-            Endpoint::OpenaiResponses => {
-                url.set_path(&format!("{prefix}/responses"));
-                self.client.post(url).bearer_auth(secret)
-            }
-        };
-        call = call.header("accept", "application/json").json(body);
-        let mut res = call.send().await.map_err(|_| ())?;
+        let res = self.open(base, endpoint, secret, body, false).await?;
+        self.buffered(res, endpoint).await
+    }
+    pub(crate) async fn buffered(
+        &self,
+        mut res: reqwest::Response,
+        endpoint: Endpoint,
+    ) -> Result<Reply, ()> {
         let status = res.status();
         if res
             .content_length()
@@ -95,31 +180,10 @@ impl Upstream {
             }
             Err(_) => return Err(()),
         };
-        let outcome = match (status.is_success(), done.terminal) {
-            (_, Terminal::Failed) => "failed",
-            (true, Terminal::Completed)
-                if endpoint == Endpoint::OpenaiResponses
-                    || matches!(
-                        done.stop_reason.as_deref(),
-                        Some(
-                            "end_turn"
-                                | "max_tokens"
-                                | "stop_sequence"
-                                | "tool_use"
-                                | "pause_turn"
-                                | "refusal"
-                                | "model_context_window_exceeded"
-                        )
-                    ) =>
-            {
-                "succeeded"
-            }
-            (true, Terminal::Incomplete)
-                if done.stop_reason.as_deref() == Some("max_output_tokens") =>
-            {
-                "succeeded"
-            }
-            _ => "unknown",
+        let outcome = if status.is_success() || done.outcome(endpoint) == "failed" {
+            done.outcome(endpoint)
+        } else {
+            "unknown"
         };
         if status.is_redirection() {
             return Err(());
@@ -133,3 +197,6 @@ impl Upstream {
         })
     }
 }
+
+pub(crate) type UpstreamSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;

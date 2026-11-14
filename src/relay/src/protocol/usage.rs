@@ -72,6 +72,7 @@ impl UsageEvidence {
                         "input_tokens",
                         "output_tokens",
                         "total_tokens",
+                        "attribution",
                         "input_tokens_details",
                         "output_tokens_details",
                     ],
@@ -81,7 +82,14 @@ impl UsageEvidence {
                 }
                 if let Some(v) = obj.get("input_tokens_details").filter(|v| !v.is_null()) {
                     let details = object(v)?;
-                    fields(details, &["cached_tokens", "cache_write_tokens"])?;
+                    fields(
+                        details,
+                        &[
+                            "cached_tokens",
+                            "cache_write_tokens",
+                            "cache_write_tokens_details",
+                        ],
+                    )?;
                     counter(details, "cached_tokens", "cached_input_tokens", &mut counts)?;
                     counter(
                         details,
@@ -89,6 +97,28 @@ impl UsageEvidence {
                         "cache_write_tokens",
                         &mut counts,
                     )?;
+                }
+                if let Some(lifetimes) = obj
+                    .get("input_tokens_details")
+                    .and_then(|d| d.get("cache_write_tokens_details"))
+                    .filter(|v| !v.is_null())
+                {
+                    let detail = object(lifetimes)?;
+                    fields(detail, &["ttl_30m_tokens", "ttl_12h_tokens"])?;
+                    let read = |key: &str| {
+                        detail
+                            .get(key)
+                            .and_then(Value::as_u64)
+                            .filter(|&n| n <= 1_000_000_000)
+                            .ok_or(ProtocolError::Invalid("cache write breakdown"))
+                    };
+                    let total = read("ttl_30m_tokens")? + read("ttl_12h_tokens")?;
+                    if counts.get("cache_write_tokens").map(|n| u64::from(*n)) != Some(total) {
+                        return Err(ProtocolError::Invalid("cache write breakdown"));
+                    }
+                }
+                if let Some(v) = obj.get("attribution").filter(|v| !v.is_null()) {
+                    validate_attribution(v, &counts)?;
                 }
                 if let Some(v) = obj.get("output_tokens_details").filter(|v| !v.is_null()) {
                     let details = object(v)?;
@@ -129,6 +159,72 @@ fn counter(
             .filter(|&n| n <= 1_000_000_000)
             .ok_or(ProtocolError::Invalid("token count"))?;
         counts.insert(field, n as u32);
+    }
+    Ok(())
+}
+
+// Some native Responses deployments also attribute aggregate counters to input/output items.
+// Accept a breakdown of known counters, without adding its item or content rows to billing.
+fn validate_attribution(value: &Value, counts: &BTreeMap<&str, u32>) -> Result<(), ProtocolError> {
+    let attribution = object(value)?;
+    fields(attribution, &["items"])?;
+    let items = object(
+        attribution
+            .get("items")
+            .ok_or(ProtocolError::Invalid("attribution items"))?,
+    )?;
+    let mut sum = [0u64; 4];
+    for row in items.values() {
+        let row = object(row)?;
+        fields(
+            row,
+            &[
+                "input_tokens",
+                "cached_tokens",
+                "cache_write_tokens",
+                "output_tokens",
+                "content",
+            ],
+        )?;
+        let keys = [
+            "input_tokens",
+            "cached_tokens",
+            "cache_write_tokens",
+            "output_tokens",
+        ];
+        for (i, key) in keys.iter().enumerate() {
+            if let Some(v) = row.get(*key) {
+                sum[i] += v
+                    .as_u64()
+                    .filter(|&n| n <= 1_000_000_000)
+                    .ok_or(ProtocolError::Invalid("attribution counter"))?;
+            }
+        }
+        if let Some(parts) = row.get("content") {
+            for part in parts
+                .as_array()
+                .ok_or(ProtocolError::Invalid("attribution content"))?
+            {
+                let sub = object(part)?;
+                fields(sub, &keys)?;
+                if sub
+                    .values()
+                    .any(|v| v.as_u64().is_none_or(|n| n > 1_000_000_000))
+                {
+                    return Err(ProtocolError::Invalid("attribution counter"));
+                }
+            }
+        }
+    }
+    for (n, key) in sum.into_iter().zip([
+        "input_tokens",
+        "cached_input_tokens",
+        "cache_write_tokens",
+        "output_tokens",
+    ]) {
+        if n > u64::from(*counts.get(key).unwrap_or(&0)) {
+            return Err(ProtocolError::Invalid("attribution exceeds aggregate"));
+        }
     }
     Ok(())
 }

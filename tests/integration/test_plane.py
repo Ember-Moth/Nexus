@@ -53,9 +53,11 @@ async def plane(http, admin):
 
 
 @asynccontextmanager
-async def provision_plane(http, admin, protocol="openai_compatible", **upstream_options):
+async def provision_plane(
+    http, admin, protocol="openai_compatible", *, balance="100", **upstream_options
+):
     client, root, app, settings = http
-    org, _, _ = await setup_wallet(http)
+    org, _, _ = await setup_wallet(http, balance)
     model, dep, _, _, admission = await setup_model(http, org, protocol, **upstream_options)
     from test_project_credentials import key as issue_key
 

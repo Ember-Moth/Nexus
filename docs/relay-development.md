@@ -4,7 +4,7 @@
 
 ## 运行现有实现
 
-从仓库根目录执行 `cargo build --release --locked --manifest-path src/relay/Cargo.toml`，生成 `src/relay/target/release/nexus-relay`。节点通过 HTTP/1.1 提供非流式 `POST /v1/messages` 和 `POST /v1/responses`，向部署发起原生 HTTPS 请求。每个下游响应写完后关闭连接。对外 TLS 由入口负载均衡终止，`GET /ready` 可用于就绪检查。SSE 与 Responses WebSocket 在 P3 单独启用。
+从仓库根目录执行 `cargo build --release --locked --manifest-path src/relay/Cargo.toml`，生成 `src/relay/target/release/nexus-relay`。节点通过 HTTP/1.1 提供 `POST /v1/messages`、`POST /v1/responses` 和 `GET /v1/responses` Upgrade。POST 支持普通 JSON 和 `stream=true` 的 SSE。Upgrade 建立串行多轮会话，首轮准入后才拨部署的 WSS。对外 TLS 由入口负载均衡终止，`GET /ready` 提供就绪状态。
 
 | 环境变量 | 节点配置 |
 | --- | --- |
@@ -14,13 +14,19 @@
 | `NEXUS_RELAY_LISTEN`、`NEXUS_RELAY_POOL_SIZE` | 默认监听 `127.0.0.1:8081`，每个节点默认最多 8 个数据库连接 |
 | `NEXUS_RELAY_REQUEST_BYTES`、`NEXUS_RELAY_RESPONSE_BYTES` | 默认请求上限 2 MiB，解压后非流式响应上限 8 MiB |
 | `NEXUS_RELAY_CONCURRENCY`、`NEXUS_RELAY_LEASE_MS` | 默认最多 128 个并发任务，Redis 租期默认 15000 毫秒，范围 100 至 60000 毫秒 |
+| `NEXUS_RELAY_EVENT_BYTES`、`NEXUS_RELAY_STREAM_IDLE_MS` | 每个 SSE 事件和 WS 消息默认上限 1 MiB，上游事件和下游写出空闲时限默认 30000 毫秒 |
+| `NEXUS_RELAY_WS_SESSIONS`、`NEXUS_RELAY_WS_SESSIONS_PER_TENANT`、`NEXUS_RELAY_WS_TURNS_PER_TENANT` | 单节点默认最多 128 个会话，同一企业在该节点默认最多 16 个会话和 16 个活跃轮次。跨节点生成额度由 Redis 控制 |
 | `NEXUS_RELAY_UPSTREAM_CA` | 可选的 PEM 根证书路径，用于拥有专用 CA 的 HTTPS 部署 |
 
-在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认强制 `store=false`，省略输出限制时使用部署上限。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。旧部署保留原配置，声明端点后才参与原生转发。
+在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 或 `websocket` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认强制 `store=false`，省略输出限制时使用部署上限。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。旧部署保留原配置，声明端点后才参与原生转发。
 
-本阶段节点支持 `reservation.v1`、`usage-events.v1`、`relay.native.v1` 三项能力。若快照要求 `relay.responses-ws.v1`，节点拒绝确认。节点校验修订和密文包后安装快照，监听 Redis 通知并定期向 PostgreSQL 复核。每次发送前重新核验凭据、预留及尝试，并续租。上游 POST 只发送一次；数据库回执丢失时按原 ID 重放。完成任务持有独立的交付回执，写出结果未知时由 Worker 核对。
+流量按快照能力启用。基础节点登记 `reservation.v1`、`usage-events.v1`、`relay.native.v1`。HTTP 部署开启 `streaming` 时，新发布的快照另要求 `relay.sse.v1`，公开模型也需要开启流式能力。Responses 部署开启 `websocket` 时，还需 `relay.responses-ws.v1`。只有通过验证的部署才声明 `continuation` 和 `cancellation`。前者允许用本连接已完成的上一轮 ID 续接；后者允许转发原生取消事件。其余部署通过断开专属上游连接中止在途生成，保留未知结果供核对。
 
-运行 `cargo test --locked --manifest-path src/relay/Cargo.toml` 验证协议、路由及写出跟踪。运行 `uv run python scripts/run_integration.py -q tests/integration/test_plane.py tests/integration/test_relay.py` 验证两种入口、隔离 PostgreSQL/Redis、本地 HTTPS 上游与真实 Worker，包括 SQL 提交后回执丢失、撤权、换钥、续租、丢失租约和计量缺失。生产收费启用另需该部署的授权商户验证。
+WS 握手使用企业 Bearer Key，空闲和 ping/pong 不触发资金预留。每次 create 重查 Key、部署、凭据和模型，按覆盖完整上下文的部署上界预留，并使用独立尝试。每个连接最多一个在途轮次，同一会话复用固定上游连接。SSE 与 WS 通过有界队列传递事件并独立续租。节点以终态事件的真实写出结果判定交付。客户端已断开、结果未知或缺失用量时，Worker 依据已有事实核对。
+
+运行 `cargo test --locked --manifest-path src/relay/Cargo.toml` 验证协议、路由及写出跟踪。运行 `uv run python scripts/run_integration.py -q tests/integration/test_plane.py tests/integration/test_relay.py tests/integration/test_relay_streams.py` 验证真实客户端、本地 TLS 上游、隔离 PostgreSQL/Redis 和 Worker 的完整链路。
+
+获授权真实部署可运行 `tests/integration/test_live_relay_ws.py`。设置 `RELAY_ACCEPTANCE_WS_RUN=1`、`RELAY_ACCEPTANCE_WS_URL`、`RELAY_ACCEPTANCE_WS_MODEL` 和 `RELAY_ACCEPTANCE_WS_KEY`，使用上述隔离集成命令并指定该测试文件。测试只在一个连接串行发送两次生成，`RELAY_ACCEPTANCE_WS_OUTPUT` 默认每轮 64。商户 Key 写入本次隔离 catalog。给出 `wss://` 时 Relay 直接拨 TLS，给出回环 `ws://` 时测试搭建临时 TLS 入口，保留原始握手、帧和端点的升级状态。测试余额和真实上游计费分别核对。[Responses 续接语义](https://developers.openai.com/api/docs/guides/websocket-mode)
 
 ## 阶段、依赖与交付
 

@@ -99,7 +99,8 @@ async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
         "NEXUS_RELAY_LISTEN": f"127.0.0.1:{port}",
         "NEXUS_RELAY_LEASE_MS": "600",
     }
-    process = await asyncio.create_subprocess_exec(str(program), env={**os.environ, **env})
+    inherited = {k: v for k, v in os.environ.items() if not k.startswith("RELAY_ACCEPTANCE_WS_")}
+    process = await asyncio.create_subprocess_exec(str(program), env={**inherited, **env})
     try:
         async with httpx.AsyncClient(
             base_url=f"http://127.0.0.1:{port}", timeout=5, trust_env=False
@@ -114,6 +115,7 @@ async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
                     except httpx.ConnectError:
                         pass
                     await asyncio.sleep(0.05)
+            client.relay_process = process
             yield client
     finally:
         if process.returncode is None:

@@ -9,7 +9,13 @@ use uuid::Uuid;
 use super::{ControlError, credential::CredentialRef, database::Snapshot};
 use crate::protocol::{Endpoint, request::Generate, tokens::ReservationBounds};
 
-pub const CAPABILITIES: &[&str] = &["reservation.v1", "usage-events.v1", "relay.native.v1"];
+pub const CAPABILITIES: &[&str] = &[
+    "reservation.v1",
+    "usage-events.v1",
+    "relay.native.v1",
+    "relay.sse.v1",
+    "relay.responses-ws.v1",
+];
 
 #[derive(Deserialize)]
 pub struct Key {
@@ -91,6 +97,8 @@ struct Model {
 }
 #[derive(Deserialize)]
 struct ModelCapabilities {
+    #[serde(default)]
+    streaming: bool,
     tools: bool,
 }
 
@@ -114,7 +122,9 @@ pub struct Deployment {
     pub upstream_model: String,
     pub base_url: url::Url,
     pub credential_id: Uuid,
-    credential_version: i32,
+    pub credential_version: i32,
+    #[serde(default)]
+    pub upstream_version: i32,
     protocol_family: String,
     usage_format: Option<String>,
     relay_profile: Option<Profile>,
@@ -122,6 +132,12 @@ pub struct Deployment {
 
 #[derive(Deserialize)]
 struct Profile {
+    #[serde(default)]
+    streaming: bool,
+    #[serde(default)]
+    continuation: bool,
+    #[serde(default)]
+    cancellation: bool,
     endpoint: Endpoint,
     transports: Vec<String>,
     tools: bool,
@@ -179,12 +195,50 @@ pub enum Rejection {
     Unavailable,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Binding {
+    pub deployment: Uuid,
+    pub model: Uuid,
+    pub organization: Uuid,
+    pub project: Uuid,
+    pub key: Uuid,
+    pub credential: Uuid,
+    pub credential_version: i32,
+    pub upstream_version: i32,
+    pub upstream_model: String,
+    pub base_url: url::Url,
+}
+
 pub struct Selection<'a> {
     pub deployment: &'a Deployment,
     pub model: Uuid,
     pub key: &'a Key,
     pub bounds: ReservationBounds,
     pub body: serde_json::Value,
+}
+
+impl Selection<'_> {
+    pub fn binding(&self) -> Binding {
+        let d = self.deployment;
+        Binding {
+            deployment: d.id,
+            model: self.model,
+            organization: self.key.organization_id,
+            project: self.key.project_id,
+            key: self.key.id,
+            credential: d.credential_id,
+            credential_version: d.credential_version,
+            upstream_version: d.upstream_version,
+            upstream_model: d.upstream_model.clone(),
+            base_url: d.base_url.clone(),
+        }
+    }
+    pub fn cancellation(&self) -> bool {
+        self.deployment
+            .relay_profile
+            .as_ref()
+            .is_some_and(|p| p.cancellation)
+    }
 }
 
 impl Index {
@@ -258,7 +312,14 @@ impl Index {
                         .required_capabilities
                         .iter()
                         .any(|c| c == "relay.native.v1")
-                    || p.transports.as_slice() != ["http"]
+                    || p.transports.is_empty()
+                    || p.transports.iter().any(|t| t != "http" && t != "websocket")
+                    || (p.transports.iter().any(|t| t == "websocket")
+                        && (p.endpoint != Endpoint::OpenaiResponses
+                            || !snapshot
+                                .required_capabilities
+                                .iter()
+                                .any(|c| c == "relay.responses-ws.v1")))
                     || p.bound_reference.trim().is_empty()
                     || !matches!(
                         p.count_rule.as_str(),
@@ -300,13 +361,24 @@ impl Index {
         Ok(index)
     }
 
-    pub fn select(&self, secret: &str, request: &Generate) -> Result<Selection<'_>, Rejection> {
+    pub fn authenticate(&self, secret: &str) -> Result<&Key, Rejection> {
         let digest = format!("{:x}", Sha256::digest(secret.as_bytes()));
-        let key = self
-            .keys
+        self.keys
             .get(&digest)
             .filter(|k| k.expires_at.is_none_or(|t| t > Utc::now()))
-            .ok_or(Rejection::Key)?;
+            .ok_or(Rejection::Key)
+    }
+    pub fn select(&self, secret: &str, request: &Generate) -> Result<Selection<'_>, Rejection> {
+        self.route(secret, request, false, None)
+    }
+    pub fn route(
+        &self,
+        secret: &str,
+        request: &Generate,
+        ws: bool,
+        pinned: Option<&Binding>,
+    ) -> Result<Selection<'_>, Rejection> {
+        let key = self.authenticate(secret)?;
         let m = self
             .models
             .get(&request.model)
@@ -327,7 +399,9 @@ impl Index {
         if !platform {
             return Err(Rejection::Forbidden);
         }
-        if request.stream || request.has_tools() && !m.capabilities.tools {
+        if (request.stream && !ws && !m.capabilities.streaming)
+            || request.has_tools() && !m.capabilities.tools
+        {
             return Err(Rejection::Unsupported);
         }
         let route = self
@@ -343,6 +417,13 @@ impl Index {
                 continue;
             };
             if profile.endpoint != request.endpoint
+                || !profile
+                    .transports
+                    .iter()
+                    .any(|t| t == if ws { "websocket" } else { "http" })
+                || (request.stream && !ws && !profile.streaming)
+                || (request.previous_response_id().is_some() && !profile.continuation)
+                || pinned.is_some_and(|p| p.deployment != dep.id)
                 || (request.has_tools() && !profile.tools)
                 || request
                     .requested_output
@@ -364,12 +445,16 @@ impl Index {
         let (body, bounds) = request
             .prepare_native(&dep.upstream_model, p.input_ceiling, p.output_ceiling)
             .map_err(|_| Rejection::Unsupported)?;
-        Ok(Selection {
+        let selection = Selection {
             deployment: dep,
             key,
             model: m.id,
             body,
             bounds,
-        })
+        };
+        if pinned.is_some_and(|b| *b != selection.binding()) {
+            return Err(Rejection::Unavailable);
+        }
+        Ok(selection)
     }
 }

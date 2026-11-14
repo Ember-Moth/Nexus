@@ -168,6 +168,8 @@ class PublicationService:
             profiles = [d["relay_profile"] for d in current["deployments"] if "relay_profile" in d]
             if profiles:
                 required.append("relay.native.v1")
+            if any(p.get("streaming") and "http" in p["transports"] for p in profiles):
+                required.append("relay.sse.v1")
             if any("websocket" in p["transports"] for p in profiles):
                 required.append("relay.responses-ws.v1")
             if any(not set(required) <= set(n["capabilities"]) for n in nodes):

@@ -38,6 +38,7 @@ impl Attempt {
         db: &Gateway,
         outcome: &str,
         delivery: &str,
+        attempt_delivered: bool,
         response_id: Option<&str>,
         usage: UsageEvidence,
     ) {
@@ -63,7 +64,7 @@ impl Attempt {
             json!({
                 "delivery_outcome": delivery,
                 "attempt_ids": [self.attempt],
-                "delivered_attempt_id": (delivery == "succeeded").then_some(self.attempt),
+                "delivered_attempt_id": attempt_delivered.then_some(self.attempt),
             }),
         );
         for event in [finished, closed] {
@@ -93,6 +94,7 @@ impl Attempt {
             db,
             "unknown",
             "unknown",
+            false,
             None,
             UsageEvidence {
                 usage_format: self.endpoint.usage_format(),

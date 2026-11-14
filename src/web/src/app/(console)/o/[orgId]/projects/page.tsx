@@ -77,7 +77,7 @@ function ServiceAccounts({ orgId, project, canManage }: { orgId: string; project
         nexus.PATCH("/api/v1/organizations/{organization_id}/service-accounts/{account_id}", {
           params: {
             path: { organization_id: orgId, account_id: account.id },
-            header: { "if-match": `"${account.version}"` },
+            header: { "If-Match": `"${account.version}"` },
           },
           body: { status: account.status === "active" ? "disabled" : "active" },
         }),
@@ -217,7 +217,7 @@ function ProjectDetail({ orgId, projectId, canManageProject, canManageAccounts }
     mutationFn: async ({ etag, status }: { etag: string; status: "active" | "disabled" }) =>
       call(() =>
         nexus.PATCH("/api/v1/organizations/{organization_id}/projects/{project_id}", {
-          params: { path: { organization_id: orgId, project_id: projectId }, header: { "if-match": etag } },
+          params: { path: { organization_id: orgId, project_id: projectId }, header: { "If-Match": etag } },
           body: { status },
         }),
       ),
@@ -277,10 +277,10 @@ function ProjectDetail({ orgId, projectId, canManageProject, canManageAccounts }
           </Link>
         </TabsContent>
         <TabsContent value="grants" className="pt-4 text-sm text-muted-foreground">
-          {t("skeleton.body")} <code className="font-mono text-xs">GET/POST /organizations/{"{org}"}/project-grants</code>
+          {t("skeleton.body")} <code className="font-mono text-xs">GET/POST /organizations/{"{organization_id}"}/project-grants</code>
         </TabsContent>
         <TabsContent value="policies" className="pt-4 text-sm text-muted-foreground">
-          {t("skeleton.body")} <code className="font-mono text-xs">GET/POST /organizations/{"{org}"}/access-policies</code>
+          {t("skeleton.body")} <code className="font-mono text-xs">GET/POST /organizations/{"{organization_id}"}/access-policies</code>
         </TabsContent>
       </Tabs>
     </div>

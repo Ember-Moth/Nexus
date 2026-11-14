@@ -88,7 +88,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/cost-price-versions/{resource_id}": {
+    "/api/v1/cost-price-versions/{price_version_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -96,17 +96,17 @@ export type paths = {
             cookie?: never;
         };
         /** Price */
-        get: operations["price_api_v1_cost_price_versions__resource_id__get"];
+        get: operations["price_api_v1_cost_price_versions__price_version_id__get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
         /** Edit Price */
-        patch: operations["edit_price_api_v1_cost_price_versions__resource_id__patch"];
+        patch: operations["edit_price_api_v1_cost_price_versions__price_version_id__patch"];
         trace?: never;
     };
-    "/api/v1/cost-price-versions/{resource_id}/publish": {
+    "/api/v1/cost-price-versions/{price_version_id}/publish": {
         parameters: {
             query?: never;
             header?: never;
@@ -116,7 +116,7 @@ export type paths = {
         get?: never;
         put?: never;
         /** Publish Price */
-        post: operations["publish_price_api_v1_cost_price_versions__resource_id__publish_post"];
+        post: operations["publish_price_api_v1_cost_price_versions__price_version_id__publish_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -166,7 +166,10 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        /** Clusters */
+        /**
+         * Clusters
+         * @description Gateway clusters ordered by id.
+         */
         get: operations["clusters_api_v1_gateway_clusters_get"];
         put?: never;
         /** Cluster */
@@ -177,7 +180,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/gateway-clusters/{cid}": {
+    "/api/v1/gateway-clusters/{cluster_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -191,10 +194,10 @@ export type paths = {
         options?: never;
         head?: never;
         /** Update */
-        patch: operations["update_api_v1_gateway_clusters__cid__patch"];
+        patch: operations["update_api_v1_gateway_clusters__cluster_id__patch"];
         trace?: never;
     };
-    "/api/v1/gateway-clusters/{cid}/principals/{node_id}": {
+    "/api/v1/gateway-clusters/{cluster_id}/principals/{node_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -203,7 +206,7 @@ export type paths = {
         };
         get?: never;
         /** Principal */
-        put: operations["principal_api_v1_gateway_clusters__cid__principals__node_id__put"];
+        put: operations["principal_api_v1_gateway_clusters__cluster_id__principals__node_id__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -211,7 +214,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/gateway-clusters/{cid}/releases": {
+    "/api/v1/gateway-clusters/{cluster_id}/releases": {
         parameters: {
             query?: never;
             header?: never;
@@ -221,14 +224,14 @@ export type paths = {
         get?: never;
         put?: never;
         /** Release */
-        post: operations["release_api_v1_gateway_clusters__cid__releases_post"];
+        post: operations["release_api_v1_gateway_clusters__cluster_id__releases_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/gateway-clusters/{cid}/releases/{revision}": {
+    "/api/v1/gateway-clusters/{cluster_id}/releases/{revision}": {
         parameters: {
             query?: never;
             header?: never;
@@ -236,7 +239,7 @@ export type paths = {
             cookie?: never;
         };
         /** Status */
-        get: operations["status_api_v1_gateway_clusters__cid__releases__revision__get"];
+        get: operations["status_api_v1_gateway_clusters__cluster_id__releases__revision__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -310,24 +313,6 @@ export type paths = {
         put?: never;
         /** Create Organization */
         post: operations["create_organization_api_v1_organizations_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/organizations/{org}/quota-policies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Quotas */
-        get: operations["quotas_api_v1_organizations__org__quota_policies_get"];
-        put?: never;
-        /** Quota */
-        post: operations["quota_api_v1_organizations__org__quota_policies_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -457,7 +442,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/adjustments/{resource_id}": {
+    "/api/v1/organizations/{organization_id}/adjustments/{adjustment_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -465,7 +450,7 @@ export type paths = {
             cookie?: never;
         };
         /** Get Resource */
-        get: operations["get_resource_api_v1_organizations__organization_id__adjustments__resource_id__get"];
+        get: operations["get_resource_api_v1_organizations__organization_id__adjustments__adjustment_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -474,7 +459,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/adjustments/{resource_id}/post": {
+    "/api/v1/organizations/{organization_id}/adjustments/{adjustment_id}/post": {
         parameters: {
             query?: never;
             header?: never;
@@ -484,7 +469,7 @@ export type paths = {
         get?: never;
         put?: never;
         /** Post Adjustment */
-        post: operations["post_adjustment_api_v1_organizations__organization_id__adjustments__resource_id__post_post"];
+        post: operations["post_adjustment_api_v1_organizations__organization_id__adjustments__adjustment_id__post_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -578,7 +563,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/budget-policies/{resource_id}": {
+    "/api/v1/organizations/{organization_id}/budget-policies/{budget_policy_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -586,17 +571,17 @@ export type paths = {
             cookie?: never;
         };
         /** Get Resource */
-        get: operations["get_resource_api_v1_organizations__organization_id__budget_policies__resource_id__get"];
+        get: operations["get_resource_api_v1_organizations__organization_id__budget_policies__budget_policy_id__get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
         /** Update Budget */
-        patch: operations["update_budget_api_v1_organizations__organization_id__budget_policies__resource_id__patch"];
+        patch: operations["update_budget_api_v1_organizations__organization_id__budget_policies__budget_policy_id__patch"];
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/budget-policies/{resource_id}/periods": {
+    "/api/v1/organizations/{organization_id}/budget-policies/{budget_policy_id}/periods": {
         parameters: {
             query?: never;
             header?: never;
@@ -604,7 +589,7 @@ export type paths = {
             cookie?: never;
         };
         /** Budget Periods */
-        get: operations["budget_periods_api_v1_organizations__organization_id__budget_policies__resource_id__periods_get"];
+        get: operations["budget_periods_api_v1_organizations__organization_id__budget_policies__budget_policy_id__periods_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -648,7 +633,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/discount-versions/{resource_id}": {
+    "/api/v1/organizations/{organization_id}/discount-versions/{discount_version_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -662,10 +647,10 @@ export type paths = {
         options?: never;
         head?: never;
         /** Edit Discount */
-        patch: operations["edit_discount_api_v1_organizations__organization_id__discount_versions__resource_id__patch"];
+        patch: operations["edit_discount_api_v1_organizations__organization_id__discount_versions__discount_version_id__patch"];
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/discount-versions/{resource_id}/publish": {
+    "/api/v1/organizations/{organization_id}/discount-versions/{discount_version_id}/publish": {
         parameters: {
             query?: never;
             header?: never;
@@ -675,7 +660,7 @@ export type paths = {
         get?: never;
         put?: never;
         /** Publish Discount */
-        post: operations["publish_discount_api_v1_organizations__organization_id__discount_versions__resource_id__publish_post"];
+        post: operations["publish_discount_api_v1_organizations__organization_id__discount_versions__discount_version_id__publish_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -751,7 +736,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/funding-records/{resource_id}": {
+    "/api/v1/organizations/{organization_id}/funding-records/{funding_record_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -759,17 +744,17 @@ export type paths = {
             cookie?: never;
         };
         /** Get Resource */
-        get: operations["get_resource_api_v1_organizations__organization_id__funding_records__resource_id__get"];
+        get: operations["get_resource_api_v1_organizations__organization_id__funding_records__funding_record_id__get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
         /** Update Funding */
-        patch: operations["update_funding_api_v1_organizations__organization_id__funding_records__resource_id__patch"];
+        patch: operations["update_funding_api_v1_organizations__organization_id__funding_records__funding_record_id__patch"];
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/funding-records/{resource_id}/cancel": {
+    "/api/v1/organizations/{organization_id}/funding-records/{funding_record_id}/cancel": {
         parameters: {
             query?: never;
             header?: never;
@@ -779,14 +764,14 @@ export type paths = {
         get?: never;
         put?: never;
         /** Cancel Funding */
-        post: operations["cancel_funding_api_v1_organizations__organization_id__funding_records__resource_id__cancel_post"];
+        post: operations["cancel_funding_api_v1_organizations__organization_id__funding_records__funding_record_id__cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/funding-records/{resource_id}/post": {
+    "/api/v1/organizations/{organization_id}/funding-records/{funding_record_id}/post": {
         parameters: {
             query?: never;
             header?: never;
@@ -796,7 +781,7 @@ export type paths = {
         get?: never;
         put?: never;
         /** Post Funding */
-        post: operations["post_funding_api_v1_organizations__organization_id__funding_records__resource_id__post_post"];
+        post: operations["post_funding_api_v1_organizations__organization_id__funding_records__funding_record_id__post_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -820,7 +805,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organizations/{organization_id}/ledger/{resource_id}": {
+    "/api/v1/organizations/{organization_id}/ledger/{ledger_entry_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -828,7 +813,7 @@ export type paths = {
             cookie?: never;
         };
         /** Ledger Entry */
-        get: operations["ledger_entry_api_v1_organizations__organization_id__ledger__resource_id__get"];
+        get: operations["ledger_entry_api_v1_organizations__organization_id__ledger__ledger_entry_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1084,6 +1069,55 @@ export type paths = {
         patch: operations["update_project_api_v1_organizations__organization_id__projects__project_id__patch"];
         trace?: never;
     };
+    "/api/v1/organizations/{organization_id}/quota-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Quotas
+         * @description Quota policies of the organization ordered by id.
+         */
+        get: operations["quotas_api_v1_organizations__organization_id__quota_policies_get"];
+        put?: never;
+        /**
+         * Quota
+         * @deprecated
+         * @description Deprecated alias of the quota policy PUT on its natural key.
+         */
+        post: operations["quota_api_v1_organizations__organization_id__quota_policies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{organization_id}/quota-policies/{layer}/{scope_type}/{scope_id}/{metric}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Quota
+         * @description Create the policy without If-Match, or replace the version If-Match names.
+         *
+         *     For organization scope, `scope_id` is the organization itself. Without If-Match an
+         *     existing policy is not overwritten (428); a version that is not current, including one
+         *     for a policy that does not exist, returns 412.
+         */
+        put: operations["put_quota_api_v1_organizations__organization_id__quota_policies__layer___scope_type___scope_id___metric__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organizations/{organization_id}/requests": {
         parameters: {
             query?: never;
@@ -1293,7 +1327,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/receiving-accounts/{resource_id}": {
+    "/api/v1/receiving-accounts/{receiving_account_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1307,7 +1341,7 @@ export type paths = {
         options?: never;
         head?: never;
         /** Update Receiving */
-        patch: operations["update_receiving_api_v1_receiving_accounts__resource_id__patch"];
+        patch: operations["update_receiving_api_v1_receiving_accounts__receiving_account_id__patch"];
         trace?: never;
     };
     "/api/v1/reconciliation-cases": {
@@ -1385,11 +1419,41 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        /** Routes */
+        /**
+         * Routes
+         * @description Route policies ordered by organization_id, then model_id.
+         */
         get: operations["routes_api_v1_route_policies_get"];
         put?: never;
-        /** Route */
+        /**
+         * Route
+         * @deprecated
+         * @description Deprecated alias of `PUT /route-policies/{organization_id}/{model_id}`.
+         */
         post: operations["route_api_v1_route_policies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/route-policies/{organization_id}/{model_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Route
+         * @description Create the policy without If-Match, or replace the version If-Match names.
+         *
+         *     Without If-Match an existing policy is not overwritten (428); a version that is not
+         *     current, including one for a policy that does not exist, returns 412.
+         */
+        put: operations["put_route_api_v1_route_policies__organization_id___model_id__put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1414,7 +1478,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sale-price-versions/{resource_id}": {
+    "/api/v1/sale-price-versions/{price_version_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1422,17 +1486,17 @@ export type paths = {
             cookie?: never;
         };
         /** Price */
-        get: operations["price_api_v1_sale_price_versions__resource_id__get"];
+        get: operations["price_api_v1_sale_price_versions__price_version_id__get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
         /** Edit Price */
-        patch: operations["edit_price_api_v1_sale_price_versions__resource_id__patch"];
+        patch: operations["edit_price_api_v1_sale_price_versions__price_version_id__patch"];
         trace?: never;
     };
-    "/api/v1/sale-price-versions/{resource_id}/publish": {
+    "/api/v1/sale-price-versions/{price_version_id}/publish": {
         parameters: {
             query?: never;
             header?: never;
@@ -1442,7 +1506,7 @@ export type paths = {
         get?: never;
         put?: never;
         /** Publish Price */
-        post: operations["publish_price_api_v1_sale_price_versions__resource_id__publish_post"];
+        post: operations["publish_price_api_v1_sale_price_versions__price_version_id__publish_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1651,6 +1715,19 @@ export type components = {
             /** Version */
             version: number;
         };
+        /** AccountUnfrozen */
+        AccountUnfrozen: {
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "active";
+        };
         /** AccountView */
         AccountView: {
             /**
@@ -1732,6 +1809,101 @@ export type components = {
             status: string;
             /** Version */
             version: number;
+        };
+        /** AttemptCostEntry */
+        AttemptCostEntry: {
+            /**
+             * Api Key Id
+             * Format: uuid
+             */
+            api_key_id: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Corrected Quantities */
+            corrected_quantities: {
+                [key: string]: number;
+            } | null;
+            /** Correction Id */
+            correction_id: string | null;
+            cost_amount: components["schemas"]["DecimalString"] | null;
+            /** Cost Lines */
+            cost_lines: components["schemas"]["ChargeLine"][] | null;
+            /**
+             * Cost Price Version Id
+             * Format: uuid
+             */
+            cost_price_version_id: string;
+            /**
+             * Deployment Id
+             * Format: uuid
+             */
+            deployment_id: string;
+            effective_cost: components["schemas"]["DecimalString"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "cost" | "cost_correction" | "pending";
+            /**
+             * Model Id
+             * Format: uuid
+             */
+            model_id: string;
+            occurred_at: components["schemas"]["Timestamp"];
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            original_cost: components["schemas"]["DecimalString"] | null;
+            posted_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** AuditEvent */
+        AuditEvent: {
+            /** Action */
+            action: string;
+            /** Actor Id */
+            actor_id: string | null;
+            created_at: components["schemas"]["Timestamp"];
+            /** Decision Id */
+            decision_id: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Module
+             * @enum {string}
+             */
+            module: "identity" | "catalog" | "billing" | "publication" | "reporting";
+            /** Organization Id */
+            organization_id: string | null;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Resource Id
+             * Format: uuid
+             */
+            resource_id: string;
         };
         /** BudgetCreate */
         BudgetCreate: {
@@ -1870,6 +2042,72 @@ export type components = {
              */
             tools: boolean;
         };
+        /** CaseDecision */
+        CaseDecision: {
+            /** Action */
+            action: string;
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            created_at: components["schemas"]["Timestamp"];
+            /** Evidence */
+            evidence: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Reason */
+            reason: string;
+            /** Result */
+            result: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+        };
+        /**
+         * CaseResolution
+         * @description The decision outcome; the fields after `action` depend on the case source.
+         */
+        CaseResolution: {
+            /** Account Id */
+            account_id?: string | null;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "confirm_no_charge" | "supplement_usage" | "retry" | "waive" | "verify_payment" | "confirm_cost";
+            adjusted_amount?: components["schemas"]["DecimalString"] | null;
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            charged_amount?: components["schemas"]["DecimalString"] | null;
+            /** Correction Id */
+            correction_id?: string | null;
+            cost_amount?: components["schemas"]["DecimalString"] | null;
+            /**
+             * Decision Id
+             * Format: uuid
+             */
+            decision_id: string;
+            gross_amount?: components["schemas"]["DecimalString"] | null;
+            /** Observation Id */
+            observation_id?: string | null;
+            /** Order Id */
+            order_id?: string | null;
+            /** Processing State */
+            processing_state?: "queued" | null;
+            /** Request Id */
+            request_id?: string | null;
+            waived_amount?: components["schemas"]["DecimalString"] | null;
+        };
         /** ChannelCreate */
         ChannelCreate: {
             /** Adapter Type */
@@ -1979,6 +2217,76 @@ export type components = {
             /** Version */
             version: number;
         };
+        /** ChargeEntry */
+        ChargeEntry: {
+            amount: components["schemas"]["DecimalString"] | null;
+            /**
+             * Api Key Id
+             * Format: uuid
+             */
+            api_key_id: string;
+            /** Charge Lines */
+            charge_lines: components["schemas"]["ChargeLine"][] | null;
+            /** Currency */
+            currency: string;
+            /**
+             * Discount Version Id
+             * Format: uuid
+             */
+            discount_version_id: string;
+            gross_amount: components["schemas"]["DecimalString"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "charge";
+            /**
+             * Model Id
+             * Format: uuid
+             */
+            model_id: string;
+            occurred_at: components["schemas"]["Timestamp"];
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            posted_at: components["schemas"]["Timestamp"];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /**
+             * Sale Price Version Id
+             * Format: uuid
+             */
+            sale_price_version_id: string;
+            waived_amount: components["schemas"]["DecimalString"];
+        };
+        /** ChargeLine */
+        ChargeLine: {
+            /** Dimension */
+            dimension: string;
+            discount_factor: components["schemas"]["DecimalString"];
+            /** Quantity */
+            quantity: number;
+            unit_price: components["schemas"]["DecimalString"];
+            /** Unit Quantity */
+            unit_quantity: number;
+            unrounded_amount: components["schemas"]["DecimalString"];
+        };
+        ChargeRecord: components["schemas"]["ChargeEntry"] | components["schemas"]["RefundEntry"];
         /** CheckoutData */
         CheckoutData: {
             /** Destination */
@@ -2022,6 +2330,39 @@ export type components = {
             organization_ids?: string[] | null;
             /** Public Key */
             public_key?: string | null;
+        };
+        /** ClusterView */
+        ClusterView: {
+            /** Active */
+            active: boolean;
+            /** Deployment Ids */
+            deployment_ids: string[];
+            /** Desired Revision */
+            desired_revision: string;
+            /** Distributed Revision */
+            distributed_revision: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Key Version */
+            key_version: number;
+            /** Name */
+            name: string;
+            /** Organization Ids */
+            organization_ids: string[];
+            /**
+             * Public Key
+             * @description Base64 Curve25519 public key
+             */
+            public_key: string;
+            /** Region */
+            region: string;
+            /** Scope Generation */
+            scope_generation: number;
+            /** Version */
+            version: number;
         };
         /** CostCreate */
         CostCreate: {
@@ -2091,6 +2432,8 @@ export type components = {
             platform_roles: string[];
             user: components["schemas"]["UserView"];
         };
+        /** Format: decimal */
+        DecimalString: string;
         /** DeploymentCreate */
         DeploymentCreate: {
             /**
@@ -2263,6 +2606,64 @@ export type components = {
              */
             sale_price_version_id: string;
         };
+        /** ErrorBody */
+        ErrorBody: {
+            /**
+             * Code
+             * @description Stable machine-readable error code
+             */
+            code: string;
+            /** Message */
+            message: string;
+            /**
+             * Trace Id
+             * @description Matches the X-Request-ID response header
+             */
+            trace_id: string;
+        };
+        /**
+         * ErrorResponse
+         * @description The envelope of every management API error.
+         */
+        ErrorResponse: {
+            error: components["schemas"]["ErrorBody"];
+        };
+        /** ExportJob */
+        ExportJob: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            completed_at: components["schemas"]["Timestamp"] | null;
+            created_at: components["schemas"]["Timestamp"];
+            /** Error Code */
+            error_code: string | null;
+            expires_at: components["schemas"]["Timestamp"];
+            filters: components["schemas"]["ReportFilter"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "requests" | "charges" | "ledger" | "attempt_costs";
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Row Count */
+            row_count: number | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "running" | "ready" | "failed" | "expired";
+        };
         /** ExportRequest */
         ExportRequest: {
             /**
@@ -2276,6 +2677,13 @@ export type components = {
              * @enum {string}
              */
             kind: "requests" | "charges" | "ledger" | "attempt_costs";
+        };
+        /** FieldError */
+        FieldError: {
+            /** Code */
+            code: string;
+            /** Location */
+            location: (string | number)[];
         };
         /** FundingCreate */
         FundingCreate: {
@@ -2378,6 +2786,22 @@ export type components = {
             /** Supports Query */
             supports_query: boolean;
         };
+        /** GatewayType */
+        GatewayType: {
+            /** Adapter Type */
+            adapter_type: string;
+            /** Configuration Schema */
+            configuration_schema: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Test Only */
+            test_only: boolean;
+        };
+        /** GatewayTypes */
+        GatewayTypes: {
+            /** Items */
+            items: components["schemas"]["GatewayType"][];
+        };
         /** GrantCreate */
         GrantCreate: {
             /**
@@ -2431,11 +2855,7 @@ export type components = {
             /** Version */
             version: number;
         };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
-        };
+        JsonValue: unknown;
         /** KeyCreate */
         KeyCreate: {
             /** Expires At */
@@ -2512,6 +2932,51 @@ export type components = {
             service_account_id: string;
             /** Version */
             version: number;
+        };
+        /** LedgerRecord */
+        LedgerRecord: {
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Actor Id */
+            actor_id: string | null;
+            /** Api Key Id */
+            api_key_id: string | null;
+            balance_after: components["schemas"]["DecimalString"];
+            /** Currency */
+            currency: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Model Id */
+            model_id: string | null;
+            occurred_at: components["schemas"]["Timestamp"];
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            posted_at: components["schemas"]["Timestamp"];
+            /** Project Id */
+            project_id: string | null;
+            /** Reverses Entry Id */
+            reverses_entry_id: string | null;
+            /** Sequence */
+            sequence: number;
+            signed_amount: components["schemas"]["DecimalString"];
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Source Type */
+            source_type: string;
         };
         /** LedgerView */
         LedgerView: {
@@ -2686,6 +3151,28 @@ export type components = {
             /** Version */
             version: number;
         };
+        /** NodeAck */
+        NodeAck: {
+            /** Applied */
+            applied: boolean;
+            /** Error Code */
+            error_code: string | null;
+            /** Revision */
+            revision: string;
+        };
+        /** NodeStatus */
+        NodeStatus: {
+            /** Active */
+            active: boolean;
+            /** Applied Revision */
+            applied_revision: string;
+            last_ack: components["schemas"]["NodeAck"] | null;
+            /**
+             * Node Id
+             * Format: uuid
+             */
+            node_id: string;
+        };
         Nonblank: string;
         NonnegativeMoney: string;
         /** OrganizationCreate */
@@ -2735,6 +3222,13 @@ export type components = {
             /** Next Cursor */
             next_cursor?: string | null;
         };
+        /** Page[AuditEvent] */
+        Page_AuditEvent_: {
+            /** Items */
+            items: components["schemas"]["AuditEvent"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** Page[BudgetPeriodView] */
         Page_BudgetPeriodView_: {
             /** Items */
@@ -2762,6 +3256,13 @@ export type components = {
             items: components["schemas"]["ChannelView"][];
             /** Next Cursor */
             next_cursor?: string | null;
+        };
+        /** Page[ClusterView] */
+        Page_ClusterView_: {
+            /** Items */
+            items: components["schemas"]["ClusterView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** Page[CredentialView] */
         Page_CredentialView_: {
@@ -2875,10 +3376,31 @@ export type components = {
             /** Next Cursor */
             next_cursor?: string | null;
         };
+        /** Page[QuotaPolicyView] */
+        Page_QuotaPolicyView_: {
+            /** Items */
+            items: components["schemas"]["QuotaPolicyView"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
         /** Page[ReceivingView] */
         Page_ReceivingView_: {
             /** Items */
             items: components["schemas"]["ReceivingView"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
+        /** Page[ReviewCase] */
+        Page_ReviewCase_: {
+            /** Items */
+            items: components["schemas"]["ReviewCase"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
+        /** Page[RoutePolicyView] */
+        Page_RoutePolicyView_: {
+            /** Items */
+            items: components["schemas"]["RoutePolicyView"][];
             /** Next Cursor */
             next_cursor?: string | null;
         };
@@ -3288,6 +3810,81 @@ export type components = {
              */
             scope_type: "organization" | "project" | "key";
         };
+        /** QuotaLimit */
+        QuotaLimit: {
+            /** Limit Value */
+            limit_value: number;
+        };
+        /**
+         * QuotaPolicyResult
+         * @description The written policy. `scope_id` echoes the request, so the deprecated POST may leave it
+         *     null for organization scope.
+         */
+        QuotaPolicyResult: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Layer
+             * @enum {string}
+             */
+            layer: "platform" | "customer";
+            /** Limit Value */
+            limit_value: number;
+            /**
+             * Metric
+             * @enum {string}
+             */
+            metric: "rpm" | "tpm" | "concurrency";
+            /** Scope Id */
+            scope_id: string | null;
+            /**
+             * Scope Type
+             * @enum {string}
+             */
+            scope_type: "organization" | "project" | "key";
+            /** Version */
+            version: number;
+        };
+        /** QuotaPolicyView */
+        QuotaPolicyView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Layer
+             * @enum {string}
+             */
+            layer: "platform" | "customer";
+            /** Limit Value */
+            limit_value: number;
+            /**
+             * Metric
+             * @enum {string}
+             */
+            metric: "rpm" | "tpm" | "concurrency";
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /**
+             * Scope Id
+             * Format: uuid
+             */
+            scope_id: string;
+            /**
+             * Scope Type
+             * @enum {string}
+             */
+            scope_type: "organization" | "project" | "key";
+            /** Version */
+            version: number;
+        };
         /** Rate */
         Rate: {
             unit_price: components["schemas"]["NonnegativeMoney"];
@@ -3335,6 +3932,90 @@ export type components = {
             status: string;
             /** Version */
             version: number;
+        };
+        /**
+         * ReconciliationIssue
+         * @description One difference between projections and ledger facts; references depend on `kind`.
+         */
+        ReconciliationIssue: {
+            /** Entry Id */
+            entry_id?: string | null;
+            facts?: components["schemas"]["DecimalString"] | null;
+            /** Kind */
+            kind: string;
+            /** Period Id */
+            period_id?: string | null;
+            projection?: components["schemas"]["DecimalString"] | null;
+            /** Record Id */
+            record_id?: string | null;
+            /** Request Id */
+            request_id?: string | null;
+        };
+        /** ReconciliationRun */
+        ReconciliationRun: {
+            as_of: components["schemas"]["Timestamp"];
+            /** Consistent */
+            consistent: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Issues */
+            issues: components["schemas"]["ReconciliationIssue"][];
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+        };
+        /** RefundEntry */
+        RefundEntry: {
+            amount: components["schemas"]["DecimalString"];
+            /**
+             * Api Key Id
+             * Format: uuid
+             */
+            api_key_id: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "refund";
+            /**
+             * Ledger Entry Id
+             * Format: uuid
+             */
+            ledger_entry_id: string;
+            /**
+             * Model Id
+             * Format: uuid
+             */
+            model_id: string;
+            occurred_at: components["schemas"]["Timestamp"];
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            posted_at: components["schemas"]["Timestamp"];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
         };
         /** RelayProfile */
         RelayProfile: {
@@ -3384,6 +4065,33 @@ export type components = {
             /** Rollback Revision */
             rollback_revision?: number | null;
         };
+        /** ReleaseAccepted */
+        ReleaseAccepted: {
+            /** Revision */
+            revision: string;
+            /** Sha256 */
+            sha256: string;
+        };
+        /** ReleaseDelivery */
+        ReleaseDelivery: {
+            /** Attempts */
+            attempts: number;
+            delivered_at: components["schemas"]["Timestamp"] | null;
+        };
+        /** ReleaseStatus */
+        ReleaseStatus: {
+            /** Desired Revision */
+            desired_revision: string;
+            /** Distributed Revision */
+            distributed_revision: string;
+            distribution: components["schemas"]["ReleaseDelivery"];
+            /** Nodes */
+            nodes: components["schemas"]["NodeStatus"][];
+            /** Revision */
+            revision: string;
+            /** Sha256 */
+            sha256: string;
+        };
         /** ReportFilter */
         ReportFilter: {
             /** Api Key Id */
@@ -3402,6 +4110,123 @@ export type components = {
              * @enum {string}
              */
             time_basis: "occurred_at" | "posted_at";
+        };
+        /** ReportPage[AttemptCostEntry] */
+        ReportPage_AttemptCostEntry_: {
+            /** Items */
+            items: components["schemas"]["AttemptCostEntry"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /**
+             * Time Basis
+             * @enum {string}
+             */
+            time_basis: "occurred_at" | "posted_at";
+        };
+        /** ReportPage[ChargeRecord] */
+        ReportPage_ChargeRecord_: {
+            /** Items */
+            items: components["schemas"]["ChargeRecord"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /**
+             * Time Basis
+             * @enum {string}
+             */
+            time_basis: "occurred_at" | "posted_at";
+        };
+        /** ReportPage[LedgerRecord] */
+        ReportPage_LedgerRecord_: {
+            /** Items */
+            items: components["schemas"]["LedgerRecord"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /**
+             * Time Basis
+             * @enum {string}
+             */
+            time_basis: "occurred_at" | "posted_at";
+        };
+        /** ReportPage[RequestRecord] */
+        ReportPage_RequestRecord_: {
+            /** Items */
+            items: components["schemas"]["RequestRecord"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /**
+             * Time Basis
+             * @enum {string}
+             */
+            time_basis: "occurred_at" | "posted_at";
+        };
+        /** RequestRecord */
+        RequestRecord: {
+            /**
+             * Api Key Id
+             * Format: uuid
+             */
+            api_key_id: string;
+            /** Billing Policy Version */
+            billing_policy_version: string;
+            /** Charge Details */
+            charge_details: components["schemas"]["ChargeLine"][] | null;
+            charged_amount: components["schemas"]["DecimalString"] | null;
+            created_at: components["schemas"]["Timestamp"];
+            /** Currency */
+            currency: string;
+            /**
+             * Discount Version Id
+             * Format: uuid
+             */
+            discount_version_id: string;
+            expires_at: components["schemas"]["Timestamp"];
+            gross_amount: components["schemas"]["DecimalString"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Limit */
+            input_limit: number;
+            /**
+             * Model Id
+             * Format: uuid
+             */
+            model_id: string;
+            occurred_at: components["schemas"]["Timestamp"];
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Output Limit */
+            output_limit: number;
+            posted_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            refunded_amount: components["schemas"]["DecimalString"];
+            /** Reservation State */
+            reservation_state: string;
+            reserved_amount: components["schemas"]["DecimalString"];
+            /** Review Reason */
+            review_reason: string | null;
+            /**
+             * Sale Price Version Id
+             * Format: uuid
+             */
+            sale_price_version_id: string;
+            /**
+             * Service Account Id
+             * Format: uuid
+             */
+            service_account_id: string;
+            settled_at: components["schemas"]["Timestamp"] | null;
+            /** State */
+            state: string;
+            waived_amount: components["schemas"]["DecimalString"];
         };
         /** Resolution */
         Resolution: {
@@ -3431,7 +4256,98 @@ export type components = {
             evidence: components["schemas"]["Nonblank"];
             reason: components["schemas"]["Nonblank"];
         };
-        /** Route */
+        /** ReviewCase */
+        ReviewCase: {
+            amount_at_risk: components["schemas"]["DecimalString"] | null;
+            created_at: components["schemas"]["Timestamp"];
+            evidence: components["schemas"]["JsonValue"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Reason */
+            reason: string;
+            /** Request Id */
+            request_id: string | null;
+            /** Resolution Id */
+            resolution_id: string | null;
+            resolved_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Source Type
+             * @enum {string}
+             */
+            source_type: "request" | "attempt" | "account" | "payment";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "open" | "resolved";
+            /** Version */
+            version: number;
+        };
+        /** ReviewCaseDetail */
+        ReviewCaseDetail: {
+            amount_at_risk: components["schemas"]["DecimalString"] | null;
+            created_at: components["schemas"]["Timestamp"];
+            /** Decisions */
+            decisions: components["schemas"]["CaseDecision"][];
+            evidence: components["schemas"]["JsonValue"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Reason */
+            reason: string;
+            /** Request */
+            request?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Request Id */
+            request_id: string | null;
+            /** Resolution Id */
+            resolution_id: string | null;
+            resolved_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Source Type
+             * @enum {string}
+             */
+            source_type: "request" | "attempt" | "account" | "payment";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "open" | "resolved";
+            /** Usage Evidence */
+            usage_evidence?: components["schemas"]["UsageEvidence"][] | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * Route
+         * @description A route policy is identified by (organization_id, model_id).
+         */
         Route: {
             /** Candidates */
             candidates: components["schemas"]["Candidate"][];
@@ -3445,6 +4361,28 @@ export type components = {
              * Format: uuid
              */
             organization_id: string;
+        };
+        /** RouteCandidates */
+        RouteCandidates: {
+            /** Candidates */
+            candidates: components["schemas"]["Candidate"][];
+        };
+        /** RoutePolicyView */
+        RoutePolicyView: {
+            /** Candidates */
+            candidates: components["schemas"]["Candidate"][];
+            /**
+             * Model Id
+             * Format: uuid
+             */
+            model_id: string;
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Version */
+            version: number;
         };
         /** SaleCreate */
         SaleCreate: {
@@ -3556,8 +4494,18 @@ export type components = {
             organization_id: string;
             reason: components["schemas"]["Nonblank"];
         };
+        /** StatementRecorded */
+        StatementRecorded: {
+            /**
+             * Statement Id
+             * Format: uuid
+             */
+            statement_id: string;
+        };
         /** @enum {string} */
         Status: "active" | "disabled" | "archived";
+        /** Format: date-time */
+        Timestamp: string;
         /** UpstreamCreate */
         UpstreamCreate: {
             /** Base Url */
@@ -3595,6 +4543,74 @@ export type components = {
             /** Version */
             version: number;
         };
+        /** UsageBucket */
+        UsageBucket: {
+            charged_amount: components["schemas"]["DecimalString"];
+            confirmed_cost?: components["schemas"]["DecimalString"] | null;
+            /** Group */
+            group: string;
+            held_amount: components["schemas"]["DecimalString"];
+            /** Held Requests */
+            held_requests: number;
+            margin?: components["schemas"]["DecimalString"] | null;
+            net_charge: components["schemas"]["DecimalString"];
+            /** Provisional */
+            provisional?: boolean | null;
+            /** Quantities */
+            quantities: {
+                [key: string]: number;
+            };
+            refund_amount: components["schemas"]["DecimalString"];
+            /** Requests */
+            requests: number;
+        };
+        /** UsageEvidence */
+        UsageEvidence: {
+            /** Envelope */
+            envelope: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Quantities */
+            quantities: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            received_at: components["schemas"]["Timestamp"];
+            /** Review Reason */
+            review_reason: string | null;
+            /** Rule Version */
+            rule_version: string | null;
+        };
+        /** UsageReport */
+        UsageReport: {
+            /** Currency */
+            currency: string;
+            filters: components["schemas"]["ReportFilter"];
+            /**
+             * Group By
+             * @enum {string}
+             */
+            group_by: "organization" | "project" | "key" | "model" | "day";
+            /** Items */
+            items: components["schemas"]["UsageBucket"][];
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            watermark: components["schemas"]["UsageWatermark"];
+        };
+        /** UsageWatermark */
+        UsageWatermark: {
+            latest_source_at: components["schemas"]["Timestamp"] | null;
+            /** Pending Requests */
+            pending_requests: number;
+            projected_at: components["schemas"]["Timestamp"] | null;
+        };
         /** UserCreate */
         UserCreate: {
             /** Login */
@@ -3619,18 +4635,30 @@ export type components = {
             /** Version */
             version: number;
         };
-        /** ValidationError */
-        ValidationError: {
-            /** Context */
-            ctx?: Record<string, never>;
-            /** Input */
-            input?: unknown;
-            /** Location */
-            loc: (string | number)[];
+        /** ValidationErrorBody */
+        ValidationErrorBody: {
+            /**
+             * Code
+             * @description Stable machine-readable error code
+             */
+            code: string;
+            /**
+             * Fields
+             * @description Rejected inputs, present when the request itself could not be parsed
+             * @default null
+             */
+            fields: components["schemas"]["FieldError"][] | null;
             /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
+            message: string;
+            /**
+             * Trace Id
+             * @description Matches the X-Request-ID response header
+             */
+            trace_id: string;
+        };
+        /** ValidationErrorResponse */
+        ValidationErrorResponse: {
+            error: components["schemas"]["ValidationErrorBody"];
         };
     };
     responses: never;
@@ -3661,16 +4689,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Page_AuditEvent_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -3695,13 +4750,31 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Rate limit reached; retry later */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -3728,13 +4801,31 @@ export interface operations {
                     "application/json": components["schemas"]["SessionCreated"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Rate limit reached; retry later */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -3754,6 +4845,33 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -3779,13 +4897,40 @@ export interface operations {
                     "application/json": components["schemas"]["Page_PriceView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -3814,23 +4959,68 @@ export interface operations {
                     "application/json": components["schemas"]["PriceView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    price_api_v1_cost_price_versions__resource_id__get: {
+    price_api_v1_cost_price_versions__price_version_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                resource_id: string;
+                price_version_id: string;
             };
             cookie?: never;
         };
@@ -3845,25 +5035,61 @@ export interface operations {
                     "application/json": components["schemas"]["PriceView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    edit_price_api_v1_cost_price_versions__resource_id__patch: {
+    edit_price_api_v1_cost_price_versions__price_version_id__patch: {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
-                resource_id: string;
+                price_version_id: string;
             };
             cookie?: never;
         };
@@ -3882,26 +5108,89 @@ export interface operations {
                     "application/json": components["schemas"]["PriceView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    publish_price_api_v1_cost_price_versions__resource_id__publish_post: {
+    publish_price_api_v1_cost_price_versions__price_version_id__publish_post: {
         parameters: {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
-                resource_id: string;
+                price_version_id: string;
             };
             cookie?: never;
         };
@@ -3920,13 +5209,76 @@ export interface operations {
                     "application/json": components["schemas"]["PriceView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -3954,13 +5306,40 @@ export interface operations {
                     "application/json": components["schemas"]["Page_DeploymentView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -3987,13 +5366,49 @@ export interface operations {
                     "application/json": components["schemas"]["DeploymentView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4018,13 +5433,49 @@ export interface operations {
                     "application/json": components["schemas"]["DeploymentView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4033,7 +5484,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 deployment_id: string;
@@ -4055,20 +5506,86 @@ export interface operations {
                     "application/json": components["schemas"]["DeploymentView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
     clusters_api_v1_gateway_clusters_get: {
         parameters: {
-            query?: never;
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4081,7 +5598,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Page_ClusterView_"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4105,28 +5658,64 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ClusterView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    update_api_v1_gateway_clusters__cid__patch: {
+    update_api_v1_gateway_clusters__cluster_id__patch: {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
-                cid: string;
+                cluster_id: string;
             };
             cookie?: never;
         };
@@ -4142,26 +5731,89 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ClusterView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    principal_api_v1_gateway_clusters__cid__principals__node_id__put: {
+    principal_api_v1_gateway_clusters__cluster_id__principals__node_id__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                cid: string;
+                cluster_id: string;
                 node_id: string;
             };
             cookie?: never;
@@ -4178,28 +5830,73 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Principal"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    release_api_v1_gateway_clusters__cid__releases_post: {
+    release_api_v1_gateway_clusters__cluster_id__releases_post: {
         parameters: {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
             };
             path: {
-                cid: string;
+                cluster_id: string;
             };
             cookie?: never;
         };
@@ -4215,26 +5912,80 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ReleaseAccepted"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    status_api_v1_gateway_clusters__cid__releases__revision__get: {
+    status_api_v1_gateway_clusters__cluster_id__releases__revision__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                cid: string;
+                cluster_id: string;
                 revision: number;
             };
             cookie?: never;
@@ -4247,16 +5998,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ReleaseStatus"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4277,6 +6064,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CurrentUser"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4305,13 +6119,40 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ModelView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4338,13 +6179,49 @@ export interface operations {
                     "application/json": components["schemas"]["ModelView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4373,13 +6250,49 @@ export interface operations {
                     "application/json": components["schemas"]["ModelView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4388,7 +6301,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 model_id: string;
@@ -4410,13 +6323,76 @@ export interface operations {
                     "application/json": components["schemas"]["ModelView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4442,13 +6418,40 @@ export interface operations {
                     "application/json": components["schemas"]["Page_OrganizationView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4475,81 +6478,49 @@ export interface operations {
                     "application/json": components["schemas"]["OrganizationView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
                 };
             };
-        };
-    };
-    quotas_api_v1_organizations__org__quota_policies_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                org: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    quota_api_v1_organizations__org__quota_policies_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "if-match"?: string | null;
-            };
-            path: {
-                org: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["Quota"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4574,13 +6545,49 @@ export interface operations {
                     "application/json": components["schemas"]["OrganizationView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4589,7 +6596,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 organization_id: string;
@@ -4611,13 +6618,76 @@ export interface operations {
                     "application/json": components["schemas"]["OrganizationView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4645,13 +6715,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_AccessPolicyView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4680,13 +6786,58 @@ export interface operations {
                     "application/json": components["schemas"]["AccessPolicyView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4712,13 +6863,49 @@ export interface operations {
                     "application/json": components["schemas"]["AccessPolicyView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4727,7 +6914,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 organization_id: string;
@@ -4750,13 +6937,76 @@ export interface operations {
                     "application/json": components["schemas"]["AccessPolicyView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4781,13 +7031,49 @@ export interface operations {
                     "application/json": components["schemas"]["AccountView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4809,16 +7095,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ReconciliationRun"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4828,7 +7150,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 organization_id: string;
@@ -4847,16 +7169,79 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AccountUnfrozen"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4884,13 +7269,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_AdjustmentView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4921,24 +7342,78 @@ export interface operations {
                     "application/json": components["schemas"]["AdjustmentView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    get_resource_api_v1_organizations__organization_id__adjustments__resource_id__get: {
+    get_resource_api_v1_organizations__organization_id__adjustments__adjustment_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
+                adjustment_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -4953,27 +7428,63 @@ export interface operations {
                     "application/json": components["schemas"]["AdjustmentView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    post_adjustment_api_v1_organizations__organization_id__adjustments__resource_id__post_post: {
+    post_adjustment_api_v1_organizations__organization_id__adjustments__adjustment_id__post_post: {
         parameters: {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
+                adjustment_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -4988,13 +7499,76 @@ export interface operations {
                     "application/json": components["schemas"]["AdjustmentView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5024,13 +7598,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_KeyView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5061,13 +7671,67 @@ export interface operations {
                     "application/json": components["schemas"]["KeyIssued"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5093,13 +7757,49 @@ export interface operations {
                     "application/json": components["schemas"]["KeyView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5108,7 +7808,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 key_id: string;
@@ -5127,13 +7827,76 @@ export interface operations {
                     "application/json": components["schemas"]["KeyView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5143,7 +7906,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 key_id: string;
@@ -5166,13 +7929,76 @@ export interface operations {
                     "application/json": components["schemas"]["KeyIssued"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5200,13 +8026,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_BudgetView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5235,24 +8097,69 @@ export interface operations {
                     "application/json": components["schemas"]["BudgetView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    get_resource_api_v1_organizations__organization_id__budget_policies__resource_id__get: {
+    get_resource_api_v1_organizations__organization_id__budget_policies__budget_policy_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
+                budget_policy_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5267,26 +8174,62 @@ export interface operations {
                     "application/json": components["schemas"]["BudgetView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    update_budget_api_v1_organizations__organization_id__budget_policies__resource_id__patch: {
+    update_budget_api_v1_organizations__organization_id__budget_policies__budget_policy_id__patch: {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
+                budget_policy_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5305,18 +8248,81 @@ export interface operations {
                     "application/json": components["schemas"]["BudgetView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    budget_periods_api_v1_organizations__organization_id__budget_policies__resource_id__periods_get: {
+    budget_periods_api_v1_organizations__organization_id__budget_policies__budget_policy_id__periods_get: {
         parameters: {
             query?: {
                 cursor?: string | null;
@@ -5324,8 +8330,8 @@ export interface operations {
             };
             header?: never;
             path: {
+                budget_policy_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5340,13 +8346,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_BudgetPeriodView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5377,16 +8419,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ReportPage_ChargeRecord_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5414,13 +8492,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_DiscountView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5451,26 +8565,80 @@ export interface operations {
                     "application/json": components["schemas"]["DiscountView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    edit_discount_api_v1_organizations__organization_id__discount_versions__resource_id__patch: {
+    edit_discount_api_v1_organizations__organization_id__discount_versions__discount_version_id__patch: {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
+                discount_version_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5489,27 +8657,90 @@ export interface operations {
                     "application/json": components["schemas"]["DiscountView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    publish_discount_api_v1_organizations__organization_id__discount_versions__resource_id__publish_post: {
+    publish_discount_api_v1_organizations__organization_id__discount_versions__discount_version_id__publish_post: {
         parameters: {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
+                discount_version_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5528,13 +8759,76 @@ export interface operations {
                     "application/json": components["schemas"]["DiscountView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5560,16 +8854,61 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ExportJob"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Rate limit reached; retry later */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5592,16 +8931,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ExportJob"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5618,22 +8993,67 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description UTF-8 CSV with a byte order mark */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "text/csv": string;
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5661,13 +9081,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_FundingView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5698,24 +9154,78 @@ export interface operations {
                     "application/json": components["schemas"]["FundingView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    get_resource_api_v1_organizations__organization_id__funding_records__resource_id__get: {
+    get_resource_api_v1_organizations__organization_id__funding_records__funding_record_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
+                funding_record_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5730,26 +9240,62 @@ export interface operations {
                     "application/json": components["schemas"]["FundingView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    update_funding_api_v1_organizations__organization_id__funding_records__resource_id__patch: {
+    update_funding_api_v1_organizations__organization_id__funding_records__funding_record_id__patch: {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
+                funding_record_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5768,26 +9314,89 @@ export interface operations {
                     "application/json": components["schemas"]["FundingView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    cancel_funding_api_v1_organizations__organization_id__funding_records__resource_id__cancel_post: {
+    cancel_funding_api_v1_organizations__organization_id__funding_records__funding_record_id__cancel_post: {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
+                funding_record_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5802,27 +9411,90 @@ export interface operations {
                     "application/json": components["schemas"]["FundingView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    post_funding_api_v1_organizations__organization_id__funding_records__resource_id__post_post: {
+    post_funding_api_v1_organizations__organization_id__funding_records__funding_record_id__post_post: {
         parameters: {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
+                funding_record_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5837,13 +9509,76 @@ export interface operations {
                     "application/json": components["schemas"]["FundingView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5874,27 +9609,63 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ReportPage_LedgerRecord_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    ledger_entry_api_v1_organizations__organization_id__ledger__resource_id__get: {
+    ledger_entry_api_v1_organizations__organization_id__ledger__ledger_entry_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
+                ledger_entry_id: string;
                 organization_id: string;
-                resource_id: string;
             };
             cookie?: never;
         };
@@ -5909,13 +9680,49 @@ export interface operations {
                     "application/json": components["schemas"]["LedgerView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5943,13 +9750,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_MemberView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5978,13 +9821,58 @@ export interface operations {
                     "application/json": components["schemas"]["MemberView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6010,13 +9898,49 @@ export interface operations {
                     "application/json": components["schemas"]["MemberView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6025,7 +9949,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 member_id: string;
@@ -6042,13 +9966,76 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6057,7 +10044,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 member_id: string;
@@ -6080,13 +10067,76 @@ export interface operations {
                     "application/json": components["schemas"]["MemberView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6114,13 +10164,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_PaymentCaseView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6148,13 +10234,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_PaymentMethod_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6182,13 +10304,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_PaymentOrderView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6219,13 +10377,67 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentOrderView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6251,13 +10463,49 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentOrderView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6286,13 +10534,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_PaymentObservationView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6321,13 +10605,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_PaymentReceiptView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6353,13 +10673,49 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentOrderView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6388,13 +10744,49 @@ export interface operations {
                     "application/json": components["schemas"]["EffectivePricing"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6422,13 +10814,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_GrantView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6457,13 +10885,58 @@ export interface operations {
                     "application/json": components["schemas"]["GrantView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6489,13 +10962,49 @@ export interface operations {
                     "application/json": components["schemas"]["GrantView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6504,7 +11013,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 grant_id: string;
@@ -6521,13 +11030,76 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6536,7 +11108,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 grant_id: string;
@@ -6559,13 +11131,76 @@ export interface operations {
                     "application/json": components["schemas"]["GrantView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6593,13 +11228,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ProjectView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6628,13 +11299,58 @@ export interface operations {
                     "application/json": components["schemas"]["ProjectView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6660,13 +11376,49 @@ export interface operations {
                     "application/json": components["schemas"]["ProjectView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6675,7 +11427,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 organization_id: string;
@@ -6698,13 +11450,368 @@ export interface operations {
                     "application/json": components["schemas"]["ProjectView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    quotas_api_v1_organizations__organization_id__quota_policies_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_QuotaPolicyView_"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    quota_api_v1_organizations__organization_id__quota_policies_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Quota"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaPolicyResult"];
+                };
+            };
+            /** @description Created; the policy did not exist */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaPolicyResult"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    put_quota_api_v1_organizations__organization_id__quota_policies__layer___scope_type___scope_id___metric__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                layer: "platform" | "customer";
+                metric: "rpm" | "tpm" | "concurrency";
+                organization_id: string;
+                scope_id: string;
+                scope_type: "organization" | "project" | "key";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuotaLimit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaPolicyResult"];
+                };
+            };
+            /** @description Created; the policy did not exist */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaPolicyResult"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6735,16 +11842,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ReportPage_RequestRecord_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6767,16 +11910,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RequestRecord"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6805,13 +11984,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ServiceAccountView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6840,13 +12055,58 @@ export interface operations {
                     "application/json": components["schemas"]["ServiceAccountView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6872,13 +12132,49 @@ export interface operations {
                     "application/json": components["schemas"]["ServiceAccountView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6887,7 +12183,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 account_id: string;
@@ -6910,13 +12206,76 @@ export interface operations {
                     "application/json": components["schemas"]["ServiceAccountView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6947,16 +12306,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ReportPage_AttemptCostEntry_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6987,16 +12382,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UsageReport"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7022,13 +12453,40 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ChannelView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7057,13 +12515,58 @@ export interface operations {
                     "application/json": components["schemas"]["ChannelView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7088,13 +12591,49 @@ export interface operations {
                     "application/json": components["schemas"]["ChannelView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7104,7 +12643,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 channel_id: string;
@@ -7126,13 +12665,76 @@ export interface operations {
                     "application/json": components["schemas"]["ChannelView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7160,13 +12762,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ChannelVersionView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7175,7 +12813,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 channel_id: string;
@@ -7194,13 +12832,76 @@ export interface operations {
                     "application/json": components["schemas"]["ChannelView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7220,7 +12921,34 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["GatewayTypes"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7246,13 +12974,40 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ReceivingView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7281,25 +13036,70 @@ export interface operations {
                     "application/json": components["schemas"]["ReceivingView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    update_receiving_api_v1_receiving_accounts__resource_id__patch: {
+    update_receiving_api_v1_receiving_accounts__receiving_account_id__patch: {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
-                resource_id: string;
+                receiving_account_id: string;
             };
             cookie?: never;
         };
@@ -7318,13 +13118,76 @@ export interface operations {
                     "application/json": components["schemas"]["ReceivingView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7349,16 +13212,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Page_ReviewCase_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7380,16 +13270,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ReviewCaseDetail"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7399,7 +13325,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 case_id: string;
@@ -7418,16 +13344,79 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CaseResolution"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7453,23 +13442,71 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StatementRecorded"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
     routes_api_v1_route_policies_get: {
         parameters: {
-            query?: never;
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7482,7 +13519,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Page_RoutePolicyView_"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7491,7 +13564,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7508,16 +13581,171 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RoutePolicyView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Created; the policy did not exist */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutePolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    put_route_api_v1_route_policies__organization_id___model_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                model_id: string;
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RouteCandidates"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutePolicyView"];
+                };
+            };
+            /** @description Created; the policy did not exist */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutePolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7544,13 +13772,40 @@ export interface operations {
                     "application/json": components["schemas"]["Page_PriceView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7579,23 +13834,68 @@ export interface operations {
                     "application/json": components["schemas"]["PriceView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    price_api_v1_sale_price_versions__resource_id__get: {
+    price_api_v1_sale_price_versions__price_version_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                resource_id: string;
+                price_version_id: string;
             };
             cookie?: never;
         };
@@ -7610,25 +13910,61 @@ export interface operations {
                     "application/json": components["schemas"]["PriceView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    edit_price_api_v1_sale_price_versions__resource_id__patch: {
+    edit_price_api_v1_sale_price_versions__price_version_id__patch: {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
-                resource_id: string;
+                price_version_id: string;
             };
             cookie?: never;
         };
@@ -7647,26 +13983,89 @@ export interface operations {
                     "application/json": components["schemas"]["PriceView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
     };
-    publish_price_api_v1_sale_price_versions__resource_id__publish_post: {
+    publish_price_api_v1_sale_price_versions__price_version_id__publish_post: {
         parameters: {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
-                resource_id: string;
+                price_version_id: string;
             };
             cookie?: never;
         };
@@ -7685,13 +14084,76 @@ export interface operations {
                     "application/json": components["schemas"]["PriceView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7717,13 +14179,40 @@ export interface operations {
                     "application/json": components["schemas"]["Page_UpstreamView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7750,13 +14239,49 @@ export interface operations {
                     "application/json": components["schemas"]["UpstreamView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7781,13 +14306,49 @@ export interface operations {
                     "application/json": components["schemas"]["UpstreamView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7796,7 +14357,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 upstream_id: string;
@@ -7818,13 +14379,76 @@ export interface operations {
                     "application/json": components["schemas"]["UpstreamView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7852,13 +14476,49 @@ export interface operations {
                     "application/json": components["schemas"]["Page_CredentialView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7887,13 +14547,58 @@ export interface operations {
                     "application/json": components["schemas"]["CredentialView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7919,13 +14624,49 @@ export interface operations {
                     "application/json": components["schemas"]["CredentialView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7934,7 +14675,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 credential_id: string;
@@ -7953,13 +14694,76 @@ export interface operations {
                     "application/json": components["schemas"]["CredentialView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7985,13 +14789,40 @@ export interface operations {
                     "application/json": components["schemas"]["Page_UserView_"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -8018,13 +14849,49 @@ export interface operations {
                     "application/json": components["schemas"]["SetupIssued"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -8049,13 +14916,58 @@ export interface operations {
                     "application/json": components["schemas"]["SetupIssued"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -8080,13 +14992,49 @@ export interface operations {
                     "application/json": components["schemas"]["PlatformRolesView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -8095,7 +15043,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "if-match"?: string | null;
+                "If-Match"?: string | null;
             };
             path: {
                 user_id: string;
@@ -8117,13 +15065,76 @@ export interface operations {
                     "application/json": components["schemas"]["PlatformRolesView"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

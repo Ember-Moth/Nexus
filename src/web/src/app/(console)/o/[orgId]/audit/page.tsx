@@ -15,10 +15,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useI18n } from "@/i18n/provider";
-import { API_BASE, callAs, nexus } from "@/lib/api/client";
+import { API_BASE, call, nexus } from "@/lib/api/client";
 import { pollUntil, useCursorList } from "@/lib/api/hooks";
 import { orgKey } from "@/lib/api/queries";
-import type { AuditEvent, ExportJob, ExportKind, Page } from "@/lib/api/types";
+import type { AuditEvent, ExportJob, ExportKind } from "@/lib/api/types";
 import { formatDate, formatDateTime, shortId, startOfUtcDay, startOfUtcMonth, utcInputToIso } from "@/lib/format";
 
 import { isFinished, rememberedExports, rememberExport } from "./exports";
@@ -30,7 +30,7 @@ function ExportRow({ orgId, exportId }: { orgId: string; exportId: string }) {
     queryKey: orgKey(orgId, "exports", exportId),
     queryFn: async () =>
       (
-        await callAs<ExportJob>(() =>
+        await call(() =>
           nexus.GET("/api/v1/organizations/{organization_id}/exports/{export_id}", {
             params: { path: { organization_id: orgId, export_id: exportId } },
           }),
@@ -97,7 +97,7 @@ function Exports({ orgId }: { orgId: string }) {
   const create = useMutation({
     mutationFn: async () =>
       (
-        await callAs<ExportJob>(() =>
+        await call(() =>
           nexus.POST("/api/v1/organizations/{organization_id}/exports", {
             params: { path: { organization_id: orgId } },
             body: {
@@ -179,7 +179,7 @@ export default function AuditPage() {
     queryKey: orgKey(orgId, "audit-events", appliedAction),
     fetchPage: async (cursor) =>
       (
-        await callAs<Page<AuditEvent>>(() =>
+        await call(() =>
           nexus.GET("/api/v1/audit-events", {
             params: { query: { organization_id: orgId, action: appliedAction || undefined, limit: 50, cursor } },
           }),

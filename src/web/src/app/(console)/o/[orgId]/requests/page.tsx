@@ -12,10 +12,10 @@ import { defaultReportFilters, reportQuery, ReportFilters, type ReportFilterStat
 import { useOrgWorkspace } from "@/components/shell/workspace";
 import { StatusBadge, toneFor } from "@/components/status-badge";
 import { useI18n } from "@/i18n/provider";
-import { callAs, nexus } from "@/lib/api/client";
+import { call, nexus } from "@/lib/api/client";
 import { useCursorList } from "@/lib/api/hooks";
 import { orgKey, useProjectOptions } from "@/lib/api/queries";
-import type { ReportPage, RequestRow } from "@/lib/api/types";
+import type { RequestRecord } from "@/lib/api/types";
 import { formatDateTime, shortId } from "@/lib/format";
 
 export default function RequestsPage() {
@@ -25,11 +25,11 @@ export default function RequestsPage() {
   const query = reportQuery(filters);
   const projects = useProjectOptions(orgId);
 
-  const requests = useCursorList<RequestRow>({
+  const requests = useCursorList<RequestRecord>({
     queryKey: orgKey(orgId, "requests", query),
     fetchPage: async (cursor) =>
       (
-        await callAs<ReportPage<RequestRow>>(() =>
+        await call(() =>
           nexus.GET("/api/v1/organizations/{organization_id}/requests", {
             params: { path: { organization_id: orgId }, query: { ...query, limit: 50, cursor } },
           }),
@@ -37,7 +37,7 @@ export default function RequestsPage() {
       ).data,
   });
 
-  const columns = useMemo<ColumnDef<RequestRow, unknown>[]>(
+  const columns = useMemo<ColumnDef<RequestRecord, unknown>[]>(
     () => [
       {
         header: t("requests.columns.time"),

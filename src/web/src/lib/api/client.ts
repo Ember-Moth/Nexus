@@ -98,9 +98,3 @@ export async function call<T>(request: () => Promise<FetchResult<T>>): Promise<A
     throw apiError;
   }
 }
-
-/** For endpoints the contract does not describe yet (no response model): cast to a hand type. */
-export async function callAs<T>(request: () => Promise<FetchResult<unknown>>): Promise<ApiResult<T>> {
-  const result = await call(request);
-  return { ...result, data: result.data as T };
-}

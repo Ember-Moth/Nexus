@@ -17,10 +17,10 @@ import { StatusBadge, toneFor } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/i18n/provider";
-import { callAs, nexus } from "@/lib/api/client";
+import { call, nexus } from "@/lib/api/client";
 import { useCursorList } from "@/lib/api/hooks";
 import { orgKey, useAccount, useProjectOptions } from "@/lib/api/queries";
-import type { ExportJob, LedgerEntry, ReportPage } from "@/lib/api/types";
+import type { LedgerRecord } from "@/lib/api/types";
 import { formatDateTime, shortId } from "@/lib/format";
 import { rememberExport } from "../audit/exports";
 
@@ -42,11 +42,11 @@ export default function WalletPage() {
   const account = useAccount(orgId);
   const projects = useProjectOptions(orgId);
 
-  const ledger = useCursorList<LedgerEntry>({
+  const ledger = useCursorList<LedgerRecord>({
     queryKey: orgKey(orgId, "ledger", query),
     fetchPage: async (cursor) =>
       (
-        await callAs<ReportPage<LedgerEntry>>(() =>
+        await call(() =>
           nexus.GET("/api/v1/organizations/{organization_id}/ledger", {
             params: { path: { organization_id: orgId }, query: { ...query, limit: 50, cursor } },
           }),
@@ -57,7 +57,7 @@ export default function WalletPage() {
   const exportLedger = useMutation({
     mutationFn: async () =>
       (
-        await callAs<ExportJob>(() =>
+        await call(() =>
           nexus.POST("/api/v1/organizations/{organization_id}/exports", {
             params: { path: { organization_id: orgId } },
             body: { kind: "ledger", filters: query },
@@ -73,10 +73,10 @@ export default function WalletPage() {
     onError: (error) => showError(error),
   });
 
-  const actorLabel = (entry: LedgerEntry) =>
+  const actorLabel = (entry: LedgerRecord) =>
     entry.actor_id === workspace.me.user.id ? workspace.me.user.login : entry.actor_id ? shortId(entry.actor_id) : t("wallet.system");
 
-  const columns = useMemo<ColumnDef<LedgerEntry, unknown>[]>(
+  const columns = useMemo<ColumnDef<LedgerRecord, unknown>[]>(
     () => [
       {
         header: t("wallet.columns.sequence"),

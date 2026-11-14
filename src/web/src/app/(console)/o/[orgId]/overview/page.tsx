@@ -16,9 +16,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useI18n } from "@/i18n/provider";
-import { call, callAs, nexus } from "@/lib/api/client";
+import { call, nexus } from "@/lib/api/client";
 import { orgKey, useAccount } from "@/lib/api/queries";
-import type { Budget, BudgetPeriod, UsageReport } from "@/lib/api/types";
+import type { Budget, BudgetPeriod } from "@/lib/api/types";
 import { formatDate, formatDateTime, formatTime, startOfUtcDay, startOfUtcMonth } from "@/lib/format";
 import { addMoney, compareMoney, percentOf } from "@/lib/money";
 
@@ -27,7 +27,7 @@ function useUsage(orgId: string, groupBy: "day" | "organization", start: string)
     queryKey: orgKey(orgId, "usage", groupBy, start),
     queryFn: async () =>
       (
-        await callAs<UsageReport>(() =>
+        await call(() =>
           nexus.GET("/api/v1/organizations/{organization_id}/usage", {
             params: { path: { organization_id: orgId }, query: { group_by: groupBy, start } },
           }),
@@ -153,8 +153,8 @@ function BudgetRow({ orgId, budget }: { orgId: string; budget: Budget }) {
     queryFn: async () =>
       (
         await call(() =>
-          nexus.GET("/api/v1/organizations/{organization_id}/budget-policies/{resource_id}/periods", {
-            params: { path: { organization_id: orgId, resource_id: budget.id }, query: { limit: 100 } },
+          nexus.GET("/api/v1/organizations/{organization_id}/budget-policies/{budget_policy_id}/periods", {
+            params: { path: { organization_id: orgId, budget_policy_id: budget.id }, query: { limit: 100 } },
           }),
         )
       ).data.items,

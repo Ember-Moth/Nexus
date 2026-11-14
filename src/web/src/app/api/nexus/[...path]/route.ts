@@ -10,7 +10,7 @@ import { bffError, clearSessionCookies, hasValidCsrf, readSessionToken } from "@
 
 type Context = { params: Promise<{ path: string[] }> };
 
-const FORWARD_REQUEST_HEADERS = ["accept", "content-type", "if-match", "idempotency-key"];
+const FORWARD_REQUEST_HEADERS = ["accept", "content-type", "If-Match", "idempotency-key"];
 const FORWARD_RESPONSE_HEADERS = [
   "content-type",
   "content-disposition",

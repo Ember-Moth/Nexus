@@ -84,7 +84,7 @@ export function RotateKeyDialog({
           nexus.POST("/api/v1/organizations/{organization_id}/api-keys/{key_id}/rotate", {
             params: {
               path: { organization_id: orgId, key_id: keyId },
-              header: { "if-match": ifMatch, "Idempotency-Key": idempotencyKey },
+              header: { "If-Match": ifMatch, "Idempotency-Key": idempotencyKey },
             },
             body: { name: newName, grace_seconds },
           }),
@@ -230,7 +230,7 @@ export function RevokeKeyDialog({
       (
         await call(() =>
           nexus.POST("/api/v1/organizations/{organization_id}/api-keys/{key_id}/revoke", {
-            params: { path: { organization_id: orgId, key_id: keyId }, header: { "if-match": ifMatch } },
+            params: { path: { organization_id: orgId, key_id: keyId }, header: { "If-Match": ifMatch } },
           }),
         )
       ).data,

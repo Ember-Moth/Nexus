@@ -55,6 +55,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             sessions: setting("NEXUS_RELAY_WS_SESSIONS", 128)?,
             sessions_per_tenant: setting("NEXUS_RELAY_WS_SESSIONS_PER_TENANT", 16)?,
             turns_per_tenant: setting("NEXUS_RELAY_WS_TURNS_PER_TENANT", 16)?,
+            max_attempts: setting("NEXUS_RELAY_MAX_ATTEMPTS", 2)?,
+            failover_budget: Duration::from_millis(setting(
+                "NEXUS_RELAY_FAILOVER_BUDGET_MS",
+                10000,
+            )?),
         },
     )?;
     let listener = TcpListener::bind(

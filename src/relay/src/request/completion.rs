@@ -17,6 +17,10 @@ pub struct Attempt {
     pub revision: i64,
     pub usage_format: &'static str,
     pub started: Instant,
+    /// Other started attempts of this request. Each reports its own fact; the close lists all.
+    pub others: Vec<Uuid>,
+    /// False when an attempt start had an unknown result, leaving the started set for review.
+    pub closable: bool,
 }
 
 impl Attempt {
@@ -33,21 +37,13 @@ impl Attempt {
         })
         .to_string()
     }
-    pub async fn complete(
-        &self,
-        db: &Gateway,
-        outcome: &str,
-        delivery: &str,
-        attempt_delivered: bool,
-        response_id: Option<&str>,
-        usage: UsageEvidence,
-    ) {
+    fn finished(&self, outcome: &str, response_id: Option<&str>, usage: UsageEvidence) -> String {
         let response_id = response_id.filter(|s| {
             s.len() <= 200
                 && s.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"_.:/-".contains(&b))
         });
-        let finished = self.event(
+        self.event(
             "attempt.finished",
             Some(self.attempt),
             json!({
@@ -57,17 +53,42 @@ impl Attempt {
                 "usage_format": usage.usage_format,
                 "raw_usage": usage.raw_usage,
             }),
-        );
+        )
+    }
+    pub async fn complete(
+        &self,
+        db: &Gateway,
+        outcome: &str,
+        delivery: &str,
+        attempt_delivered: bool,
+        response_id: Option<&str>,
+        usage: UsageEvidence,
+    ) {
+        let finished = self.finished(outcome, response_id, usage);
+        let mut started = self.others.clone();
+        started.push(self.attempt);
         let closed = self.event(
             "request.closed",
             None,
             json!({
                 "delivery_outcome": delivery,
-                "attempt_ids": [self.attempt],
+                "attempt_ids": started,
                 "delivered_attempt_id": attempt_delivered.then_some(self.attempt),
             }),
         );
-        for event in [finished, closed] {
+        if !self.closable {
+            eprintln!("unresolved attempt set for request {}", self.request);
+        }
+        self.submit(db, [Some(finished), self.closable.then_some(closed)])
+            .await;
+    }
+    /// Report an attempt which failed while its request continues with another attempt.
+    pub async fn failed(&self, db: &Gateway, response_id: Option<&str>, usage: UsageEvidence) {
+        self.submit(db, [Some(self.finished("failed", response_id, usage))])
+            .await;
+    }
+    async fn submit<const N: usize>(&self, db: &Gateway, events: [Option<String>; N]) {
+        for event in events.into_iter().flatten() {
             let mut backoff = Duration::from_millis(50);
             let deadline = Instant::now() + Duration::from_secs(60);
             loop {

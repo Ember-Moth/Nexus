@@ -52,7 +52,14 @@ pub struct NodeLimits {
     pub sessions: usize,
     pub sessions_per_tenant: usize,
     pub turns_per_tenant: usize,
+    /// Attempts per HTTP generation; 1 disables failover.
+    pub max_attempts: usize,
+    /// No further attempt starts once this much time has passed since the first one.
+    pub failover_budget: Duration,
 }
+
+/// Bounds for `NodeLimits::max_attempts`.
+pub const MAX_ATTEMPTS: std::ops::RangeInclusive<usize> = 1..=4;
 
 pub struct Node {
     pub(crate) db: Gateway,
@@ -62,6 +69,8 @@ pub struct Node {
     pub(crate) lease_ms: u32,
     pub(crate) stream_idle: Duration,
     pub(crate) event_bytes: usize,
+    pub(crate) max_attempts: usize,
+    pub(crate) failover_budget: Duration,
     cluster: Uuid,
     healthy: AtomicBool,
     index: RwLock<Option<Arc<Index>>>,
@@ -89,6 +98,8 @@ impl Node {
             sessions,
             sessions_per_tenant,
             turns_per_tenant,
+            max_attempts,
+            failover_budget,
         } = limits_config;
         if stream_idle.is_zero()
             || event_bytes == 0
@@ -100,6 +111,8 @@ impl Node {
             || !(100..=60_000).contains(&lease_ms)
             || capacity == 0
             || capacity > Semaphore::MAX_PERMITS
+            || !MAX_ATTEMPTS.contains(&max_attempts)
+            || !(Duration::from_millis(100)..=Duration::from_secs(60)).contains(&failover_budget)
         {
             return Err(ControlError::Invalid("node limits"));
         }
@@ -112,6 +125,8 @@ impl Node {
             cluster,
             stream_idle,
             event_bytes,
+            max_attempts,
+            failover_budget,
             healthy: AtomicBool::new(false),
             index: RwLock::new(None),
             capacity: Arc::new(Semaphore::new(capacity)),

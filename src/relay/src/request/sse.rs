@@ -8,7 +8,6 @@ use crate::{
     server::Node,
 };
 use axum::body::Bytes;
-use serde_json::Value;
 use std::{io, sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -134,36 +133,11 @@ pub async fn forward(
     mut run: Run,
     dep: &crate::control::snapshot::Deployment,
     exchange: Exchange<'_>,
-    credential: &str,
-    body: &Value,
-    mut sender: Channel,
+    response: reqwest::Response,
+    sender: Channel,
 ) {
     let ep = exchange.upstream;
     let bedrock = dep.is_bedrock();
-    let open = async {
-        if bedrock {
-            crate::bedrock::transport::open(&node.upstream.client, dep, credential, body, true)
-                .await
-        } else {
-            node.upstream
-                .open(&dep.base_url, ep, credential, body, true)
-                .await
-        }
-    };
-    let opened = run
-        .reservation
-        .guarded(async {
-            tokio::select! {
-                _ = sender.closed() => None,
-                result = open => result.ok(),
-            }
-        })
-        .await;
-    let Ok(Some(response)) = opened else {
-        let _ = sender.send(Err(Failure::upstream()));
-        run.ended(None, false).await;
-        return;
-    };
     if !response.status().is_success() {
         let rid = run.reservation.id.to_string();
         let result = run

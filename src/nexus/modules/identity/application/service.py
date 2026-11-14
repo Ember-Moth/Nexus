@@ -187,6 +187,7 @@ class IdentityService(EmailAuthentication):
         passwords: Passwords,
         auth_limits: AuthLimits,
         *,
+        login_window: int,
         session_ttl: int,
         setup_ttl: int,
         providers,
@@ -196,6 +197,7 @@ class IdentityService(EmailAuthentication):
         self._access = AccessControl(transactions)
         self._passwords = passwords
         self._auth_limits = auth_limits
+        self._login_window = login_window
         self._session_ttl = session_ttl
         self._setup_ttl = setup_ttl
         self.providers = providers
@@ -216,7 +218,12 @@ class IdentityService(EmailAuthentication):
                 "authentication_unavailable", "Authentication is temporarily unavailable", 503
             ) from None
         if not allowed:
-            raise IdentityError("rate_limited", "Too many authentication attempts", 429)
+            raise IdentityError(
+                "rate_limited",
+                "Too many authentication attempts",
+                429,
+                retry_after=self._login_window,
+            )
 
     async def _verify(self, password_hash, password):
         async with self._hash_slots:

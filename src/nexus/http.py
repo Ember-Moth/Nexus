@@ -13,6 +13,7 @@ from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from nexus.shared.error_catalog import CATALOG, error_catalog
 from nexus.shared.errors import ServiceError
 
 bearer = HTTPBearer(auto_error=False)
@@ -57,6 +58,7 @@ ERROR_DESCRIPTIONS = {
     422: "Request is malformed or violates a business rule",
     428: "A required If-Match or Idempotency-Key header is missing",
     429: "Rate limit reached; retry later",
+    500: "Internal server error",
     503: "A storage or coordination dependency is unavailable",
 }
 
@@ -72,11 +74,41 @@ def error_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
     }
 
 
+def business_errors(*codes: str, challenge=False):
+    """Declare client-actionable codes on a route; shared transport errors are inferred."""
+    known = set(codes)
+    if challenge:
+        known.update(
+            {
+                "authentication_unavailable",
+                "auth_policy_changed",
+                "rate_limited",
+                "turnstile_required",
+                "turnstile_rejected",
+                "turnstile_unavailable",
+                "turnstile_not_configured",
+            }
+        )
+    by_status = {}
+    for code in known:
+        matches = [status for name, status in CATALOG if name == code]
+        if not matches:
+            raise ValueError(f"Unregistered error code: {code}")
+        for status in matches:
+            if code == "turnstile_not_configured" and status != (503 if challenge else 409):
+                continue
+            by_status.setdefault(status, []).append(code)
+    responses = error_responses(*by_status)
+    for status, options in by_status.items():
+        responses[status]["x-error-codes"] = sorted(options)
+    return responses
+
+
 def _error_statuses(operation: dict[str, Any]) -> set[int]:
     parameters = operation.get("parameters", [])
     headers = {p["name"].lower() for p in parameters if p["in"] == "header"}
     # Every operation authenticates or reads through PostgreSQL or Redis.
-    statuses = {503}
+    statuses = {500, 503}
     if operation.get("security"):
         statuses |= {401, 403}
     if "if-match" in headers:
@@ -102,19 +134,47 @@ def declare_error_responses(openapi: dict[str, Any]) -> dict[str, Any]:
         for name, definition in schema.pop("$defs", {}).items():
             schemas.setdefault(name, definition)
         schemas.setdefault(model.__name__, schema)
+    openapi["x-error-catalog"] = {
+        code: [guide.model_dump() for guide in guides] for code, guides in error_catalog().items()
+    }
     for item in openapi.get("paths", {}).values():
         for method, operation in item.items():
             if method not in {"get", "put", "post", "patch", "delete"}:
                 continue
             responses = operation.setdefault("responses", {})
             for status in _error_statuses(operation):
-                if status == 422 or str(status) not in responses:
+                if status == 422 and str(status) in responses:
+                    responses[str(status)]["description"] = ERROR_DESCRIPTIONS[status]
+                if str(status) not in responses:
                     responses[str(status)] = {"description": ERROR_DESCRIPTIONS[status]}
+            shared = {"internal_error", "validation_error", "storage_unavailable"}
+            if operation.get("security"):
+                shared.update({"unauthorized", "forbidden"})
+            for parameter in operation.get("parameters", []):
+                if parameter["in"] == "path":
+                    shared.add("not_found")
+                if parameter["name"] == "cursor":
+                    shared.add("invalid_cursor")
+                if parameter["name"] == "If-Match":
+                    shared.update({"invalid_version", "precondition_required", "version_conflict"})
+                if parameter["name"] == "Idempotency-Key":
+                    shared.update(
+                        {"invalid_idempotency_key", "precondition_required", "idempotency_conflict"}
+                    )
+            for code, status in CATALOG:
+                if code in shared and str(status) in responses:
+                    response = responses[str(status)]
+                    response["x-error-codes"] = sorted({code, *response.get("x-error-codes", [])})
             for status, response in responses.items():
                 if status.isdigit() and int(status) >= 400:
                     # Errors are JSON even where the success body is a file.
                     model = ValidationErrorResponse if status == "422" else ErrorResponse
                     ref = {"$ref": SCHEMA_REF.format(model=model.__name__)}
+                    if status == "429":
+                        response.setdefault("headers", {})["Retry-After"] = {
+                            "description": "When supplied, seconds to wait before retrying",
+                            "schema": {"type": "integer", "minimum": 1},
+                        }
                     response["content"] = {"application/json": {"schema": ref}}
             operation["responses"] = dict(sorted(responses.items()))
     # Drop FastAPI's validation schemas once nothing references them.

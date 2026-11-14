@@ -93,8 +93,20 @@ async def test_verified_signup_login_and_recovery(delivery, admin):
     assert bad.status_code == 401
     result = await client.post(API + "/auth/registrations/verify", json=verify)
     assert result.status_code == 201, result.text
+    audits = await client.get(
+        API + "/audit-events",
+        headers=auth(root),
+        params={"action": "user.registered", "trace_id": result.headers["x-request-id"]},
+    )
+    assert [r["trace_id"] for r in audits.json()["items"]] == [result.headers["x-request-id"]]
     session = result.json()["access_token"]
     assert (await client.post(API + "/auth/registrations/verify", json=verify)).status_code == 401
+    absent = await client.get(
+        API + "/audit-events",
+        headers=auth(root),
+        params={"trace_id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert absent.json()["items"] == []
     me = (await client.get(API + "/me", headers=auth(session))).json()
     assert me["verified_email"] == recipient and len(me["memberships"]) == 1
     assert (await client.get(settings, headers=auth(session))).status_code == 403
@@ -132,14 +144,16 @@ async def test_verified_signup_login_and_recovery(delivery, admin):
     }
 
 
-async def test_binding_rotation_retry_and_expiry(delivery, admin):
+async def test_binding_rotation_retry_and_expiry(delivery, admin, caplog):
+    caplog.set_level("INFO", logger="nexus.mail")
     client, root, mail, messages, _ = delivery
     bind = API + "/me/email"
     args = {"email": "legacy@example.com", "password": PASSWORD}
     assert (
         await client.post(bind, headers=auth(root), json={**args, "password": "incorrect"})
     ).status_code == 401
-    assert (await client.post(bind, headers=auth(root), json=args)).status_code == 202
+    queued = await client.post(bind, headers=auth(root), json=args)
+    assert queued.status_code == 202
     original = mail.providers.transport
     mail.providers.transport = httpx.MockTransport(lambda r: httpx.Response(503))
     with pytest.raises(httpx.HTTPStatusError):
@@ -148,6 +162,22 @@ async def test_binding_rotation_retry_and_expiry(delivery, admin):
     admin.execute("UPDATE identity.email_challenges SET next_attempt=now()")
     mail.providers.transport = original
     assert await mail.dispatch_email() == 1
+    entries = [r for r in caplog.records if r.name == "nexus.mail"]
+    assert [r.msg for r in entries] == [
+        "mail.queued",
+        "mail.attempt",
+        "mail.failed",
+        "mail.attempt",
+        "mail.accepted",
+    ]
+    fields = [r.event_fields for r in entries]
+    assert {str(f["request_id"]) for f in fields} == {queued.headers["x-request-id"]}
+    assert len({f["job_id"] for f in fields}) == 1
+    assert fields[2]["provider_status"] == 503 and fields[4]["provider_status"] == 200
+    assert fields[4]["provider"] == "resend" and fields[4]["attempt"] == 2
+    assert all(
+        secret not in str(fields) for secret in [PASSWORD, args["email"], root, messages[-1][1]]
+    )
     assert (
         await client.post(bind + "/verify", headers=auth(root), json={"token": messages.pop()[1]})
     ).status_code == 204

@@ -12,6 +12,7 @@ from ..domain.errors import IdentityError
 class AuthProviders:
     def __init__(self, settings, *, transport=None):
         self.settings = settings
+        self.name = settings.mail_provider
         self.transport = transport
         self.site_key = settings.turnstile_site_key
         self.turnstile_ready = bool(
@@ -33,7 +34,7 @@ class AuthProviders:
 
     async def verify(self, token, action):
         if not self.turnstile_ready:
-            raise IdentityError("turnstile_unavailable", "Turnstile is unavailable", 503)
+            raise IdentityError("turnstile_not_configured", "Turnstile is not configured", 503)
         if not token:
             raise IdentityError("turnstile_required", "Complete the Turnstile challenge", 403)
         try:
@@ -47,12 +48,15 @@ class AuthProviders:
                 )
                 response.raise_for_status()
                 result = response.json()
-                if not isinstance(result, dict) or set(result.get("error-codes", [])) & {
-                    "internal-error",
-                    "missing-input-secret",
-                    "invalid-input-secret",
-                }:
+                if not isinstance(result, dict):
                     raise ValueError
+                errors = result.get("error-codes", [])
+                if not isinstance(errors, list) or "internal-error" in errors:
+                    raise ValueError
+                if "missing-input-secret" in errors or "invalid-input-secret" in errors:
+                    raise IdentityError(
+                        "turnstile_not_configured", "Check Turnstile credentials", 503
+                    )
         except httpx.HTTPError, ValueError:
             raise IdentityError("turnstile_unavailable", "Turnstile is unavailable", 503) from None
         if (
@@ -81,6 +85,16 @@ class AuthProviders:
             if settings.smtp_username:
                 connection.login(settings.smtp_username, settings.smtp_password.get_secret_value())
             connection.send_message(message)
+
+    @staticmethod
+    def failure_status(error):
+        if isinstance(error, httpx.HTTPStatusError):
+            return error.response.status_code
+        if isinstance(error, smtplib.SMTPResponseException):
+            return error.smtp_code
+        if isinstance(error, smtplib.SMTPRecipientsRefused) and error.recipients:
+            return next(iter(error.recipients.values()))[0]
+        return None
 
     async def send(self, recipient, purpose, token, delivery_id):
         if not self.mail_ready:
@@ -120,3 +134,4 @@ class AuthProviders:
                 accepted.get("queued", []) + accepted.get("delivered", [])
             ):
                 raise RuntimeError("Cloudflare did not accept recipient")
+        return response.status_code

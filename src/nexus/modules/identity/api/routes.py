@@ -6,7 +6,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from nexus.http import auth_limit_peer, credentials, cursor_value, error_responses, expected_version
+from nexus.http import (
+    auth_limit_peer,
+    business_errors,
+    credentials,
+    cursor_value,
+    error_responses,
+    expected_version,
+)
 
 from ..application.schemas import (
     AuthPolicy,
@@ -44,7 +51,6 @@ from ..application.schemas import (
 from ..application.service import IdentityService
 
 CONFLICT = error_responses(409)
-RATE_LIMITED = error_responses(401, 403, 409, 429)
 
 
 def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
@@ -59,7 +65,18 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         "/auth/registrations",
         response_model=RegistrationCreated,
         status_code=201,
-        responses={**error_responses(403, 409, 429), 202: {"model": VerificationPending}},
+        responses={
+            **business_errors(
+                "login_in_use",
+                "invalid_login",
+                "invalid_password",
+                "invalid_email",
+                "mail_unavailable",
+                "conflict",
+                challenge=True,
+            ),
+            202: {"model": VerificationPending},
+        },
     )
     async def register(body: Registration, request: Request, service: Service):
         result = await service.register(body, auth_limit_peer(request, auth_proxy_peers))
@@ -68,7 +85,10 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         return result
 
     @router.post(
-        "/auth/sessions", response_model=SessionCreated, status_code=201, responses=RATE_LIMITED
+        "/auth/sessions",
+        response_model=SessionCreated,
+        status_code=201,
+        responses=business_errors("unauthorized", "invalid_login", challenge=True),
     )
     async def login(body: Login, request: Request, service: Service):
         return await service.login(
@@ -82,7 +102,11 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
     async def logout(token: Token, service: Service):
         await service.logout(token)
 
-    @router.post("/auth/password", status_code=204, responses=RATE_LIMITED)
+    @router.post(
+        "/auth/password",
+        status_code=204,
+        responses=business_errors("unauthorized", "invalid_password", challenge=True),
+    )
     async def set_password(body: PasswordSetup, request: Request, service: Service):
         await service.set_password(
             body.token.get_secret_value(),
@@ -101,7 +125,19 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         response.headers["ETag"] = f'"{result.version}"'
         return result
 
-    @router.put("/settings/authentication", response_model=AuthPolicyView, responses=CONFLICT)
+    @router.put(
+        "/settings/authentication",
+        response_model=AuthPolicyView,
+        responses=business_errors(
+            "unauthorized",
+            "forbidden",
+            "turnstile_not_configured",
+            "version_conflict",
+            "mail_unavailable",
+            "precondition_required",
+            "invalid_version",
+        ),
+    )
     async def update_policy(
         body: AuthPolicy, service: Service, token: Token, version: Version, response: Response
     ):
@@ -113,19 +149,35 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         "/auth/registrations/verify",
         response_model=RegistrationCreated,
         status_code=201,
-        responses=RATE_LIMITED,
+        responses=business_errors(
+            "unauthorized",
+            "invalid_password",
+            "login_in_use",
+            "email_in_use",
+            "conflict",
+            challenge=True,
+        ),
     )
     async def verify_registration(body: PasswordSetup, service: Service, request: Request):
         return await service.confirm_registration(body, auth_limit_peer(request, auth_proxy_peers))
 
     @router.post(
-        "/me/email", status_code=202, response_model=RequestAccepted, responses=RATE_LIMITED
+        "/me/email",
+        status_code=202,
+        response_model=RequestAccepted,
+        responses=business_errors(
+            "unauthorized", "invalid_email", "mail_unavailable", challenge=True
+        ),
     )
     async def bind_email(body: EmailBinding, token: Token, service: Service, request: Request):
         await service.request_binding(token, body, auth_limit_peer(request, auth_proxy_peers))
         return RequestAccepted()
 
-    @router.post("/me/email/verify", status_code=204, responses=RATE_LIMITED)
+    @router.post(
+        "/me/email/verify",
+        status_code=204,
+        responses=business_errors("unauthorized", "email_in_use", "conflict", challenge=True),
+    )
     async def verify_email(body: EmailProof, token: Token, service: Service, request: Request):
         await service.confirm_binding(token, body, auth_limit_peer(request, auth_proxy_peers))
         return Response(status_code=204)
@@ -134,13 +186,17 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         "/auth/password/forgot",
         status_code=202,
         response_model=RequestAccepted,
-        responses=RATE_LIMITED,
+        responses=business_errors("invalid_email", "mail_unavailable", challenge=True),
     )
     async def forgot(body: EmailRequest, service: Service, request: Request):
         await service.forgot(body, auth_limit_peer(request, auth_proxy_peers))
         return RequestAccepted()
 
-    @router.post("/auth/password/reset", status_code=204, responses=RATE_LIMITED)
+    @router.post(
+        "/auth/password/reset",
+        status_code=204,
+        responses=business_errors("unauthorized", "invalid_password", challenge=True),
+    )
     async def reset(body: PasswordSetup, service: Service, request: Request):
         await service.reset(body, auth_limit_peer(request, auth_proxy_peers))
         return Response(status_code=204)
@@ -212,7 +268,11 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         return result
 
     @router.patch(
-        "/organizations/{organization_id}", response_model=OrganizationView, responses=CONFLICT
+        "/organizations/{organization_id}",
+        response_model=OrganizationView,
+        responses=business_errors(
+            "organization_archived", "personal_organization_required", "invalid_transition"
+        ),
     )
     async def update_organization(
         organization_id: UUID,
@@ -253,7 +313,15 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         return Response(status_code=204)
 
     @router.post(
-        "/invitations/accept", response_model=MemberView, responses=error_responses(404, 409, 410)
+        "/invitations/accept",
+        response_model=MemberView,
+        responses=business_errors(
+            "invitation_unavailable",
+            "invitation_expired",
+            "invitation_consumed",
+            "organization_inactive",
+            "conflict",
+        ),
     )
     async def accept_invitation(token: Token, body: InvitationAccept, service: Service):
         return await service.accept_invitation(token, body)

@@ -45,6 +45,25 @@ TABLES = {
 }
 
 
+ADMISSION_ERRORS = {
+    "account_frozen": (409, "Account frozen"),
+    "account_not_ready": (409, "Account not ready"),
+    "attempt_conflict": (409, "Attempt conflict"),
+    "budget_exceeded": (409, "Budget limit exceeded"),
+    "cost_unavailable": (409, "Cost unavailable"),
+    "currency_config_mismatch": (503, "Currency config mismatch"),
+    "deployment_unavailable": (409, "Deployment unavailable"),
+    "insufficient_funds": (409, "Available balance is insufficient"),
+    "invalid_attempt_sequence": (409, "Invalid attempt sequence"),
+    "invalid_bounds": (422, "Invalid bounds"),
+    "invalid_reserve_amount": (422, "Invalid reserve amount"),
+    "not_found": (404, "Not found"),
+    "price_unavailable": (409, "Price unavailable"),
+    "request_conflict": (409, "Request ID was used for different authorization facts"),
+    "request_not_executable": (409, "Request not executable"),
+}
+
+
 def period_bounds(at, period):
     start = at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     if period == "day":
@@ -207,13 +226,11 @@ class BillingRepository:
             if getattr(error.orig, "sqlstate", None) != "P0001":
                 raise
             code = error.orig.diag.message_primary
-            message = {
-                "request_conflict": "Request ID was used for different authorization facts",
-                "insufficient_funds": "Available balance is insufficient",
-            }.get(code, code.replace("_", " "))
-            raise ServiceError(
-                code, message, 422 if code in {"invalid_bounds", "invalid_reserve_amount"} else 409
-            ) from None
+            spec = ADMISSION_ERRORS.get(code)
+            if spec is None:
+                raise ServiceError("storage_unavailable", "Admission failed", 503) from None
+            status, message = spec
+            raise ServiceError(code, message, status) from None
 
     async def reserve_funds(self, admission, fingerprint, dimensions, at):
         params = admission.model_dump()

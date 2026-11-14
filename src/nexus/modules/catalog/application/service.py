@@ -256,7 +256,7 @@ class CatalogService:
                 raise ServiceError("invalid_bounds", "Deployment exceeds public model limits", 422)
         if credential.status != "active" or not self._cipher.supports(credential.key_version):
             raise ServiceError(
-                "credential_unavailable",
+                "credential_not_ready",
                 "An active credential with an available encryption key is required",
                 409,
             )

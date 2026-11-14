@@ -226,8 +226,19 @@ fn rejected(snapshot: &crate::control::database::Snapshot, reason: &'static str)
     );
 }
 
-fn error(endpoint: Endpoint, failure: Failure) -> Response {
+async fn correlate(mut req: Request, next: axum::middleware::Next) -> Response {
+    let id = Uuid::new_v4();
+    req.extensions_mut().insert(id);
+    let mut response = next.run(req).await;
+    response
+        .headers_mut()
+        .insert("x-request-id", id.to_string().parse().expect("UUID header"));
+    response
+}
+
+fn error(id: Uuid, endpoint: Endpoint, failure: Failure) -> Response {
     let Failure(status, code) = failure;
+    info!(request_id = %id, endpoint = endpoint.as_str(), reason = code, "relay request rejected");
     let json = match endpoint {
         Endpoint::AnthropicMessages => json!({"type":"error","error":{"type":code,"message":code}}),
         Endpoint::OpenaiResponses => json!({"error":{"code":code,"type":code,"message":code}}),
@@ -242,6 +253,7 @@ struct Streaming(CancellationToken);
 
 async fn generate(
     State(node): State<Arc<Node>>,
+    Extension(id): Extension<Uuid>,
     Extension(wire): Extension<Delivery>,
     Extension(streaming): Extension<Streaming>,
     Extension(BodyLimit(max_bytes)): Extension<BodyLimit>,
@@ -257,30 +269,37 @@ async fn generate(
     let mut tally = RequestTally::new(endpoint, Transport::Http);
     let Ok(key) = Route::Generate(endpoint).key(&parts.headers) else {
         return error(
+            id,
             endpoint,
             Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"),
         );
     };
     if !node.healthy.load(Ordering::Acquire) {
-        return error(endpoint, Failure::unavailable());
+        return error(id, endpoint, Failure::unavailable());
     }
     let Some(index) = node.index.read().unwrap().clone() else {
-        return error(endpoint, Failure::unavailable());
+        return error(id, endpoint, Failure::unavailable());
     };
     let Ok(permit) = node.capacity.clone().try_acquire_owned() else {
-        return error(endpoint, Failure::unavailable());
+        return error(id, endpoint, Failure::unavailable());
     };
     let Ok(body) = to_bytes(body, max_bytes).await else {
         return error(
+            id,
             endpoint,
             Failure(StatusCode::PAYLOAD_TOO_LARGE, "invalid_request_body"),
         );
     };
     let Ok(json) = serde_json::from_slice::<Value>(&body) else {
-        return error(endpoint, Failure(StatusCode::BAD_REQUEST, "invalid_json"));
+        return error(
+            id,
+            endpoint,
+            Failure(StatusCode::BAD_REQUEST, "invalid_json"),
+        );
     };
     let Ok(request) = Generate::parse(endpoint, json, false) else {
         return error(
+            id,
             endpoint,
             Failure(StatusCode::BAD_REQUEST, "invalid_request"),
         );
@@ -290,6 +309,7 @@ async fn generate(
         streaming.0.cancel();
         if parts.version != http::Version::HTTP_11 {
             return error(
+                id,
                 endpoint,
                 Failure(
                     StatusCode::HTTP_VERSION_NOT_SUPPORTED,
@@ -303,12 +323,12 @@ async fn generate(
     let key = key.to_owned();
     tracker.spawn(async move {
         let _permit = permit;
-        request::run(node, index, key, request, tx, tally).await;
+        request::run(id, node, index, key, request, tx, tally).await;
     });
     let result = match rx.await {
         Ok(Ok(result)) => result,
-        Ok(Err(e)) => return error(endpoint, e),
-        Err(_) => return error(endpoint, Failure::unavailable()),
+        Ok(Err(e)) => return error(id, endpoint, e),
+        Err(_) => return error(id, endpoint, Failure::unavailable()),
     };
     match result {
         request::Response::Buffered {
@@ -359,6 +379,7 @@ pub async fn serve(
     let router = Router::new()
         .route("/v1/messages", post(generate))
         .route("/v1/responses", post(generate).get(websocket::upgrade))
+        .route_layer(axum::middleware::from_fn(correlate))
         .route("/ready", get(ready))
         .route("/live", get(metrics::live))
         .layer(Extension(BodyLimit(max_body)))

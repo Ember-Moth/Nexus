@@ -1,12 +1,14 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from time import monotonic
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nexus.shared.errors import StorageUnavailable
 from nexus.shared.storage import SCHEMA_REVISION, ModuleName
+from nexus.shared.telemetry import request_id
 
 from .metrics import ProcessMetrics
 
@@ -36,6 +38,10 @@ class ModuleDatabase:
                 self._metrics.connection(monotonic() - start)
             await session.execute(text(f'SET LOCAL ROLE "{role}"'))
             await session.execute(text("SET LOCAL search_path TO pg_catalog"))
+            if trace := request_id.get():
+                # SET does not acquire a snapshot. Reporting can still establish
+                # REPEATABLE READ before its first query. Only a UUID enters SQL.
+                await session.execute(text(f"SET LOCAL nexus.request_id = '{UUID(str(trace))}'"))
             yield session
 
     async def check_access(self) -> None:

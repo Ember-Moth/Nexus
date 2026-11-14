@@ -52,6 +52,7 @@ pub struct Target {
 
 impl Reservation {
     pub async fn reserve(
+        id: Uuid,
         node: Arc<Node>,
         index: &Index,
         selected: &Selection<'_>,
@@ -59,7 +60,6 @@ impl Reservation {
     ) -> Result<(Self, Zeroizing<String>), Failure> {
         let dep = selected.deployment;
         let secret = credential(&node, index, dep).await?;
-        let id = Uuid::new_v4();
         let bounds = selected.bounds;
         let lease = node
             .limits

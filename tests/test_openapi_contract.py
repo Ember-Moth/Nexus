@@ -77,3 +77,50 @@ def test_conditional_headers_use_canonical_names(spec):
             assert {"412", "428"} <= statuses, name
         if "Idempotency-Key" in names:
             assert {"409", "428"} <= statuses, name
+
+
+def test_catalog_covers_literal_errors_and_sql_admission_errors():
+    import ast
+    from pathlib import Path
+
+    from nexus.modules.billing.persistence.repository import ADMISSION_ERRORS
+    from nexus.shared.error_catalog import CATALOG
+
+    root = Path(__file__).resolve().parents[1] / "src/nexus"
+    for path in root.rglob("*.py"):
+        for call in ast.walk(ast.parse(path.read_text())):
+            if isinstance(call, ast.Call) and getattr(call.func, "id", None) in {
+                "ServiceError",
+                "IdentityError",
+            }:
+                if len(call.args) >= 3 and all(
+                    isinstance(call.args[i], ast.Constant) for i in (0, 2)
+                ):
+                    assert (call.args[0].value, call.args[2].value) in CATALOG, (path, call.lineno)
+    assert all((code, status) in CATALOG for code, (status, _) in ADMISSION_ERRORS.items())
+
+
+async def test_published_error_catalog_and_operation_guidance(spec, settings_factory):
+    import httpx
+
+    app = create_app(
+        settings_factory(
+            environment="production",
+            database_url="postgresql+psycopg://nexus_api:fixture@localhost/nexus?sslmode=verify-full",
+            redis_url="rediss://:fixture@localhost/0",
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        catalog = (await client.get("/api/v1/error-codes")).json()
+    assert catalog == spec["x-error-catalog"]
+    assert catalog["insufficient_funds"][0]["action"] == "fund_account"
+    assert catalog["budget_exceeded"][0]["action"] == "adjust_budget"
+    responses = spec["paths"]["/api/v1/auth/sessions"]["post"]["responses"]
+    assert "Retry-After" in responses["429"]["headers"]
+    assert "turnstile_unavailable" in responses["503"]["x-error-codes"]
+    for _, op in operations(spec):
+        for status, response in op["responses"].items():
+            for code in response.get("x-error-codes", []):
+                assert any(row["status"] == int(status) for row in catalog[code])

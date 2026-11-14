@@ -188,6 +188,7 @@ class UsageReport(View):
 
 
 class AuditEvent(View):
+    trace_id: UUID | None = None
     id: UUID
     actor_id: UUID | None
     organization_id: UUID | None

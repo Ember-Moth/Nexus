@@ -1,12 +1,17 @@
 """Public authentication policy, mailbox ownership proofs and recovery delivery."""
 
+import logging
 import secrets
 from uuid import uuid4
+
+from nexus.shared.telemetry import event, request_id
 
 from ..domain.email import mailbox
 from ..domain.errors import IdentityError, unauthorized
 from ..domain.tokens import digest_token
 from .schemas import PublicAuthOptions, RegistrationCreated, VerificationPending
+
+logger = logging.getLogger("nexus.mail")
 
 
 class EmailAuthentication:
@@ -38,7 +43,7 @@ class EmailAuthentication:
                 self.require_mail()
             if body.turnstile and not self.providers.turnstile_ready:
                 raise IdentityError(
-                    "turnstile_unavailable", "Configure Turnstile before enabling it", 409
+                    "turnstile_not_configured", "Configure Turnstile before enabling it", 409
                 )
             result = await tx.email.set_policy(body, version)
             if not result:
@@ -85,6 +90,19 @@ class EmailAuthentication:
             )
         )
 
+        return delivery_id
+
+    def log_queued(self, job, purpose):
+        event(
+            logger,
+            logging.INFO,
+            "mail.queued",
+            request_id=request_id.get(),
+            job_id=job,
+            purpose=purpose,
+            provider=self.providers.name,
+        )
+
     async def _register(self, body, login, peer):
         address = mailbox(body.email) if body.email is not None else None
         await self._throttle("register:" + (address or login), peer)
@@ -95,21 +113,32 @@ class EmailAuthentication:
             if policy.email_verification:
                 address = address or mailbox(login)
                 if await tx.administrators.login_exists(login):
-                    raise IdentityError("conflict", "Login is already in use", 409)
-                await self.queue(tx, "register", address, login=login, password_hash=password_hash)
-                return VerificationPending()
-            return await self.finish_registration(tx, login, password_hash, None, contact=address)
+                    raise IdentityError("login_in_use", "Login is already in use", 409)
+                job = await self.queue(
+                    tx, "register", address, login=login, password_hash=password_hash
+                )
+                purpose = "register"
+                result = VerificationPending()
+            else:
+                result, user_id = await self.finish_registration(tx, login, password_hash, None)
+                purpose = "bind"
+                job = (
+                    await self.queue(tx, purpose, address, user_id=user_id)
+                    if address and self.providers.mail_ready
+                    else None
+                )
+        if job:
+            self.log_queued(job, purpose)
+        return result
 
-    async def finish_registration(self, tx, login, password_hash, email, *, contact=None):
+    async def finish_registration(self, tx, login, password_hash, email):
         user = await tx.directory.create_user(login, password_hash)
         if email:
             await tx.email.bind(user.id, email)
-        elif contact and self.providers.mail_ready:
-            await self.queue(tx, "bind", contact, user_id=user.id)
         org = await tx.directory.personal_org_id(user.id)
         await tx.audit.record(user.id, "user.registered", user.id, organization_id=org)
         session = await self._new_session(tx, user.id)
-        return RegistrationCreated(**session.model_dump(), personal_organization_id=org)
+        return RegistrationCreated(**session.model_dump(), personal_organization_id=org), user.id
 
     async def confirm_registration(self, body, peer):
         digest = digest_token(body.token.get_secret_value(), "nxv_")
@@ -126,9 +155,11 @@ class EmailAuthentication:
             row = await tx.email.consume(digest, "register")
             if not row:
                 raise unauthorized()
-            return await self.finish_registration(
+            result, _ = await self.finish_registration(
                 tx, row["login"], row["password_hash"], row["email"]
             )
+
+            return result
 
     async def request_binding(self, session, body, peer):
         address = mailbox(body.email)
@@ -144,7 +175,8 @@ class EmailAuthentication:
             await tx.directory.user(actor.user.id, lock=True)
             if not await tx.directory.password_matches(actor.user.id, password_hash):
                 raise unauthorized()
-            await self.queue(tx, "bind", address, user_id=actor.user.id)
+            job = await self.queue(tx, "bind", address, user_id=actor.user.id)
+        self.log_queued(job, "bind")
 
     async def confirm_binding(self, session, body, peer):
         digest = digest_token(body.token.get_secret_value(), "nxb_")
@@ -168,8 +200,10 @@ class EmailAuthentication:
         async with self._transactions() as tx:
             await self.current(tx, version)
             user_id = await tx.email.recipient(address)
-            if user_id:
-                await self.queue(tx, "reset", address, user_id=user_id)
+            if not user_id:
+                return
+            job = await self.queue(tx, "reset", address, user_id=user_id)
+        self.log_queued(job, "reset")
 
     async def reset(self, body, peer):
         digest = digest_token(body.token.get_secret_value(), "nxr_")
@@ -197,18 +231,53 @@ class EmailAuthentication:
     async def dispatch_email(self):
         lease = uuid4()
         async with self._transactions() as tx:
-            job = await tx.email.claim(lease)
+            job, expired = await tx.email.claim(lease)
+        for row in expired:
+            event(
+                logger,
+                logging.WARNING,
+                "mail.expired",
+                request_id=row["trace_id"],
+                job_id=row["id"],
+                purpose=row["purpose"],
+                attempt=row["attempts"],
+            )
         if not job:
             return 0
+        fields = dict(
+            request_id=job["trace_id"],
+            job_id=job["id"],
+            purpose=job["purpose"],
+            provider=self.providers.name,
+            attempt=job["attempts"],
+        )
+        event(logger, logging.INFO, "mail.attempt", **fields)
         try:
             token = self.cipher.decrypt(
                 job["ciphertext"], job["user_id"] or job["id"], job["id"], job["key_version"]
             )
-            await self.providers.send(job["email"], job["purpose"], token, job["id"])
-        except Exception:
+            status = await self.providers.send(job["email"], job["purpose"], token, job["id"])
+        except Exception as error:
             async with self._transactions() as tx:
-                await tx.email.finish(job["id"], lease, False)
+                scheduled = await tx.email.finish(job["id"], lease, False)
+            event(
+                logger,
+                logging.WARNING,
+                "mail.failed",
+                **fields,
+                error_type=type(error).__name__,
+                provider_status=self.providers.failure_status(error),
+                outcome="retry_scheduled" if scheduled else "superseded",
+            )
             raise
         async with self._transactions() as tx:
-            await tx.email.finish(job["id"], lease, True)
+            finished = await tx.email.finish(job["id"], lease, True)
+        event(
+            logger,
+            logging.INFO,
+            "mail.accepted",
+            **fields,
+            provider_status=status,
+            outcome="recorded" if finished else "superseded",
+        )
         return 1

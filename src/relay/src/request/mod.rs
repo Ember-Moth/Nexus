@@ -67,8 +67,29 @@ impl From<ControlError> for Failure {
             Some(
                 "model_forbidden" | "snapshot_forbidden" | "key_outside_cluster" | "account_frozen",
             ) => Self(StatusCode::FORBIDDEN, "access_denied"),
-            Some("insufficient_funds" | "budget_exceeded") => {
-                Self(StatusCode::PAYMENT_REQUIRED, "insufficient_budget")
+            Some("insufficient_funds") => Self(StatusCode::PAYMENT_REQUIRED, "insufficient_funds"),
+            Some("budget_exceeded") => Self(StatusCode::PAYMENT_REQUIRED, "budget_exceeded"),
+            Some("account_not_ready") => Self(StatusCode::CONFLICT, "account_not_ready"),
+            Some("request_conflict" | "attempt_conflict") => {
+                Self(StatusCode::CONFLICT, "request_conflict")
+            }
+            Some("request_not_executable") => Self(StatusCode::CONFLICT, "request_not_executable"),
+            Some("invalid_bounds" | "invalid_reserve_amount") => {
+                Self(StatusCode::BAD_REQUEST, "invalid_bounds")
+            }
+            Some("price_unavailable" | "cost_unavailable" | "currency_config_mismatch") => Self(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "billing_configuration_unavailable",
+            ),
+            Some("deployment_unavailable") => {
+                Self(StatusCode::SERVICE_UNAVAILABLE, "deployment_unavailable")
+            }
+            Some("credential_unavailable") => Self(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "upstream_credential_unavailable",
+            ),
+            Some("revision_not_current" | "snapshot_scope_expired" | "snapshot_unavailable") => {
+                Self(StatusCode::SERVICE_UNAVAILABLE, "snapshot_unavailable")
             }
             _ => Self::unavailable(),
         }
@@ -306,6 +327,7 @@ async fn open(
 }
 
 pub async fn run(
+    id: Uuid,
     node: Arc<Node>,
     index: Arc<Index>,
     secret: String,
@@ -322,6 +344,7 @@ pub async fn run(
     };
     tally.deployment = Some(selected.deployment.id);
     let (mut reservation, mut credential) = match lifecycle::Reservation::reserve(
+        id,
         node.clone(),
         &index,
         &selected,

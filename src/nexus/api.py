@@ -7,8 +7,10 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.exceptions import HTTPException as RoutingError
 
 from nexus.bootstrap import Application
 from nexus.config import RuntimeSettings
@@ -22,7 +24,9 @@ from nexus.modules.identity import IdentityService, ModelAccessService, ProjectS
 from nexus.modules.identity import api as identity_api
 from nexus.modules.publication import api as publication_api
 from nexus.modules.reporting import api as reporting_api
+from nexus.shared.error_catalog import ErrorGuidance, error_catalog
 from nexus.shared.errors import ServiceError
+from nexus.shared.telemetry import event, request_id
 
 type Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 type Readiness = Callable[[], Awaitable[dict[str, str]]]
@@ -49,20 +53,44 @@ def build_server(lifespan: Lifespan, *, development: bool = False) -> FastAPI:
     @app.middleware("http")
     async def request_context(request: Request, call_next):
         started = monotonic()
-        request.state.trace_id = str(uuid4())
+        trace = uuid4()
+        request.state.trace_id = str(trace)
+        context = request_id.set(trace)
         try:
-            response = await call_next(request)
-        except Exception as error:
-            # Handle before ServerErrorMiddleware re-raises to Uvicorn's traceback logger.
-            response = await unexpected_error(request, error)
-        if metrics := getattr(app.state, "process_metrics", None):
-            metrics.response(request.method, response.status_code, started)
-        response.headers["X-Request-ID"] = request.state.trace_id
-        if request.url.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
-        return response
+            try:
+                response = await call_next(request)
+            except Exception as error:
+                response = await unexpected_error(request, error)
+            if metrics := getattr(app.state, "process_metrics", None):
+                metrics.response(request.method, response.status_code, started)
+            response.headers["X-Request-ID"] = str(trace)
+            if request.url.path.startswith("/api/"):
+                response.headers["Cache-Control"] = "no-store"
+            route = getattr(request.scope.get("route"), "path", None)
+            method = (
+                request.method
+                if request.method in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+                else "OTHER"
+            )
+            level = logging.ERROR if response.status_code >= 500 else logging.INFO
+            event(
+                logging.getLogger("nexus.api"),
+                level,
+                "http.response",
+                request_id=trace,
+                route=route or "<unmatched>",
+                method=method,
+                status=response.status_code,
+                error_code=getattr(request.state, "error_code", None),
+                error_type=getattr(request.state, "error_type", None),
+                elapsed_ms=round((monotonic() - started) * 1000, 2),
+            )
+            return response
+        finally:
+            request_id.reset(context)
 
     def error_response(request, status, code, message, **extra):
+        request.state.error_code = code
         headers = {"Cache-Control": "no-store"}
         if status == 401:
             headers["WWW-Authenticate"] = "Bearer"
@@ -79,9 +107,26 @@ def build_server(lifespan: Lifespan, *, development: bool = False) -> FastAPI:
             },
         )
 
+    @app.exception_handler(RoutingError)
+    async def routing_error(request: Request, error: RoutingError):
+        if not request.url.path.startswith("/api/") or error.status_code not in {404, 405}:
+            return await http_exception_handler(request, error)
+        code, message = (
+            ("route_not_found", "Route not found")
+            if error.status_code == 404
+            else ("method_not_allowed", "Method not allowed")
+        )
+        response = error_response(request, error.status_code, code, message)
+        if error.headers:
+            response.headers.update(error.headers)
+        return response
+
     @app.exception_handler(ServiceError)
     async def service_error(request: Request, error: ServiceError):
-        return error_response(request, error.status, error.code, str(error))
+        response = error_response(request, error.status, error.code, str(error))
+        if error.retry_after is not None:
+            response.headers["Retry-After"] = str(error.retry_after)
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):
@@ -93,10 +138,12 @@ def build_server(lifespan: Lifespan, *, development: bool = False) -> FastAPI:
 
     @app.exception_handler(Exception)
     async def unexpected_error(request: Request, error: Exception):
-        logging.getLogger("nexus.api").error(
-            "Unhandled %s trace=%s", type(error).__name__, getattr(request.state, "trace_id", "")
-        )
+        request.state.error_type = type(error).__name__
         return error_response(request, 500, "internal_error", "Internal server error")
+
+    @app.get("/api/v1/error-codes", response_model=dict[str, list[ErrorGuidance]], tags=["errors"])
+    async def codes():
+        return error_catalog()
 
     @app.get("/health/live", include_in_schema=False)
     async def live() -> dict[str, str]:

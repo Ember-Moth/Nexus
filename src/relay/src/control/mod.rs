@@ -29,7 +29,7 @@ fn pg_base64(input: &str) -> Result<Vec<u8>, ControlError> {
 impl ControlError {
     pub fn database_message(&self) -> Option<&str> {
         if let Self::Database(sqlx::Error::Database(db)) = self {
-            Some(db.message())
+            (db.code().as_deref() == Some("P0001")).then(|| db.message())
         } else {
             None
         }

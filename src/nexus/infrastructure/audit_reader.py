@@ -6,7 +6,7 @@ from sqlalchemy import text
 def audit_reader(database, module):
     database.require_module(module)
 
-    async def read(org, limit, cursor, action):
+    async def read(org, limit, cursor, action, trace_id=None):
         filters = []
         params = {"limit": limit}
         if org is not None:
@@ -15,6 +15,9 @@ def audit_reader(database, module):
         if cursor:
             filters.append("(created_at,id)>(:at,:id)")
             params.update(at=cursor[0], id=cursor[1])
+        if trace_id is not None:
+            filters.append("trace_id=:trace_id")
+            params["trace_id"] = trace_id
         if action:
             filters.append("action=:action")
             params["action"] = action
@@ -24,7 +27,7 @@ def audit_reader(database, module):
                 (
                     await session.execute(
                         text(f"""
-              SELECT id,actor_id,organization_id,action,resource_id,created_at,
+              SELECT id,trace_id,actor_id,organization_id,action,resource_id,created_at,
                CASE WHEN details->>'reason' IN ('organization_outside_access_scope','forbidden',
                 'authorized_bound_exceeded','reservation_expired','unknown_outcome','invalid_final_usage',
                 'missing_final_usage','cost_requires_review') THEN details->>'reason' END reason,

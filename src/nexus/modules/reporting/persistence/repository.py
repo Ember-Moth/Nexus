@@ -177,7 +177,9 @@ class ReportingRepository:
             )
         ).scalar_one()
         if count >= rate:
-            raise ServiceError("export_rate_limited", "Export creation limit reached", 429)
+            raise ServiceError(
+                "export_rate_limited", "Export creation limit reached", 429, retry_after=60
+            )
         id = uuid4()
         await self.execute(
             """

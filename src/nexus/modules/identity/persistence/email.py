@@ -113,14 +113,15 @@ class EmailRepository:
         )
 
     async def claim(self, lease):
-        await self.session.execute(
+        removed = await self.session.execute(
             text("""
             DELETE FROM identity.email_challenges WHERE id IN
             (SELECT id FROM identity.email_challenges WHERE expires_at<=clock_timestamp()
              ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)
+            RETURNING id,trace_id,purpose,attempts,(ciphertext IS NOT NULL) AS pending
         """)
         )
-        return (
+        job = (
             (
                 await self.session.execute(
                     text("""
@@ -129,7 +130,8 @@ class EmailRepository:
                 ORDER BY next_attempt,id LIMIT 1 FOR UPDATE SKIP LOCKED)
             UPDATE identity.email_challenges c SET lease_id=:lease, attempts=attempts+1,
                 next_attempt=clock_timestamp()+interval '90 seconds' FROM job WHERE c.id=job.id
-            RETURNING c.id,c.user_id,c.purpose,c.email,c.key_version,c.ciphertext
+            RETURNING c.id,c.trace_id,c.attempts,c.user_id,c.purpose,c.email,
+                      c.key_version,c.ciphertext
         """),
                     {"lease": lease},
                 )
@@ -137,14 +139,16 @@ class EmailRepository:
             .mappings()
             .one_or_none()
         )
+        return job, [row for row in removed.mappings() if row["pending"]]
 
     async def finish(self, job, lease, sent):
-        await self.session.execute(
+        result = await self.session.execute(
             text("""
             UPDATE identity.email_challenges SET lease_id=NULL,
             ciphertext=CASE WHEN :sent THEN NULL ELSE ciphertext END,
             next_attempt=clock_timestamp()+interval '5 seconds' * (1 << least(attempts,6))
-            WHERE id=:id AND lease_id=:lease
+            WHERE id=:id AND lease_id=:lease RETURNING next_attempt
         """),
             {"id": job, "lease": lease, "sent": sent},
         )
+        return result.scalar_one_or_none()

@@ -12,8 +12,9 @@ class IdentityError(ServiceError):
         *,
         resource_id: UUID | None = None,
         reason: str | None = None,
+        retry_after: int | None = None,
     ) -> None:
-        super().__init__(code, message, status)
+        super().__init__(code, message, status, retry_after=retry_after)
         self.resource_id = resource_id
         self.reason = reason or code
 

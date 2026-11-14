@@ -95,33 +95,53 @@ impl Drop for SessionPermit {
 pub(super) async fn upgrade(
     State(node): State<Arc<Node>>,
     Extension(stop): Extension<tokio_util::sync::CancellationToken>,
+    Extension(session_id): Extension<Uuid>,
     headers: HeaderMap,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Response {
     let Ok(raw) = Route::ResponsesWebSocket.key(&headers) else {
-        return error(EP, Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"));
+        return error(
+            session_id,
+            EP,
+            Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"),
+        );
     };
     let Some(index) = node.current() else {
-        return error(EP, Failure::unavailable());
+        return error(session_id, EP, Failure::unavailable());
     };
     let Ok(key) = index.authenticate(raw) else {
-        return error(EP, Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"));
+        return error(
+            session_id,
+            EP,
+            Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"),
+        );
     };
     if validate_upgrade(&Method::GET, &headers).is_err() {
-        return error(EP, Failure(StatusCode::BAD_REQUEST, "invalid_upgrade"));
+        return error(
+            session_id,
+            EP,
+            Failure(StatusCode::BAD_REQUEST, "invalid_upgrade"),
+        );
     }
     let Ok(ws) = ws else {
-        return error(EP, Failure(StatusCode::BAD_REQUEST, "invalid_upgrade"));
+        return error(
+            session_id,
+            EP,
+            Failure(StatusCode::BAD_REQUEST, "invalid_upgrade"),
+        );
     };
     let Some(slot) = node.sessions.enter(key.organization_id) else {
-        return error(EP, Failure(StatusCode::TOO_MANY_REQUESTS, "session_limit"));
+        return error(
+            session_id,
+            EP,
+            Failure(StatusCode::TOO_MANY_REQUESTS, "session_limit"),
+        );
     };
     if stop.is_cancelled() {
-        return error(EP, Failure::unavailable());
+        return error(session_id, EP, Failure::unavailable());
     }
     let raw = Zeroizing::new(raw.to_owned());
     let limit = node.event_bytes;
-    let session_id = Uuid::new_v4();
     // Register before returning 101, so drain also owns upgrades which have not completed yet.
     let (tx, rx) = oneshot::channel();
     node.tasks.clone().spawn(async move {
@@ -380,7 +400,9 @@ async fn session(
                 frame["stream_id"] = lane.into();
             }
             let (mut r, secret) =
-                match Reservation::reserve(node.clone(), &index, &selected, EP).await {
+                match Reservation::reserve(Uuid::new_v4(), node.clone(), &index, &selected, EP)
+                    .await
+                {
                     Ok(v) => v,
                     Err(e) => {
                         channel.error(e.1).await;

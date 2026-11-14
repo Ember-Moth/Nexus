@@ -6,7 +6,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from nexus.http import credentials, cursor_value, error_responses, expected_version, idempotency_key
+from nexus.http import (
+    business_errors,
+    credentials,
+    cursor_value,
+    error_responses,
+    expected_version,
+    idempotency_key,
+)
 
 from ..application.payments.schemas import (
     ChannelCreate,
@@ -108,6 +115,17 @@ def create_router(get_service):
         "/organizations/{organization_id}/payment-orders",
         response_model=PaymentOrderView,
         status_code=202,
+        responses=business_errors(
+            "payment_endpoints_unconfigured",
+            "payment_channel_disabled",
+            "currency_mismatch",
+            "account_not_ready",
+            "payment_amount_outside_limits",
+            "payment_precision",
+            "unsupported_payment_currency",
+            "payment_credentials_revoked",
+            "payment_configuration_unavailable",
+        ),
     )
     async def create_order(
         organization_id: UUID,

@@ -652,6 +652,16 @@ class AuditRepository:
         )
 
 
+def integrity_conflict(error):
+    diagnostic = getattr(error.orig, "diag", None)
+    constraint = getattr(diagnostic, "constraint_name", None)
+    if constraint == "users_login_key":
+        return IdentityError("login_in_use", "Login is already in use", 409)
+    if constraint == "users_verified_email_key":
+        return IdentityError("email_in_use", "Email is already bound to an account", 409)
+    return IdentityError("conflict", "Resource already exists or conflicts with current state", 409)
+
+
 class IdentityUnitOfWork:
     def __init__(self, database: ModuleDatabase) -> None:
         self._context = database.transaction()
@@ -680,18 +690,14 @@ class IdentityUnitOfWork:
         try:
             result = await self._context.__aexit__(exc_type, exc, traceback)
             if isinstance(exc, IntegrityError):
-                raise IdentityError(
-                    "conflict", "Resource already exists or conflicts with current state", 409
-                )
+                raise integrity_conflict(exc)
             if isinstance(exc, SQLAlchemyError):
                 raise IdentityError(
                     "storage_unavailable", "Storage is temporarily unavailable", 503
                 )
             return result
-        except IntegrityError:
-            raise IdentityError(
-                "conflict", "Resource already exists or conflicts with current state", 409
-            ) from None
+        except IntegrityError as error:
+            raise integrity_conflict(error) from None
         except SQLAlchemyError:
             raise IdentityError(
                 "storage_unavailable", "Storage is temporarily unavailable", 503

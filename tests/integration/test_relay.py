@@ -311,7 +311,10 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             lose_gateway_receipts(info.host, info.port) as (proxy_port, dropped),
             running_relay(relay_binary, peer, private, cid, settings, tls[1], proxy_port) as client,
         ):
-            assert (await client.post(path, json=body)).status_code == 401
+            rejected = await client.post(path, json=body, headers={"X-Request-ID": "caller-value"})
+            assert (
+                rejected.status_code == 401 and rejected.headers["x-request-id"] != "caller-value"
+            )
             assert (
                 await client.post(path, headers=keyhdr, json={**body, "model": "forbidden"})
             ).status_code == 403
@@ -335,6 +338,11 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             result = await first
             assert result.status_code == 200, result.text
             assert result.json() == {**reply, "usage": native_usage}
+            assert admin.execute(
+                "SELECT count(*) FROM billing.request_runs WHERE id=%s",
+                (result.headers["x-request-id"],),
+            ).fetchone() == (1,)
+            assert result.headers["x-request-id"] != rejected.headers["x-request-id"]
             assert len(received) == 1
             line, hdr, outgoing = received[0]
             assert line == f"POST {path} HTTP/1.1" and "x-organization-id" not in hdr
@@ -368,6 +376,27 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             assert admin.execute(
                 "SELECT signed_amount FROM billing.ledger_entries WHERE kind='usage_debit'"
             ).fetchall() == [(-5,)]
+            # Both billing rejections use HTTP 402, but have different customer remedies.
+            for table, column, expected in [
+                ("accounts", "balance", "insufficient_funds"),
+                ("budget_policies", "limit_amount", "budget_exceeded"),
+            ]:
+                original = admin.execute(
+                    f"SELECT {column} FROM billing.{table} WHERE organization_id=%s", (org["id"],)
+                ).fetchone()[0]
+                try:
+                    admin.execute(
+                        f"UPDATE billing.{table} SET {column}=1 WHERE organization_id=%s",
+                        (org["id"],),
+                    )
+                    denied = await client.post(path, headers=keyhdr, json=body)
+                    assert denied.status_code == 402, denied.text
+                    assert denied.json()["error"]["type" if messages else "code"] == expected
+                finally:
+                    admin.execute(
+                        f"UPDATE billing.{table} SET {column}=%s WHERE organization_id=%s",
+                        (original, org["id"]),
+                    )
             mode = "missing"
             result = await client.post(path, headers=keyhdr, json=body)
             assert result.status_code == 200 and result.json() == reply

@@ -1,7 +1,6 @@
 import argparse
 import getpass
 import json
-import logging
 import sys
 
 import uvicorn
@@ -12,6 +11,7 @@ from nexus.api import create_app
 from nexus.commands import bootstrap, check, migrate, worker_health
 from nexus.config import MigrationSettings, RuntimeSettings
 from nexus.shared.errors import BootstrapRejected
+from nexus.shared.telemetry import configure_logging
 from nexus.worker import serve_worker
 
 
@@ -44,9 +44,7 @@ def main() -> int:
             return 0
         role = "worker" if args.command in {"worker", "worker-health"} else "api"
         settings = RuntimeSettings(_env_file=args.env_file, process_role=role)
-        logging.basicConfig(
-            level=settings.log_level.upper(), format="%(levelname)s %(name)s %(message)s"
-        )
+        configure_logging(settings.log_level)
         if args.command == "api":
             uvicorn.run(
                 create_app(settings),

@@ -2,6 +2,13 @@
 
 API 提供查询和核对命令，Worker 维护报表投影、导出任务和周期性对账。账户余额与流水直接从 billing 读取。
 
+## 凭请求 ID 排查
+
+- 管理 API 的 `X-Request-ID` 对应 `nexus.api` 的 `http.response` JSON 日志。日志记录方法、路由模板、状态、错误码与生成响应头所用的毫秒数。可以用 `GET /api/v1/audit-events?trace_id=<UUID>` 查该请求产生的审计事件，组织用户仍须提供组织 ID。迁移前的记录与独立后台操作允许 `trace_id` 为空。
+- 注册、邮箱绑定和密码找回请求实际入队后会写 `mail.queued`。按原 `request_id` 或 `job_id` 查 Worker 的 `mail.attempt`、`mail.failed`、`mail.accepted` 和待发送任务的 `mail.expired`。失败事件给出尝试次数、渠道、可用的供应商状态码和重试安排。供应商受理后仍可能退信。本地 SMTP 成功以 SMTP 事务完成为准，日志不保存地址、邮件令牌、正文或供应商返回的自由文本。
+- Relay 的两个生成接口在普通 HTTP、SSE 和早期拒绝响应中返回服务器生成的 `X-Request-ID`。请求成功预留时，该 UUID 就是计费请求 ID。WebSocket 握手的 ID 是会话 ID；会话内各轮拥有独立的计费请求 ID。HTTP 402 的 `insufficient_funds` 对应账户充值，`budget_exceeded` 对应调整预算。原先两个场景均返回 `insufficient_budget`。
+- 管理 API 与 Worker 的 Nexus 应用日志通过 stderr 输出 JSON，可由部署环境采集。日志级别受 `NEXUS_LOG_LEVEL` 控制。请求 ID 由服务端生成，原始请求路径、查询参数、认证头和请求体不写入请求事件。
+
 ## 查询
 
 管理接口前缀为 `/api/v1`。组织请求、消费、用量和流水列表支持 project_id、api_key_id、model_id、start、end 和 time_basis。时间参数带时区，包含起点，排除终点。默认按 occurred_at 查询，posted_at 选择记账期间。使用 limit 控制每页数量，将返回的 next_cursor 作为下一次请求的 cursor。充值属于组织，按项目筛选时只返回归属于该项目的流水。
@@ -22,7 +29,7 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 
 默认每组织每分钟可创建 10 个任务，每份最多 10000 行，文件保留 86400 秒，可分别通过 NEXUS_EXPORT_PER_ORG_MINUTE、NEXUS_EXPORT_MAX_ROWS 和 NEXUS_EXPORT_TTL_SECONDS 设置。文件上限为 16 MiB，超限任务报告失败，可缩短查询期间后重新导出。
 
-`GET /audit-events` 支持 organization_id、action、limit 和 cursor。平台角色可查平台范围，企业 owner 和财务须指定所属组织。审计合并各模块只读记录，返回操作人、时间、动作、对象、受控原因代码和决定引用。自由文本依据在平台财务核对详情内读取。
+`GET /audit-events` 支持 organization_id、action、trace_id、limit 和 cursor。平台角色可查平台范围，企业 owner 和财务须指定所属组织。审计合并各模块只读记录，返回操作人、时间、动作、对象、受控原因代码和决定引用。自由文本依据在平台财务核对详情内读取。
 
 ## 财务核对
 

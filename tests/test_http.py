@@ -88,3 +88,54 @@ async def test_error_bodies_match_the_declared_envelopes(settings_factory):
     assert bad_version.status_code == 422
     assert "fields" not in bad_version.json()["error"]
     ValidationErrorResponse.model_validate(bad_version.json(), strict=True)
+
+
+async def test_route_errors_and_request_events_are_correlated_without_raw_inputs(caplog):
+    import json
+    from uuid import UUID
+
+    from nexus.shared.telemetry import JsonFormatter, request_id
+
+    @asynccontextmanager
+    async def lifespan(app):
+        yield
+
+    app = build_server(lifespan)
+
+    @app.get("/api/v1/probe/{name}")
+    async def probe(name: str):
+        return str(request_id.get())
+
+    caplog.set_level("INFO", logger="nexus.api")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        ok = await client.get(
+            "/api/v1/probe/private-name?secret=private-query",
+            headers={"X-Request-ID": "spoofed", "Authorization": "private-token"},
+        )
+        miss = await client.get("/api/v1/private-missing-name")
+        wrong = await client.post("/api/v1/probe/private-name")
+    assert str(UUID(ok.headers["x-request-id"])) == ok.json()
+    assert wrong.headers["allow"] == "GET"
+    for r, code in [(miss, "route_not_found"), (wrong, "method_not_allowed")]:
+        assert r.json()["error"]["code"] == code
+        assert r.json()["error"]["trace_id"] == r.headers["x-request-id"]
+    assert request_id.get() is None
+    logs = [JsonFormatter().format(r) for r in caplog.records if r.name == "nexus.api"]
+    assert len(logs) == 3
+    assert all(
+        secret not in "".join(logs)
+        for secret in [
+            "private-name",
+            "private-query",
+            "private-token",
+            "private-missing-name",
+            "spoofed",
+        ]
+    )
+    for line, r in zip(logs, [ok, miss, wrong], strict=True):
+        row = json.loads(line)
+        assert row["request_id"] == r.headers["x-request-id"] and row["status"] == r.status_code
+        assert row["elapsed_ms"] >= 0
+    assert json.loads(logs[0])["route"] == "/api/v1/probe/{name}"

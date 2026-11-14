@@ -50,6 +50,9 @@ async def test_registration_creates_one_owned_tenant_and_one_account(http, admin
         )
     )
     assert sorted(response.status_code for response in attempts) == [201, 409]
+    assert (
+        next(r.json()["error"]["code"] for r in attempts if r.status_code == 409) == "login_in_use"
+    )
     created = next(response.json() for response in attempts if response.status_code == 201)
     session, org = created["access_token"], created["personal_organization_id"]
     me = (await client.get(API + "/me", headers=auth(session))).json()

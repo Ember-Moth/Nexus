@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import AwareDatetime
 
-from nexus.http import credentials, cursor_value, error_responses
+from nexus.http import business_errors, credentials, cursor_value, error_responses
 from nexus.shared.errors import ServiceError
 
 from ..application.schemas import (
@@ -114,16 +114,19 @@ def create_router(get_service):
         service: Service,
         organization_id: UUID | None = None,
         action: Annotated[str | None, Query(max_length=100)] = None,
+        trace_id: UUID | None = None,
         limit: Limit = 50,
         cursor: Cursor = None,
     ):
-        return await service.audit_page(token, organization_id, limit, cursor_value(cursor), action)
+        return await service.audit_page(
+            token, organization_id, limit, cursor_value(cursor), action, trace_id
+        )
 
     @router.post(
         "/organizations/{organization_id}/exports",
         status_code=202,
         response_model=ExportJob,
-        responses=error_responses(429),
+        responses=business_errors("export_rate_limited"),
     )
     async def enqueue(organization_id: UUID, body: ExportRequest, token: Token, service: Service):
         return await service.queue_export(token, organization_id, body)

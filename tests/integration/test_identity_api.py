@@ -437,11 +437,11 @@ async def test_authentication_rate_limits_and_fail_closed(http):
             "/api/v1/auth/sessions", json={"login": "root-admin", "password": "bad"}
         )
         assert response.status_code == 401
-        assert (
-            await client.post(
-                "/api/v1/auth/sessions", json={"login": "root-admin", "password": PASSWORD}
-            )
-        ).status_code == 429
+        limited = await client.post(
+            "/api/v1/auth/sessions", json={"login": "root-admin", "password": PASSWORD}
+        )
+        assert limited.status_code == 429
+        assert limited.headers["Retry-After"] == str(settings.login_window_seconds)
         assert (
             await client.post(
                 "/api/v1/auth/sessions", json={"login": "other-login", "password": "bad"}

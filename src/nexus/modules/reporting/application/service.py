@@ -149,10 +149,10 @@ class Reports:
             await self.source.acknowledge(batch)
         return len(batch)
 
-    async def audit_page(self, token, org, limit, cursor, action):
+    async def audit_page(self, token, org, limit, cursor, action, trace_id=None):
         await self.access(token, org, operation="audit")
         pages = await asyncio.gather(
-            *(source(org, limit + 1, cursor, action) for source in self.audits)
+            *(source(org, limit + 1, cursor, action, trace_id) for source in self.audits)
         )
         rows = sorted((r for page in pages for r in page), key=lambda r: (r["created_at"], r["id"]))
         return {

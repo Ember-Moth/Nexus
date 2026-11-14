@@ -39,6 +39,7 @@ def create_service(
         lambda: IdentityUnitOfWork(database),
         Argon2Passwords(),
         auth_limits,
+        login_window=settings.login_window_seconds,
         session_ttl=settings.session_ttl_seconds,
         setup_ttl=settings.password_setup_ttl_seconds,
         providers=AuthProviders(settings),

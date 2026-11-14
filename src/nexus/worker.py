@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from nexus.bootstrap import Application
 from nexus.config import RuntimeSettings
+from nexus.shared.telemetry import event
 
 logger = logging.getLogger("nexus.worker")
 
@@ -53,7 +54,13 @@ async def run_worker(
                     continue
             except Exception as error:
                 health[name] = "unavailable"
-                logger.warning("%s failed: %s", name, type(error).__name__)
+                event(
+                    logger,
+                    logging.WARNING,
+                    "worker.consumer_failed",
+                    consumer=name,
+                    error_type=type(error).__name__,
+                )
             try:
                 idle = 0.1 if name == "settlement" and health[name] == "ok" else 0.5
                 await asyncio.wait_for(stop.wait(), timeout=idle)
@@ -82,7 +89,7 @@ async def run_worker(
             except Exception:
                 ready = False
             if ready != previous:
-                logger.info("worker readiness=%s", ready)
+                event(logger, logging.INFO, "worker.readiness", ready=ready)
                 previous = ready
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval)
@@ -95,7 +102,7 @@ async def run_worker(
         try:
             await heartbeats.remove_heartbeat(worker_id, instance_id)
         except Exception:
-            logger.warning("worker heartbeat cleanup unavailable")
+            event(logger, logging.WARNING, "worker.heartbeat_cleanup_failed")
         if owns_signals:
             for signum in (signal.SIGTERM, signal.SIGINT):
                 loop.remove_signal_handler(signum)

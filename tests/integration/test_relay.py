@@ -5,13 +5,16 @@ import base64
 import gzip
 import json
 import os
+import shutil
 import socket
 import ssl
+import sys
+import tempfile
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 import pytest
@@ -82,25 +85,66 @@ def tls(tmp_path):
     return ctx, root
 
 
-@asynccontextmanager
-async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
+def free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+        return sock.getsockname()[1]
+
+
+def assert_redacted_logs(text, secrets):
+    """Relay stderr is JSON lines, and none of the given secrets appear in it."""
+    for line in text.splitlines():
+        record = json.loads(line)
+        assert {"timestamp", "level", "target", "message"} <= record.keys(), line
+    for secret in secrets:
+        assert secret not in text
+
+
+def relay_logs(client):
+    return [json.loads(line) for line in client.relay_log.read_text().splitlines()]
+
+
+async def relay_metrics(client):
+    async with httpx.AsyncClient(
+        base_url=client.metrics_url, timeout=5, trust_env=False
+    ) as metrics:
+        response = await metrics.get("/metrics")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/plain; version=0.0.4")
+    return {
+        name: float(value)
+        for name, value in (
+            line.rsplit(" ", 1) for line in response.text.splitlines() if line[:1] not in "#"
+        )
+    }
+
+
+@asynccontextmanager
+async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
+    port, metrics_port = free_port(), free_port()
     info = peer.connection.info
     login = f"{info.user}:{quote(info.password, safe='')}"
+    redis_url = settings.redis_url.get_secret_value()
     env = {
         "NEXUS_RELAY_CLUSTER_ID": cid,
         "NEXUS_RELAY_PRIVATE_KEY": base64.b64encode(bytes(private)).decode(),
         "NEXUS_RELAY_DATABASE_URL": f"postgresql://{login}@127.0.0.1:{proxy_port}/{info.dbname}?sslmode=disable",
-        "NEXUS_RELAY_REDIS_URL": settings.redis_url.get_secret_value(),
+        "NEXUS_RELAY_REDIS_URL": redis_url,
         "NEXUS_RELAY_NAMESPACE": settings.redis_namespace,
         "NEXUS_RELAY_UPSTREAM_CA": str(ca),
         "NEXUS_RELAY_LISTEN": f"127.0.0.1:{port}",
+        "NEXUS_RELAY_METRICS_LISTEN": f"127.0.0.1:{metrics_port}",
         "NEXUS_RELAY_LEASE_MS": "600",
     }
+    secrets = [env["NEXUS_RELAY_PRIVATE_KEY"], info.password, urlsplit(redis_url).password]
     inherited = {k: v for k, v in os.environ.items() if not k.startswith("RELAY_ACCEPTANCE_WS_")}
-    process = await asyncio.create_subprocess_exec(str(program), env={**inherited, **env})
+    log_dir = Path(tempfile.mkdtemp(prefix="relay-"))
+    log_path = log_dir / "stderr.jsonl"
+    # Append mode: tests read the file while the relay keeps writing to it.
+    with log_path.open("ab") as log:
+        process = await asyncio.create_subprocess_exec(
+            str(program), env={**inherited, **env}, stderr=log
+        )
     try:
         async with httpx.AsyncClient(
             base_url=f"http://127.0.0.1:{port}", timeout=5, trust_env=False
@@ -116,6 +160,8 @@ async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
                         pass
                     await asyncio.sleep(0.05)
             client.relay_process = process
+            client.relay_log = log_path
+            client.metrics_url = f"http://127.0.0.1:{metrics_port}"
             yield client
     finally:
         if process.returncode is None:
@@ -125,6 +171,10 @@ async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
         except TimeoutError:
             process.kill()
             await process.wait()
+        logs = log_path.read_text(errors="replace")
+        sys.stderr.write(logs)  # pytest shows the relay's log with a failing test
+        shutil.rmtree(log_dir)
+    assert_redacted_logs(logs, [s for s in secrets if s])
 
 
 async def wait_events(admin, expected):
@@ -433,6 +483,32 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             assert resp.status_code == 200
             assert (await client.post(path, headers=keyhdr, json=body)).status_code == 401
             assert len(received) == 5
+            assert (await client.get("/live")).status_code == 200
+            samples = await relay_metrics(client)
+            series = f'endpoint="{endpoint}",transport="http"'
+            assert samples[f'nexus_relay_requests_total{{{series},outcome="succeeded"}}'] >= 2
+            assert samples[f'nexus_relay_requests_total{{{series},outcome="unknown"}}'] >= 2
+            assert samples[f'nexus_relay_requests_total{{{series},outcome="rejected"}}'] >= 4
+            stream = f'endpoint="{endpoint}",transport="sse",outcome="rejected"'
+            assert samples[f"nexus_relay_requests_total{{{stream}}}"] == 1
+            # Five upstream POSTs; the two cancelled ones never received response headers.
+            assert samples[f"nexus_relay_upstream_first_byte_seconds_count{{{series}}}"] == 3
+            assert samples[f"nexus_relay_upstream_duration_seconds_count{{{series}}}"] == 5
+            reserve = 'dependency="database",operation="reserve_request",kind="unavailable"'
+            assert samples[f"nexus_relay_control_errors_total{{{reserve}}}"] >= 1
+            assert samples["nexus_relay_completion_event_replays_total"] >= 1
+            assert samples["nexus_relay_snapshot_revision"] >= 2
+            assert samples["nexus_relay_control_plane_healthy"] == 1
+            assert samples["nexus_relay_draining"] == 0
+            assert samples["nexus_relay_capacity_limit"] == 128
+            logs = relay_logs(client)
+            finished = [r for r in logs if r["message"] == "request finished"]
+            assert {r["delivery"] for r in finished} >= {"succeeded", "unknown"}
+            assert all(r["endpoint"] == endpoint and r["transport"] == "http" for r in finished)
+            assert any(r["message"] == "configuration snapshot applied" for r in logs)
+            text = client.relay_log.read_text()
+            for secret in [token, "provider-secret-do-not-echo", "rotated-test-upstream"]:
+                assert secret not in text
 
 
 async def test_rust_replays_python_quota_lease(plane, http, admin, relay_binary):  # noqa: F811

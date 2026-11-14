@@ -363,3 +363,46 @@ fn interleaved_tool_arguments_share_a_bounded_budget_until_done() {
         .unwrap();
     limits.observe(&delta("one", "x")).unwrap();
 }
+
+#[test]
+fn compact_wire_uses_explicit_history_and_only_compact_parameters() {
+    let path = "/v1/responses/compact";
+    assert_eq!(route(&Method::POST, path), Some(Route::Compact));
+    assert_eq!(route(&Method::GET, path), None);
+    let mut headers = HeaderMap::new();
+    headers.insert("authorization", "Bearer tenant".parse().unwrap());
+    assert_eq!(Route::Compact.key(&headers), Ok("tenant"));
+
+    let input = json!([{"type":"compaction","id":"cmp_prior","encrypted_content":"opaque"},
+                     {"type":"function_call_output","call_id":"call","output":"ok"}]);
+    let body = json!({"model":"alias","instructions":"retain constraints","input":input,
+                    "prompt_cache_key":"workflow","image":{"context_compression":"enabled"}});
+    let req = Generate::parse_compact(body.clone()).unwrap();
+    assert!(!req.has_tools() && !req.stream);
+    let (wire, bounds) = req.prepare_native("upstream", 400, 80).unwrap();
+    let mut expected = body.clone();
+    expected["model"] = json!("upstream");
+    assert_eq!(wire, expected);
+    assert_eq!(
+        bounds,
+        ReservationBounds {
+            inputs: 400,
+            outputs: 80
+        }
+    );
+    for extra in [
+        json!({"stream":true}),
+        json!({"max_output_tokens":4}),
+        json!({"store":true}),
+        json!({"previous_response_id":"resp_foreign"}),
+        json!({"input":[{"id":"msg_foreign"}]}),
+        json!({"input":[{"type":"item_reference","id":"msg_foreign"}]}),
+    ] {
+        let mut invalid = body.clone();
+        invalid
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        assert!(Generate::parse_compact(invalid).is_err());
+    }
+}

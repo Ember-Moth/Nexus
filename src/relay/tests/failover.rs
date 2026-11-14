@@ -82,6 +82,7 @@ fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
             "relay.sse.v1",
             "relay.responses-ws.v1",
             "relay.messages-to-responses.v1",
+            "relay.responses-to-messages.v1",
         ]
         .map(String::from)
         .to_vec(),
@@ -497,4 +498,33 @@ fn native_and_converted_workflow_use_the_same_scoped_responses_key() {
     let b = f.index.select("enterprise", &cross).unwrap();
     assert_eq!(a.body["prompt_cache_key"], b.body["prompt_cache_key"]);
     assert_eq!(a.body["prompt_cache_key"].as_str().unwrap().len(), 64);
+}
+
+#[test]
+fn compact_routes_only_to_native_http_responses_within_its_frozen_bounds() {
+    let responses = |limit| json!({"endpoint":"openai_responses","output_ceiling":limit});
+    let cross = json!({"convert_from":"openai_responses"});
+    let req = Generate::parse_compact(json!({"model":"public","input":"context"})).unwrap();
+    let config = fixture(&[
+        (0, 1, cross.clone()),
+        (1, 1, responses(6)),
+        (2, 1, responses(8)),
+        (3, 1, responses(4)),
+    ]);
+    let first = config.index.select("enterprise", &req).unwrap();
+    assert_eq!(first.deployment.id, config.ids[1]);
+    assert_eq!(first.bounds.outputs, 6);
+    let second = config
+        .index
+        .fallback("enterprise", &req, &[first.deployment.id], first.bounds)
+        .unwrap();
+    assert_eq!(second.deployment.id, config.ids[3]);
+    assert_eq!(second.bounds.outputs, 4);
+    assert!(second.body.get("max_output_tokens").is_none());
+    assert!(
+        fixture(&[(0, 1, cross)])
+            .index
+            .select("enterprise", &req)
+            .is_err()
+    );
 }

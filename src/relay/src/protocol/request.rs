@@ -6,6 +6,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
     Generate(Endpoint),
+    Compact,
     ResponsesWebSocket,
 }
 
@@ -13,6 +14,7 @@ pub fn route(method: &Method, path: &str) -> Option<Route> {
     match (method.as_str(), path) {
         ("POST", "/v1/messages") => Some(Route::Generate(Endpoint::AnthropicMessages)),
         ("POST", "/v1/responses") => Some(Route::Generate(Endpoint::OpenaiResponses)),
+        ("POST", "/v1/responses/compact") => Some(Route::Compact),
         ("GET", "/v1/responses") => Some(Route::ResponsesWebSocket),
         _ => None,
     }
@@ -68,11 +70,19 @@ impl Route {
     }
 }
 
+/// Distinguishes HTTP operations that share the same native Responses usage schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    Generate,
+    Compact,
+}
+
 /// Keep the native body intact until a specific authorized deployment is selected.
 #[derive(Debug)]
 pub struct Generate {
     pub model: String,
     pub endpoint: Endpoint,
+    pub(crate) operation: Operation,
     pub stream: bool,
     pub requested_output: Option<u32>,
     body: Value,
@@ -180,11 +190,46 @@ impl Generate {
         Ok(Self {
             model,
             endpoint,
+            operation: Operation::Generate,
             stream,
             requested_output,
             affinity_key: None,
             body,
         })
+    }
+
+    pub fn parse_compact(body: Value) -> Result<Self, ProtocolError> {
+        // Compaction is a stateless, unary Responses operation. A stored response
+        // or item reference has no tenant ownership proof on this HTTP connection.
+        let obj = super::convert::fields(
+            &body,
+            &[
+                "model",
+                "input",
+                "instructions",
+                "image",
+                "previous_response_id",
+                "prompt_cache_key",
+                "prompt_cache_options",
+                "prompt_cache_retention",
+                "service_tier",
+            ],
+        )?;
+        if obj
+            .get("input")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.as_object()
+                        .is_none_or(|item| item.len() == 1 && item.contains_key("id"))
+                })
+            })
+        {
+            return Err(ProtocolError::Invalid("explicit compaction history"));
+        }
+        let mut request = Self::parse(Endpoint::OpenaiResponses, body, false)?;
+        request.operation = Operation::Compact;
+        Ok(request)
     }
 
     pub fn set_affinity_key(&mut self, key: Option<String>) {
@@ -196,6 +241,10 @@ impl Generate {
     }
 
     pub fn has_tools(&self) -> bool {
+        // Tool calls in a compact input are historical items, not tools to execute.
+        if self.operation == Operation::Compact {
+            return false;
+        }
         self.body
             .get("tools")
             .and_then(Value::as_array)
@@ -262,7 +311,7 @@ impl Generate {
         let bounds = ReservationBounds::for_deployment(inputs, outputs, requested_output)?;
         let mut body = self.body.clone();
         body["model"] = upstream_model.into();
-        if self.endpoint == Endpoint::OpenaiResponses {
+        if self.endpoint == Endpoint::OpenaiResponses && self.operation == Operation::Generate {
             body["store"] = false.into();
             body["max_output_tokens"] = bounds.outputs.into();
         }

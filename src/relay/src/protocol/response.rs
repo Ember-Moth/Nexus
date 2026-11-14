@@ -1,12 +1,21 @@
 //! A native HTTP JSON response supplies its own terminal state and usage.
 use super::{
     Endpoint, ProtocolError,
+    request::Operation,
     stream::{Completion, Terminal},
     usage::UsageEvidence,
 };
 use serde_json::Value;
 
 pub fn observe(endpoint: Endpoint, body: &Value) -> Result<Completion, ProtocolError> {
+    observe_operation(endpoint, Operation::Generate, body)
+}
+
+pub(crate) fn observe_operation(
+    endpoint: Endpoint,
+    operation: Operation,
+    body: &Value,
+) -> Result<Completion, ProtocolError> {
     if body["type"] == "error"
         || body.get("error").is_some_and(Value::is_object) && body["object"] != "response"
     {
@@ -27,6 +36,22 @@ pub fn observe(endpoint: Endpoint, body: &Value) -> Result<Completion, ProtocolE
                 .filter(|s| !s.is_empty())
                 .ok_or(ProtocolError::Invalid("stop reason"))?;
             (Terminal::Completed, Some(reason))
+        }
+        Endpoint::OpenaiResponses if operation == Operation::Compact => {
+            if body["object"] != "response.compaction"
+                || !body["output"].as_array().is_some_and(|items| {
+                    items.iter().all(Value::is_object)
+                        && items.iter().any(|item| {
+                            item["type"] == "compaction"
+                                && item["encrypted_content"]
+                                    .as_str()
+                                    .is_some_and(|s| !s.is_empty())
+                        })
+                })
+            {
+                return Err(ProtocolError::Invalid("compaction response"));
+            }
+            (Terminal::Completed, None)
         }
         Endpoint::OpenaiResponses => {
             if body["object"] != "response" {

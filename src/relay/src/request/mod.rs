@@ -238,7 +238,14 @@ async fn open(
                 .await
         } else {
             node.upstream
-                .open(&dep.base_url, ep, credential, body, stream)
+                .open(
+                    &dep.base_url,
+                    ep,
+                    selected.operation,
+                    credential,
+                    body,
+                    stream,
+                )
                 .await
         }
     };
@@ -296,7 +303,9 @@ async fn open(
                 crate::bedrock::transport::buffered(response, exchange.public_model, &rid, limit)
                     .await
             } else {
-                node.upstream.buffered(response, ep).await
+                node.upstream
+                    .buffered(response, ep, selected.operation)
+                    .await
             }
         }))
         .await;
@@ -521,7 +530,9 @@ pub async fn run(
             if dep.is_bedrock() {
                 crate::bedrock::transport::buffered(answer, &request.model, &rid, limit).await
             } else {
-                node.upstream.buffered(answer, exchange.upstream).await
+                node.upstream
+                    .buffered(answer, exchange.upstream, request.operation)
+                    .await
             }
         };
         let result = run

@@ -1,4 +1,6 @@
-use crate::protocol::{Endpoint, ProtocolError, response, usage::UsageEvidence};
+use crate::protocol::{
+    Endpoint, ProtocolError, request::Operation, response, usage::UsageEvidence,
+};
 use http::StatusCode;
 use reqwest::{Client, Url};
 use serde_json::Value;
@@ -134,7 +136,7 @@ impl Upstream {
             Connector, connect_async_tls_with_config,
             tungstenite::{client::IntoClientRequest, protocol::WebSocketConfig},
         };
-        let mut url = Self::endpoint(base, Endpoint::OpenaiResponses);
+        let mut url = Self::endpoint(base, Endpoint::OpenaiResponses, Operation::Generate);
         url.set_scheme("wss").map_err(|_| ())?;
         let mut req = url.as_str().into_client_request().map_err(|_| ())?;
         req.headers_mut().insert(
@@ -160,7 +162,7 @@ impl Upstream {
         .map_err(|_| ())?;
         Ok(ws)
     }
-    pub(crate) fn endpoint(base: &Url, endpoint: Endpoint) -> Url {
+    pub(crate) fn endpoint(base: &Url, endpoint: Endpoint, operation: Operation) -> Url {
         let mut url = base.clone();
         let path = url.path().trim_end_matches('/');
         let prefix = if path.ends_with("/v1") {
@@ -170,6 +172,7 @@ impl Upstream {
         };
         let resource = match endpoint {
             Endpoint::AnthropicMessages => "messages",
+            Endpoint::OpenaiResponses if operation == Operation::Compact => "responses/compact",
             Endpoint::OpenaiResponses => "responses",
         };
         url.set_path(&format!("{prefix}/{resource}"));
@@ -179,11 +182,12 @@ impl Upstream {
         &self,
         base: &Url,
         endpoint: Endpoint,
+        operation: Operation,
         secret: &str,
         body: &Value,
         stream: bool,
     ) -> Result<reqwest::Response, UpstreamError> {
-        let mut call = self.client.post(Self::endpoint(base, endpoint));
+        let mut call = self.client.post(Self::endpoint(base, endpoint, operation));
         call = match endpoint {
             Endpoint::AnthropicMessages => call
                 .header("x-api-key", secret)
@@ -217,23 +221,26 @@ impl Upstream {
         secret: &str,
         body: &Value,
     ) -> Result<Reply, UpstreamError> {
-        let res = self.open(base, endpoint, secret, body, false).await?;
-        self.buffered(res, endpoint).await
+        let res = self
+            .open(base, endpoint, Operation::Generate, secret, body, false)
+            .await?;
+        self.buffered(res, endpoint, Operation::Generate).await
     }
     pub(crate) async fn buffered(
         &self,
         res: reqwest::Response,
         endpoint: Endpoint,
+        operation: Operation,
     ) -> Result<Reply, UpstreamError> {
         let status = res.status();
         let bytes = read_body(res, self.max_bytes).await?;
         let mut data: Value = serde_json::from_slice(&bytes)?;
         // Preserve the delivery fact even if a new or malformed meter cannot be billed.
-        let done = match response::observe(endpoint, &data) {
+        let done = match response::observe_operation(endpoint, operation, &data) {
             Ok(done) => done,
             Err(error) if data.get("usage").is_some() => {
                 data.as_object_mut().ok_or(error)?.remove("usage");
-                response::observe(endpoint, &data)?
+                response::observe_operation(endpoint, operation, &data)?
             }
             Err(error) => return Err(error.into()),
         };

@@ -7,7 +7,11 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::{ControlError, credential::CredentialRef, database::Snapshot};
-use crate::protocol::{Endpoint, cache, request::Generate, tokens::ReservationBounds};
+use crate::protocol::{
+    Endpoint, cache,
+    request::{Generate, Operation},
+    tokens::ReservationBounds,
+};
 
 pub const CAPABILITIES: &[&str] = &[
     "reservation.v1",
@@ -254,6 +258,7 @@ pub struct Binding {
 }
 
 pub struct Selection<'a> {
+    pub(crate) operation: Operation,
     pub upstream: UpstreamProtocol,
     pub deployment: &'a Deployment,
     pub model: Uuid,
@@ -571,6 +576,11 @@ impl Index {
             let Some(profile) = &dep.relay_profile else {
                 continue;
             };
+            if request.operation == Operation::Compact
+                && profile.endpoint != UpstreamProtocol::OpenaiResponses
+            {
+                continue;
+            }
             let cross = profile.endpoint != UpstreamProtocol::BedrockConverse
                 && profile.endpoint != UpstreamProtocol::from(request.endpoint);
             if (cross && (ws || profile.convert_from != Some(request.endpoint)))
@@ -586,9 +596,14 @@ impl Index {
                     .requested_output
                     .is_some_and(|n| n > profile.output_ceiling)
                 || retry.is_some_and(|(failed, frozen)| {
+                    let output_fits = match request.operation {
+                        Operation::Generate => profile.output_ceiling >= frozen.outputs,
+                        // Compact has no output-limit parameter; the entire backup bound must fit.
+                        Operation::Compact => profile.output_ceiling <= frozen.outputs,
+                    };
                     failed.contains(&dep.id)
                         || profile.input_ceiling > frozen.inputs
-                        || profile.output_ceiling < frozen.outputs
+                        || !output_fits
                 })
                 || candidate.priority > best
             {
@@ -652,8 +667,11 @@ impl Index {
         } else {
             Rejection::Unavailable
         })?;
-        // A later attempt sends exactly the output limit already reserved for this request.
-        let requested = retry.map_or(request.requested_output, |(_, frozen)| Some(frozen.outputs));
+        // Generation can enforce the frozen limit on the wire; compaction uses deployment bounds.
+        let requested = match (request.operation, retry) {
+            (Operation::Generate, Some((_, frozen))) => Some(frozen.outputs),
+            _ => request.requested_output,
+        };
         let (mut body, bounds) = if p.endpoint == UpstreamProtocol::BedrockConverse {
             let mut body = (if p.auto_prompt_cache {
                 cache_bedrock
@@ -716,6 +734,7 @@ impl Index {
             }
         }
         let selection = Selection {
+            operation: request.operation,
             upstream: p.endpoint,
             deployment: dep,
             key,

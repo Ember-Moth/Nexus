@@ -160,7 +160,9 @@ pub async fn forward(
                     )
                     .await
                 } else {
-                    node.upstream.buffered(response, ep).await
+                    node.upstream
+                        .buffered(response, ep, crate::protocol::request::Operation::Generate)
+                        .await
                 }
             }))
             .await;

@@ -4,7 +4,7 @@
 
 ## 运行现有实现
 
-从仓库根目录执行 `cargo build --release --locked --manifest-path src/relay/Cargo.toml`，生成 `src/relay/target/release/nexus-relay`。节点通过 HTTP/1.1 提供 `POST /v1/messages`、`POST /v1/responses` 和 `GET /v1/responses` Upgrade。POST 支持普通 JSON 和 `stream=true` 的 SSE。Upgrade 建立串行多轮会话，首轮准入后才拨部署的 WSS。对外 TLS 由入口负载均衡终止，`GET /live` 和 `GET /ready` 分别提供存活和就绪状态。Prometheus 指标在独立的指标监听上提供，日志为 stderr 上逐行 JSON，字段、指标清单和探针用法见[Relay 可观测性](operations.md#relay-可观测性)。
+从仓库根目录执行 `cargo build --release --locked --manifest-path src/relay/Cargo.toml`，生成 `src/relay/target/release/nexus-relay`。节点通过 HTTP/1.1 提供生成端点 `POST /v1/messages`、`POST /v1/responses`，压缩端点 `POST /v1/responses/compact`，以及 `GET /v1/responses` Upgrade。生成端点支持普通 JSON 和 `stream=true` 的 SSE。Upgrade 建立串行多轮会话，首轮准入后才拨部署的 WSS。对外 TLS 由入口负载均衡终止，`GET /live` 和 `GET /ready` 分别提供存活和就绪状态。Prometheus 指标在独立的指标监听上提供，日志为 stderr 上逐行 JSON，字段、指标清单和探针用法见[Relay 可观测性](operations.md#relay-可观测性)。
 
 | 环境变量 | 节点配置 |
 | --- | --- |
@@ -31,6 +31,18 @@ WS 握手使用企业 Bearer Key，空闲和 ping/pong 不触发资金预留。�
 运行 `cargo test --locked --manifest-path src/relay/Cargo.toml` 验证协议、路由及写出跟踪。运行 `uv run python scripts/run_integration.py -q tests/integration/test_plane.py tests/integration/test_relay.py tests/integration/test_relay_streams.py` 验证真实客户端、本地 TLS 上游、隔离 PostgreSQL/Redis 和 Worker 的完整链路。
 
 获授权真实部署可运行 `tests/integration/test_live_relay_ws.py`。设置 `RELAY_ACCEPTANCE_WS_RUN=1`、`RELAY_ACCEPTANCE_WS_URL`、`RELAY_ACCEPTANCE_WS_MODEL` 和 `RELAY_ACCEPTANCE_WS_KEY`，使用上述隔离集成命令并指定该测试文件。测试只在一个连接串行发送两次生成，`RELAY_ACCEPTANCE_WS_OUTPUT` 默认每轮 64。商户 Key 写入本次隔离 catalog。给出 `wss://` 时 Relay 直接拨 TLS，给出回环 `ws://` 时测试搭建临时 TLS 入口，保留原始握手、帧和端点的升级状态。测试余额和真实上游计费分别核对。[Responses 续接语义](https://developers.openai.com/api/docs/guides/websocket-mode)
+
+## OpenAI 上下文压缩
+
+调用 `POST /v1/responses/compact`，使用企业 Bearer Key，提交公开模型名和显式历史。例如：
+
+```json
+{"model":"enterprise-model","input":[{"role":"user","content":"保留本次设计决策"}]}
+```
+
+Relay 只选择该组织路由中支持原生 Responses HTTP 的部署，向其 `/v1/responses/compact` 发起非流式 POST。成功响应是 `response.compaction`。下一轮调用 `POST /v1/responses` 时，从返回的完整 `output` 数组继续追加新消息，保留加密压缩项和其他保留项的顺序。与普通 HTTP Responses 相同，Nexus 通过显式历史隔离租户；提供 `previous_response_id` 或存储项引用的请求返回 400。[OpenAI 接口](https://developers.openai.com/api/reference/resources/responses/methods/compact) · [上下文压缩指南](https://developers.openai.com/api/docs/guides/compaction)
+
+**计费。** 每次压缩独立预留、记录上游尝试并结算，使用该模型的销售价和实际部署的成本价，计量格式为 `openai.responses.v1`。部署的 `input_ceiling`、`output_ceiling` 应覆盖上游压缩操作本身的硬上界。压缩请求无法在上游强制指定输出上限，继而重试的部署也必须完全落在首次预留的输入、输出上界内。回执缺少可核对用量或结果不明时进入现有核对流程。可凭 `X-Request-ID` 查询本次压缩的请求与费用。
 
 ## HTTP 和 SSE 故障转移
 

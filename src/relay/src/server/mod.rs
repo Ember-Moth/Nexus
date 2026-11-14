@@ -12,7 +12,7 @@ use crate::{
     metrics::{self, RequestTally, Transport},
     protocol::{
         Endpoint,
-        request::{Generate, Route},
+        request::{Generate, Route, route},
     },
     request::{self, Failure},
     upstream::Upstream,
@@ -260,14 +260,14 @@ async fn generate(
     incoming: Request,
 ) -> Response {
     let (parts, body) = incoming.into_parts();
-    let endpoint = if parts.uri.path() == "/v1/messages" {
-        Endpoint::AnthropicMessages
-    } else {
-        Endpoint::OpenaiResponses
+    let (route, endpoint) = match route(&parts.method, parts.uri.path()) {
+        Some(r @ Route::Generate(ep)) => (r, ep),
+        Some(Route::Compact) => (Route::Compact, Endpoint::OpenaiResponses),
+        _ => return StatusCode::NOT_FOUND.into_response(),
     };
     // Every early return below counts as a rejected request.
     let mut tally = RequestTally::new(endpoint, Transport::Http);
-    let Ok(key) = Route::Generate(endpoint).key(&parts.headers) else {
+    let Ok(key) = route.key(&parts.headers) else {
         return error(
             id,
             endpoint,
@@ -297,7 +297,12 @@ async fn generate(
             Failure(StatusCode::BAD_REQUEST, "invalid_json"),
         );
     };
-    let Ok(mut request) = Generate::parse(endpoint, json, false) else {
+    let parsed = if route == Route::Compact {
+        Generate::parse_compact(json)
+    } else {
+        Generate::parse(endpoint, json, false)
+    };
+    let Ok(mut request) = parsed else {
         return error(
             id,
             endpoint,
@@ -388,6 +393,7 @@ pub async fn serve(
     node.healthy.store(true, Ordering::Release);
     let router = Router::new()
         .route("/v1/messages", post(generate))
+        .route("/v1/responses/compact", post(generate))
         .route("/v1/responses", post(generate).get(websocket::upgrade))
         .route_layer(axum::middleware::from_fn(correlate))
         .route("/ready", get(ready))

@@ -7,12 +7,14 @@ use crate::{
         limits::{Admission, Lease, LimitError},
         snapshot::{Deployment, Index, Selection},
     },
+    metrics::RequestTally,
     protocol::{Endpoint, stream::Completion, usage::UsageEvidence},
     server::Node,
 };
 use http::StatusCode;
 use std::{future::Future, sync::Arc};
 use tokio::time::{Instant, sleep_until};
+use tracing::warn;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -24,6 +26,7 @@ pub struct Reservation {
     deployment: Uuid,
     usage_format: &'static str,
     lease: Lease,
+    pub tally: RequestTally,
 }
 
 /// Open the cluster envelope for a deployment's upstream credential.
@@ -83,7 +86,7 @@ impl Reservation {
         let retry = first.as_ref().is_err_and(|e| e.retryable());
         if let Err(e) = if retry { reserve().await } else { first } {
             if retry && !cancel(&node.db, id).await {
-                eprintln!("unconfirmed reservation cleanup {id}");
+                warn!(request_id = %id, "reservation cancellation unconfirmed");
             }
             finish_lease(&node.limits, &lease, Some(0), id).await;
             return Err(e.into());
@@ -97,13 +100,14 @@ impl Reservation {
                 deployment: dep.id,
                 usage_format: selected.upstream.usage_format(),
                 lease,
+                tally: RequestTally::detached(),
             },
             secret,
         ))
     }
     pub async fn abort(self) {
         if !cancel(&self.node.db, self.id).await {
-            eprintln!("unconfirmed reservation cleanup {}", self.id);
+            warn!(request_id = %self.id, "reservation cancellation unconfirmed");
         }
         finish_lease(&self.node.limits, &self.lease, Some(0), self.id).await;
     }
@@ -120,6 +124,7 @@ impl Reservation {
             started: Instant::now(),
             others: Vec::new(),
             closable: true,
+            tally: std::mem::take(&mut self.tally),
         };
         let start = || {
             self.node
@@ -198,7 +203,7 @@ impl Run {
         }
         let mut others = self.attempt.others.clone();
         others.push(self.attempt.attempt);
-        let attempt = Attempt {
+        let mut attempt = Attempt {
             request: rid,
             attempt: Uuid::new_v4(),
             revision: self.reservation.revision,
@@ -206,6 +211,7 @@ impl Run {
             started: Instant::now(),
             closable: true,
             others,
+            tally: RequestTally::detached(),
         };
         let sequence = i32::try_from(attempt.others.len() + 1).expect("bounded attempts");
         let start = || {
@@ -247,6 +253,9 @@ impl Run {
             .zip(confirmed_tokens(self.reservation.endpoint, &evidence))
             .map(|(a, b)| a + b);
         self.attempt.failed(&node.db, response_id, evidence).await;
+        // The request's tally follows its open attempt and is recorded once, at the close.
+        attempt.tally = std::mem::take(&mut self.attempt.tally);
+        attempt.tally.deployment = Some(next.deployment);
         let mut reservation = self.reservation;
         reservation.deployment = next.deployment;
         reservation.endpoint = next.endpoint;

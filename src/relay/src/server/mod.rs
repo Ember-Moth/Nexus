@@ -1,4 +1,5 @@
 mod delivery;
+mod observe;
 mod websocket;
 
 use crate::{
@@ -8,6 +9,7 @@ use crate::{
         limits::Limits,
         snapshot::{CAPABILITIES, Index},
     },
+    metrics::{self, RequestTally, Transport},
     protocol::{
         Endpoint,
         request::{Generate, Route},
@@ -42,6 +44,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 pub struct NodeLimits {
@@ -75,6 +78,7 @@ pub struct Node {
     healthy: AtomicBool,
     index: RwLock<Option<Arc<Index>>>,
     capacity: Arc<Semaphore>,
+    capacity_limit: usize,
     pub(crate) tasks: TaskTracker,
     sessions: Arc<websocket::Sessions>,
     turns: Arc<websocket::Sessions>,
@@ -130,6 +134,7 @@ impl Node {
             healthy: AtomicBool::new(false),
             index: RwLock::new(None),
             capacity: Arc::new(Semaphore::new(capacity)),
+            capacity_limit: capacity,
             tasks: TaskTracker::new(),
             draining_deadline: CancellationToken::new(),
             turns: Arc::new(websocket::Sessions::new(capacity, turns_per_tenant)),
@@ -163,6 +168,7 @@ impl Node {
                 .iter()
                 .any(|s| !CAPABILITIES.contains(&s.as_str()))
             {
+                rejected(&snapshot, "unsupported_capability");
                 return self
                     .db
                     .acknowledge(&snapshot, CAPABILITIES, Some("unsupported_capability"))
@@ -171,6 +177,7 @@ impl Node {
             let index = match Index::build(&mut snapshot) {
                 Ok(i) => i,
                 Err(e) => {
+                    rejected(&snapshot, "invalid_resources");
                     self.db
                         .acknowledge(&snapshot, CAPABILITIES, Some("invalid_resources"))
                         .await?;
@@ -186,6 +193,7 @@ impl Node {
                     .await
                     .and_then(|env| env.open(index.cluster, reference, &self.private));
                 if let Err(error) = verified {
+                    rejected(&snapshot, "credential_unavailable");
                     self.db
                         .acknowledge(&snapshot, CAPABILITIES, Some("credential_unavailable"))
                         .await?;
@@ -193,6 +201,12 @@ impl Node {
                 }
             }
             self.db.acknowledge(&snapshot, CAPABILITIES, None).await?;
+            info!(
+                cluster_id = %self.cluster,
+                node_id = %snapshot.node_id,
+                revision = snapshot.revision,
+                "configuration snapshot applied"
+            );
             *self.index.write().unwrap() = Some(Arc::new(index));
         }
         self.limits
@@ -200,6 +214,16 @@ impl Node {
             .await
             .map_err(|_| ControlError::Invalid("heartbeat"))
     }
+}
+
+fn rejected(snapshot: &crate::control::database::Snapshot, reason: &'static str) {
+    warn!(
+        cluster_id = %snapshot.cluster_id,
+        node_id = %snapshot.node_id,
+        revision = snapshot.revision,
+        reason,
+        "configuration snapshot rejected"
+    );
 }
 
 fn error(endpoint: Endpoint, failure: Failure) -> Response {
@@ -229,6 +253,8 @@ async fn generate(
     } else {
         Endpoint::OpenaiResponses
     };
+    // Every early return below counts as a rejected request.
+    let mut tally = RequestTally::new(endpoint, Transport::Http);
     let Ok(key) = Route::Generate(endpoint).key(&parts.headers) else {
         return error(
             endpoint,
@@ -260,6 +286,7 @@ async fn generate(
         );
     };
     if request.stream {
+        tally.set_transport(Transport::Sse);
         streaming.0.cancel();
         if parts.version != http::Version::HTTP_11 {
             return error(
@@ -276,7 +303,7 @@ async fn generate(
     let key = key.to_owned();
     tracker.spawn(async move {
         let _permit = permit;
-        request::run(node, index, key, request, tx).await;
+        request::run(node, index, key, request, tx, tally).await;
     });
     let result = match rx.await {
         Ok(Ok(result)) => result,
@@ -333,6 +360,7 @@ pub async fn serve(
         .route("/v1/messages", post(generate))
         .route("/v1/responses", post(generate).get(websocket::upgrade))
         .route("/ready", get(ready))
+        .route("/live", get(metrics::live))
         .layer(Extension(BodyLimit(max_body)))
         .layer(Extension(stop.clone()))
         .with_state(node.clone());
@@ -358,8 +386,15 @@ pub async fn serve(
                     match &mut messages{ Some(stream)=>stream.next().await,None=>std::future::pending().await }
                 }=>{if message.is_none(){messages=None;}}
             }
-            let healthy = refresh.refresh().await.is_ok();
-            refresh.healthy.store(healthy, Ordering::Release);
+            let result = refresh.refresh().await;
+            match &result {
+                Err(error) => warn!(reason = error.reason(), "control-plane refresh failed"),
+                Ok(()) if !refresh.healthy.load(Ordering::Acquire) => {
+                    info!("control-plane refresh recovered")
+                }
+                Ok(()) => {}
+            }
+            refresh.healthy.store(result.is_ok(), Ordering::Release);
         }
     });
     let sockets = TaskTracker::new();
@@ -399,6 +434,9 @@ pub async fn serve(
             tokio::select! {_=exchange=>{},_=abort.cancelled()=>{}}
         });
     }
+    let drain = std::time::Instant::now();
+    metrics::set_draining(true);
+    info!(in_flight = node.tasks.len(), "drain started");
     sockets.close();
     node.capacity.close();
     node.healthy.store(false, Ordering::Release);
@@ -406,12 +444,25 @@ pub async fn serve(
         .await
         .is_err()
     {
+        warn!("drain deadline reached; closing open connections");
         node.draining_deadline.cancel();
         sockets.wait().await;
     }
     node.tasks.close();
-    let _ = timeout(Duration::from_secs(90), node.tasks.wait()).await;
+    if timeout(Duration::from_secs(90), node.tasks.wait())
+        .await
+        .is_err()
+    {
+        warn!(
+            in_flight = node.tasks.len(),
+            "drain deadline reached; abandoning background tasks"
+        );
+    }
     maintenance.abort();
     let _ = timeout(Duration::from_secs(1), maintenance).await;
+    info!(
+        elapsed_ms = drain.elapsed().as_millis() as u64,
+        "drain finished"
+    );
     Ok(())
 }

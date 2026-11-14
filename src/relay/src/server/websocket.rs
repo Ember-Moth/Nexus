@@ -2,6 +2,7 @@
 use super::{Node, error};
 use crate::{
     control::snapshot::Binding,
+    metrics::{Outcome, RequestTally, Transport, UpstreamTimer},
     protocol::{
         Endpoint,
         request::Route,
@@ -35,6 +36,7 @@ use tokio::{
     time::{Instant, timeout},
 };
 use tokio_tungstenite::tungstenite::Message as Up;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -42,6 +44,7 @@ const EP: Endpoint = Endpoint::OpenaiResponses;
 
 pub(super) struct Sessions {
     slots: Arc<Semaphore>,
+    total: usize,
     tenants: Mutex<HashMap<Uuid, usize>>,
     per_tenant: usize,
 }
@@ -49,9 +52,13 @@ impl Sessions {
     pub fn new(total: usize, per_tenant: usize) -> Self {
         Self {
             slots: Arc::new(Semaphore::new(total)),
+            total,
             tenants: Mutex::new(HashMap::new()),
             per_tenant,
         }
+    }
+    pub fn in_use(&self) -> usize {
+        self.total.saturating_sub(self.slots.available_permits())
     }
     fn enter(self: &Arc<Self>, org: Uuid) -> Option<SessionPermit> {
         let permit = self.slots.clone().try_acquire_owned().ok()?;
@@ -120,7 +127,7 @@ pub(super) async fn upgrade(
     node.tasks.clone().spawn(async move {
         let _slot = slot;
         if let Ok(Ok(socket)) = timeout(Duration::from_secs(10), rx).await {
-            eprintln!("websocket upgraded session={session_id}");
+            info!(session_id = %session_id, "websocket session opened");
             session(node, socket, raw, stop, session_id).await;
         }
     });
@@ -209,7 +216,9 @@ async fn session(
 ) {
     let (mut sink, mut source) = ws.split();
     let mut state = Conversation::default();
-    let lifetime = Instant::now() + Duration::from_secs(3600);
+    let opened = Instant::now();
+    let mut turns = 0u64;
+    let lifetime = opened + Duration::from_secs(3600);
     loop {
         let message = tokio::select! {biased;
             _=stop.cancelled()=>break,
@@ -267,6 +276,8 @@ async fn session(
             }
             continue;
         };
+        // Every turn that ends before its attempt starts counts as rejected.
+        let mut tally = RequestTally::new(EP, Transport::Websocket);
         let Some(index) = node.current() else {
             let _ = reject(
                 &mut sink,
@@ -346,6 +357,8 @@ async fn session(
             }
             continue;
         };
+        tally.deployment = Some(selected.deployment.id);
+        turns += 1;
         let (tx, rx) = mpsc::channel(2);
         let (cancel, controls) = mpsc::channel(1);
         let mut channel = TurnChannel {
@@ -374,19 +387,36 @@ async fn session(
                         return false;
                     }
                 };
-            eprintln!(
-                "websocket turn session={session_id} request={} reused={}",
-                r.id,
-                state.socket.is_some()
+            r.tally = tally;
+            debug!(
+                session_id = %session_id,
+                request_id = %r.id,
+                reused = state.socket.is_some(),
+                "websocket turn started"
             );
             if state.socket.is_none() {
                 let dial=r.guarded(async{tokio::select!{_=channel.disconnected.cancelled()=>Err(()),v=node.upstream.websocket(&selected.deployment.base_url,&secret,node.event_bytes)=>v}}).await;
                 match dial {
                     Ok(Ok(socket)) => {
-                        eprintln!("websocket upstream upgraded session={session_id}");
+                        debug!(
+                            session_id = %session_id,
+                            request_id = %r.id,
+                            "upstream websocket connected"
+                        );
                         state.socket = Some(socket)
                     }
                     _ => {
+                        if channel.disconnected.is_cancelled() {
+                            r.tally.record(Outcome::ClientCancelled);
+                        } else {
+                            warn!(
+                                session_id = %session_id,
+                                request_id = %r.id,
+                                deployment_id = %selected.deployment.id,
+                                "upstream websocket handshake failed"
+                            );
+                            r.tally.record(Outcome::UpstreamFailed);
+                        }
                         r.abort().await;
                         channel.error("upstream_handshake_failed").await;
                         return false;
@@ -404,9 +434,12 @@ async fn session(
                 permit,
             )
             .await;
-            eprintln!(
-                "websocket turn ended session={session_id} request={request_id} elapsed_ms={} reusable={keep}",
-                started.elapsed().as_millis()
+            info!(
+                session_id = %session_id,
+                request_id = %request_id,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                reusable = keep,
+                "websocket turn ended"
             );
             keep
         };
@@ -445,6 +478,12 @@ async fn session(
         }
     }
     let _ = write(&mut sink, Message::Close(None), node.stream_idle).await;
+    info!(
+        session_id = %session_id,
+        turns,
+        elapsed_ms = opened.elapsed().as_millis() as u64,
+        "websocket session closed"
+    );
 }
 
 async fn drive(
@@ -585,6 +624,7 @@ async fn execute(
     permit: tokio::sync::OwnedSemaphorePermit,
 ) -> bool {
     if ch.disconnected.is_cancelled() || ch.cancelled_before_send().await {
+        r.tally.record(Outcome::ClientCancelled);
         r.abort().await;
         return false;
     }
@@ -602,9 +642,12 @@ async fn execute(
     let socket = state.socket.as_mut().expect("connected before attempt");
     let mut done = None;
     let disconnected = ch.disconnected.clone();
+    let request_id = run.reservation.id;
+    let mut timer = UpstreamTimer::start(EP, Transport::Websocket);
     let result=run.reservation.guarded(async{
-        tokio::select!{biased;_=disconnected.cancelled()=>Err(()),v=roundtrip(socket,ch,frame,&state.retired,cancellable,&mut done)=>v}
+        tokio::select!{biased;_=disconnected.cancelled()=>Err(()),v=roundtrip(socket,ch,frame,&state.retired,cancellable,&mut done,&mut timer)=>v}
     }).await;
+    drop(timer);
     let written = matches!(result, Ok(Ok(())));
     if let Some(id) = done.as_ref().and_then(|d| d.response_id.clone()) {
         if state.retired.len() >= 64 {
@@ -630,6 +673,12 @@ async fn execute(
     }
 
     if !written && !ch.disconnected.is_cancelled() {
+        warn!(
+            request_id = %request_id,
+            endpoint = EP.as_str(),
+            transport = Transport::Websocket.as_str(),
+            "upstream websocket turn interrupted"
+        );
         ch.error("upstream_interrupted").await;
     }
     reusable
@@ -648,6 +697,7 @@ async fn roundtrip(
     retired: &std::collections::VecDeque<String>,
     cancellable: bool,
     done: &mut Option<Completion>,
+    timer: &mut UpstreamTimer,
 ) -> Result<(), ()> {
     timeout(ch.idle, ws.send(Up::Text(frame.to_string().into())))
         .await
@@ -713,7 +763,10 @@ async fn roundtrip(
                 }
                 continue;
             }
-            TurnInput::Upstream(Some(Ok(Up::Text(s)))) => s,
+            TurnInput::Upstream(Some(Ok(Up::Text(s)))) => {
+                timer.first_byte();
+                s
+            }
             TurnInput::Upstream(Some(Ok(Up::Ping(_)))) => {
                 timeout(ch.idle, ws.flush())
                     .await

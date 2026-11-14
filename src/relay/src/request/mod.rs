@@ -8,13 +8,15 @@ use crate::{
         database::Gateway,
         snapshot::{Index, Rejection, Selection},
     },
+    metrics::{Outcome, RequestTally, Transport, UpstreamTimer},
     protocol::{
+        Endpoint,
         convert::{self, Exchange},
         request::Generate,
         usage::UsageEvidence,
     },
     server::Node,
-    upstream::Reply,
+    upstream::{Reply, UpstreamError},
 };
 use http::StatusCode;
 use std::{sync::Arc, time::Duration};
@@ -22,6 +24,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::{Instant, timeout},
 };
+use tracing::{info, warn};
 use uuid::Uuid;
 
 pub enum Response {
@@ -72,6 +75,71 @@ impl From<ControlError> for Failure {
 
 type Channel = oneshot::Sender<Result<Response, Failure>>;
 
+/// Identifiers for logs about one upstream exchange.
+#[derive(Clone, Copy)]
+struct Trace {
+    request: Uuid,
+    deployment: Uuid,
+    endpoint: Endpoint,
+    transport: Transport,
+}
+
+impl Trace {
+    /// Log why no upstream response arrived. A client that left is logged when the request finishes.
+    fn not_answered<T>(self, result: &Result<Option<Result<T, UpstreamError>>, Failure>) {
+        match result {
+            Ok(Some(Err(error))) => warn!(
+                request_id = %self.request,
+                deployment_id = %self.deployment,
+                endpoint = self.endpoint.as_str(),
+                transport = self.transport.as_str(),
+                error = %error,
+                "upstream request failed"
+            ),
+            Err(_) => self.lease_lost(),
+            Ok(_) => {}
+        }
+    }
+    fn lease_lost(self) {
+        warn!(
+            request_id = %self.request,
+            deployment_id = %self.deployment,
+            endpoint = self.endpoint.as_str(),
+            transport = self.transport.as_str(),
+            reason = "lease_lost",
+            "upstream request interrupted"
+        );
+    }
+    fn rejected(self, reason: &'static str) {
+        warn!(
+            request_id = %self.request,
+            deployment_id = %self.deployment,
+            endpoint = self.endpoint.as_str(),
+            transport = self.transport.as_str(),
+            reason,
+            "upstream response rejected"
+        );
+    }
+    fn interrupted(self, client_gone: bool) {
+        if client_gone {
+            info!(
+                request_id = %self.request,
+                endpoint = self.endpoint.as_str(),
+                transport = self.transport.as_str(),
+                "client disconnected before the terminal event"
+            );
+        } else {
+            warn!(
+                request_id = %self.request,
+                deployment_id = %self.deployment,
+                endpoint = self.endpoint.as_str(),
+                transport = self.transport.as_str(),
+                "upstream stream interrupted"
+            );
+        }
+    }
+}
+
 async fn cancel(db: &Gateway, rid: Uuid) -> bool {
     for _ in 0..3 {
         match db.cancel_unstarted(rid, "relay_cancelled").await {
@@ -94,6 +162,8 @@ enum Opened {
     Lost,
 }
 
+// The timer marks the upstream's first byte; it is the only argument added for observability.
+#[allow(clippy::too_many_arguments)]
 async fn open(
     node: &Node,
     run: &mut lifecycle::Run,
@@ -102,8 +172,19 @@ async fn open(
     credential: &str,
     stream: bool,
     sender: &mut Channel,
+    timer: &mut UpstreamTimer,
 ) -> Opened {
     let (dep, body) = (selected.deployment, &selected.body);
+    let trace = Trace {
+        request: run.reservation.id,
+        deployment: dep.id,
+        endpoint: exchange.client,
+        transport: if stream {
+            Transport::Sse
+        } else {
+            Transport::Http
+        },
+    };
     let ep = exchange.upstream;
     let bedrock = dep.is_bedrock();
     let call = async {
@@ -130,8 +211,12 @@ async fn open(
     let response = match opened {
         Ok(Some(Ok(response))) => response,
         Ok(Some(Err(error))) if failover && error.unsent() => return Opened::Declined(None),
-        _ => return Opened::Lost,
+        opened => {
+            trace.not_answered(&opened);
+            return Opened::Lost;
+        }
     };
+    timer.first_byte();
     if !failover || !crate::upstream::declined(response.status()) {
         return Opened::Answer(response);
     }
@@ -163,6 +248,7 @@ pub async fn run(
     secret: String,
     request: Generate,
     mut sender: Channel,
+    mut tally: RequestTally,
 ) {
     let mut selected = match index.select(&secret, &request) {
         Ok(s) => s,
@@ -171,7 +257,8 @@ pub async fn run(
             return;
         }
     };
-    let (reservation, mut credential) = match lifecycle::Reservation::reserve(
+    tally.deployment = Some(selected.deployment.id);
+    let (mut reservation, mut credential) = match lifecycle::Reservation::reserve(
         node.clone(),
         &index,
         &selected,
@@ -185,7 +272,9 @@ pub async fn run(
             return;
         }
     };
+    reservation.tally = tally;
     if sender.is_closed() {
+        reservation.tally.record(Outcome::ClientCancelled);
         reservation.abort().await;
         return;
     }
@@ -200,6 +289,11 @@ pub async fn run(
     let deadline = Instant::now() + node.failover_budget;
     let mut failed = Vec::new();
     let limit = node.upstream.response_limit();
+    let transport = if request.stream {
+        Transport::Sse
+    } else {
+        Transport::Http
+    };
     loop {
         let dep = selected.deployment;
         let exchange = Exchange {
@@ -207,6 +301,13 @@ pub async fn run(
             upstream: selected.upstream.representation(),
             public_model: &request.model,
         };
+        let trace = Trace {
+            request: run.reservation.id,
+            deployment: dep.id,
+            endpoint: request.endpoint,
+            transport,
+        };
+        let mut timer = UpstreamTimer::start(request.endpoint, transport);
         let opened = open(
             &node,
             &mut run,
@@ -215,6 +316,7 @@ pub async fn run(
             &credential,
             request.stream,
             &mut sender,
+            &mut timer,
         )
         .await;
         let answer = match opened {
@@ -261,7 +363,7 @@ pub async fn run(
                 }
                 // The last declined attempt is the client's answer; nothing was executed.
                 match reply {
-                    Some(reply) => deliver(run, sender, reply, exchange, limit).await,
+                    Some(reply) => deliver(run, sender, reply, exchange, limit, trace).await,
                     None => {
                         let _ = sender.send(Err(Failure::upstream()));
                         let format = run.usage_format();
@@ -281,7 +383,7 @@ pub async fn run(
             }
         };
         if request.stream {
-            sse::forward(node, run, dep, exchange, answer, sender).await;
+            sse::forward(node, run, dep, exchange, answer, sender, timer).await;
             return;
         }
         let rid = run.reservation.id.to_string();
@@ -295,12 +397,14 @@ pub async fn run(
         let result = run
             .reservation
             .guarded(async {
-                tokio::select! {_=sender.closed()=>None,r=reading=>r.ok()}
+                tokio::select! {_=sender.closed()=>None,r=reading=>Some(r)}
             })
             .await;
-        if let Ok(Some(reply)) = result {
-            deliver(run, sender, reply, exchange, limit).await;
+        drop(timer);
+        if let Ok(Some(Ok(reply))) = result {
+            deliver(run, sender, reply, exchange, limit, trace).await;
         } else {
+            trace.not_answered(&result);
             let _ = sender.send(Err(Failure::upstream()));
             run.ended(None, false).await;
         }
@@ -314,6 +418,7 @@ async fn deliver(
     mut reply: Reply,
     exchange: Exchange<'_>,
     limit: usize,
+    trace: Trace,
 ) {
     if exchange.converts() {
         let converted = serde_json::from_slice(&reply.body).ok().and_then(|body| {
@@ -323,6 +428,7 @@ async fn deliver(
             .map(|(body, status)| (body.to_string().into_bytes(), status))
             .filter(|(wire, _)| wire.len() <= limit);
         let Some((body, status)) = converted else {
+            trace.rejected("conversion_failed");
             let _ = sender.send(Err(Failure::upstream()));
             // The upstream may have completed and incurred cost even though the client
             // received no equivalent response. Retain its raw evidence and charge no customer.

@@ -12,7 +12,10 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use super::snapshot::{Key, Metric, Quota};
-use crate::protocol::tokens::ReservationBounds;
+use crate::{
+    metrics::{self, Dependency, ErrorKind},
+    protocol::tokens::ReservationBounds,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LimitError {
@@ -24,6 +27,12 @@ pub enum LimitError {
     Unavailable,
     #[error("lease_conflict")]
     Conflict,
+}
+
+/// Count a failed Redis command for `nexus_relay_control_errors_total`.
+fn unavailable(operation: &'static str) -> LimitError {
+    metrics::control_error(Dependency::Redis, operation, ErrorKind::Unavailable);
+    LimitError::Unavailable
 }
 
 #[derive(Clone)]
@@ -154,7 +163,7 @@ impl Limits {
             let (secs, _): (u64, u64) = redis::cmd("TIME")
                 .query_async(&mut conn)
                 .await
-                .map_err(|_| LimitError::Unavailable)?;
+                .map_err(|_| unavailable("acquire"))?;
             let window = secs / 60;
             let mut script = self.acquire.prepare_invoke();
             script.key(format!("{}:lease:{{{org}}}:{}", self.namespace, a.request));
@@ -178,8 +187,11 @@ impl Limits {
                 .arg(owner.to_string());
             let result: String = match script.invoke_async(&mut conn).await {
                 Ok(v) => v,
-                Err(e) if e.is_io_error() => continue,
-                Err(_) => return Err(LimitError::Unavailable),
+                Err(e) if e.is_io_error() => {
+                    unavailable("acquire");
+                    continue;
+                }
+                Err(_) => return Err(unavailable("acquire")),
             };
             match result.as_str() {
                 "retry_window" => continue,
@@ -190,11 +202,11 @@ impl Limits {
                 _ => {}
             }
             let state: RedisLease =
-                serde_json::from_str(&result).map_err(|_| LimitError::Unavailable)?;
+                serde_json::from_str(&result).map_err(|_| unavailable("acquire"))?;
             let (secs, micros): (u64, u64) = redis::cmd("TIME")
                 .query_async(&mut conn)
                 .await
-                .map_err(|_| LimitError::Unavailable)?;
+                .map_err(|_| unavailable("acquire"))?;
             let safe_until = now
                 + Duration::from_micros(
                     (state.deadline * 1000).saturating_sub(secs * 1_000_000 + micros),
@@ -204,7 +216,12 @@ impl Limits {
         Err(LimitError::Unavailable)
     }
 
-    async fn change(&self, lease: &Lease, operation: &str, actual: &str) -> Result<(), LimitError> {
+    async fn change(
+        &self,
+        lease: &Lease,
+        operation: &'static str,
+        actual: &str,
+    ) -> Result<(), LimitError> {
         let mut cmd = self.change.prepare_invoke();
         for key in &lease.state.keys {
             cmd.key(key);
@@ -215,7 +232,7 @@ impl Limits {
             .arg(actual)
             .invoke_async(&mut self.conn.clone())
             .await
-            .map_err(|_| LimitError::Unavailable)?;
+            .map_err(|_| unavailable(operation))?;
         if !ok {
             return Err(LimitError::Expired);
         }
@@ -249,10 +266,10 @@ impl Limits {
             .client
             .get_async_pubsub()
             .await
-            .map_err(|_| LimitError::Unavailable)?;
+            .map_err(|_| unavailable("subscribe"))?;
         sub.subscribe(format!("{}:cfg:{cluster}:changed", self.namespace))
             .await
-            .map_err(|_| LimitError::Unavailable)?;
+            .map_err(|_| unavailable("subscribe"))?;
         Ok(sub.into_on_message())
     }
 
@@ -264,6 +281,6 @@ impl Limits {
             .clone()
             .set_ex(key, body.to_string(), 30)
             .await
-            .map_err(|_| LimitError::Unavailable)
+            .map_err(|_| unavailable("heartbeat"))
     }
 }

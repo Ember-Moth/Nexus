@@ -1,5 +1,6 @@
-use super::{Channel, Failure, Response, lifecycle::Run};
+use super::{Channel, Failure, Response, Trace, lifecycle::Run};
 use crate::{
+    metrics::{self, Transport, UpstreamTimer},
     protocol::{
         convert::{Exchange, stream::Stream},
         sse::{Decoder, Event},
@@ -135,9 +136,16 @@ pub async fn forward(
     exchange: Exchange<'_>,
     response: reqwest::Response,
     sender: Channel,
+    timer: UpstreamTimer,
 ) {
     let ep = exchange.upstream;
     let bedrock = dep.is_bedrock();
+    let trace = Trace {
+        request: run.reservation.id,
+        deployment: dep.id,
+        endpoint: exchange.client,
+        transport: Transport::Sse,
+    };
     if !response.status().is_success() {
         let rid = run.reservation.id.to_string();
         let result = run
@@ -156,9 +164,19 @@ pub async fn forward(
                 }
             }))
             .await;
+        drop(timer);
         if let Ok(Ok(Ok(reply))) = result {
-            super::deliver(run, sender, reply, exchange, node.upstream.response_limit()).await;
+            super::deliver(
+                run,
+                sender,
+                reply,
+                exchange,
+                node.upstream.response_limit(),
+                trace,
+            )
+            .await;
         } else {
+            trace.rejected("unreadable_error_response");
             let _ = sender.send(Err(Failure::upstream()));
             run.ended(None, false).await;
         }
@@ -178,10 +196,12 @@ pub async fn forward(
             })
         })
     {
+        trace.rejected("unexpected_content_type");
         let _ = sender.send(Err(Failure::upstream()));
         run.ended(None, false).await;
         return;
     }
+    let _active = metrics::sse_stream();
     let mut downstream = Downstream::new(sender);
     let mut done = None;
     let converter = exchange.converts().then(|| {
@@ -221,6 +241,15 @@ pub async fn forward(
             }
         })
         .await;
+    drop(timer);
+    match &result {
+        Ok(Ok(())) => {}
+        Ok(Err(())) => trace.interrupted(match &downstream.pending {
+            Some((sender, _)) => sender.is_closed(),
+            None => downstream.tx.is_closed(),
+        }),
+        Err(_) => trace.lease_lost(),
+    }
     if let Some((sender, _)) = downstream.pending.take() {
         let _ = sender.send(Err(Failure::upstream()));
         run.ended(done, false).await;

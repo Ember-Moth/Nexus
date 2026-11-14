@@ -3,12 +3,14 @@ use crate::{
         database::Gateway,
         limits::{Lease, Limits},
     },
+    metrics::{self, Abandoned, Outcome, RequestTally},
     protocol::{Endpoint, usage::UsageEvidence},
 };
 use chrono::Utc;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::{Instant, sleep};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 pub struct Attempt {
@@ -21,6 +23,7 @@ pub struct Attempt {
     pub others: Vec<Uuid>,
     /// False when an attempt start had an unknown result, leaving the started set for review.
     pub closable: bool,
+    pub tally: RequestTally,
 }
 
 impl Attempt {
@@ -64,6 +67,18 @@ impl Attempt {
         response_id: Option<&str>,
         usage: UsageEvidence,
     ) {
+        self.tally.record(Outcome::from_delivery(delivery));
+        info!(
+            request_id = %self.request,
+            attempt_id = %self.attempt,
+            deployment_id = self.tally.deployment.map(display),
+            endpoint = self.tally.endpoint(),
+            transport = self.tally.transport(),
+            outcome,
+            delivery,
+            elapsed_ms = self.started.elapsed().as_millis() as u64,
+            "request finished"
+        );
         let finished = self.finished(outcome, response_id, usage);
         let mut started = self.others.clone();
         started.push(self.attempt);
@@ -77,33 +92,86 @@ impl Attempt {
             }),
         );
         if !self.closable {
-            eprintln!("unresolved attempt set for request {}", self.request);
+            warn!(
+                request_id = %self.request,
+                attempt_id = %self.attempt,
+                "attempt set unresolved; request close withheld for review"
+            );
         }
-        self.submit(db, [Some(finished), self.closable.then_some(closed)])
-            .await;
+        self.submit(
+            db,
+            [
+                Some(("attempt.finished", finished)),
+                self.closable.then_some(("request.closed", closed)),
+            ],
+        )
+        .await;
     }
     /// Report an attempt which failed while its request continues with another attempt.
     pub async fn failed(&self, db: &Gateway, response_id: Option<&str>, usage: UsageEvidence) {
-        self.submit(db, [Some(self.finished("failed", response_id, usage))])
+        let finished = self.finished("failed", response_id, usage);
+        self.submit(db, [Some(("attempt.finished", finished))])
             .await;
     }
-    async fn submit<const N: usize>(&self, db: &Gateway, events: [Option<String>; N]) {
-        for event in events.into_iter().flatten() {
+    async fn submit<const N: usize>(
+        &self,
+        db: &Gateway,
+        events: [Option<(&'static str, String)>; N],
+    ) {
+        let _pending = metrics::completion_pending();
+        for (event_type, event) in events.into_iter().flatten() {
             let mut backoff = Duration::from_millis(50);
             let deadline = Instant::now() + Duration::from_secs(60);
+            let mut replays = 0u32;
             loop {
                 match db.append_event(&event).await {
-                    Ok(v) if v["status"] == "accepted" => break,
-                    Ok(_) => {
-                        eprintln!("conflicting usage event for request {}", self.request);
+                    Ok(v) if v["status"] == "accepted" => {
+                        if replays > 0 {
+                            info!(
+                                request_id = %self.request,
+                                attempt_id = %self.attempt,
+                                event_type,
+                                replays,
+                                "completion event accepted after replay"
+                            );
+                        }
                         break;
                     }
-                    Err(_) if Instant::now() < deadline => {
+                    Ok(_) => {
+                        metrics::completion_abandoned(Abandoned::Conflict);
+                        error!(
+                            request_id = %self.request,
+                            attempt_id = %self.attempt,
+                            event_type,
+                            "completion event conflicts with recorded facts"
+                        );
+                        break;
+                    }
+                    Err(e) if Instant::now() < deadline => {
+                        replays += 1;
+                        metrics::completion_replay();
+                        if replays == 1 {
+                            warn!(
+                                request_id = %self.request,
+                                attempt_id = %self.attempt,
+                                event_type,
+                                reason = e.reason(),
+                                "completion event replay scheduled"
+                            );
+                        }
                         sleep(backoff).await;
                         backoff = (backoff * 2).min(Duration::from_secs(2));
                     }
-                    Err(_) => {
-                        eprintln!("usage submission deadline for request {}", self.request);
+                    Err(e) => {
+                        metrics::completion_abandoned(Abandoned::Deadline);
+                        error!(
+                            request_id = %self.request,
+                            attempt_id = %self.attempt,
+                            event_type,
+                            replays,
+                            reason = e.reason(),
+                            "completion event abandoned after replay deadline"
+                        );
                         break;
                     }
                 }
@@ -169,5 +237,5 @@ pub async fn finish_lease(limits: &Limits, lease: &Lease, actual: Option<u64>, r
             Err(_) => sleep(Duration::from_millis(100)).await,
         }
     }
-    eprintln!("quota finalization unavailable for request {request}");
+    warn!(request_id = %request, "quota lease finalization unavailable");
 }

@@ -12,6 +12,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "psycopg[binary]>=3.2.12,<4",
   "pydantic-settings>=2.11,<3",
+  "pynacl>=1.6.2",
   "redis>=6,<8",
   "sqlalchemy[asyncio]>=2.0.44,<3",
   "uvicorn>=0.38,<1",

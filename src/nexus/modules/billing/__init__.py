@@ -16,8 +16,11 @@ from .repository import transaction
 from .reservations import ReservationService
 from .schemas import Admission, Settlement
 from .service import BillingService
+from .snapshot_repository import create_price_source
+from .usage import UsageProcessor
 
 __all__ = [
+    "create_price_source",
     "ACCOUNT_READY",
     "ACCOUNT_READY_VERSION",
     "FUNDING_POSTED",
@@ -35,6 +38,7 @@ __all__ = [
     "DeploymentInfo",
     "Admission",
     "Settlement",
+    "create_usage_processor",
     "create_services",
     "api",
 ]
@@ -89,3 +93,8 @@ def create_payment_services(
         transactions, cipher, registry, requests_per_minute=requests_per_minute
     )
     return service, processor
+
+
+def create_usage_processor(database, currency, reservations):
+    database.require_module(ModuleName.BILLING)
+    return UsageProcessor(lambda: transaction(database, currency), reservations)

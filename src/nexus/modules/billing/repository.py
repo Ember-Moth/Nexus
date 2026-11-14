@@ -8,8 +8,8 @@ from datetime import UTC, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, or_, select, text, tuple_
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy import func, select, text, tuple_
+from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 
 from nexus.shared.errors import ServiceError
 
@@ -56,6 +56,125 @@ def period_bounds(at, period):
 class BillingRepository:
     def __init__(self, session):
         self._session = session
+
+    async def claim_usage(self):
+        # Account, request, then task. An inbox writer takes request then task.
+        row = (
+            await self._session.execute(
+                text("""
+            SELECT r.id FROM billing.usage_jobs j JOIN billing.request_runs r ON r.id=j.request_id
+            JOIN billing.accounts a ON a.id=r.account_id WHERE j.state='ready'
+            AND j.next_attempt_at <= clock_timestamp() ORDER BY j.next_attempt_at,r.id
+            LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+        """)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        request = await self.get("request", row, lock=True)
+        task = (
+            await self._session.execute(
+                text(
+                    "SELECT state,generation FROM billing.usage_jobs "
+                    "WHERE request_id=:id FOR UPDATE"
+                ),
+                {"id": row},
+            )
+        ).one()
+        return (request, task.generation) if task.state == "ready" else None
+
+    async def retry_usage(self, rid, generation):
+        await self._session.execute(
+            text("""
+            UPDATE billing.usage_jobs SET failures=failures+1,
+            next_attempt_at=clock_timestamp()+make_interval(secs=>least(30,failures+1)),
+            reason='processing_retry' WHERE request_id=:rid AND generation=:generation
+            AND state='ready'
+        """),
+            {"rid": rid, "generation": generation},
+        )
+
+    async def usage_facts(self, rid):
+        return (
+            await self._session.execute(
+                text(
+                    "SELECT * FROM billing.usage_events WHERE request_id=:id ORDER "
+                    "BY received_at,id"
+                ),
+                {"id": rid},
+            )
+        ).all()
+
+    async def save_normalization(self, eid, aid, rule, counts, reason):
+        await self._session.execute(
+            text("""
+            INSERT INTO billing.normalized_usage(event_id, attempt_id, rule_version, quantities,
+            review_reason)
+            VALUES(:eid,:aid,:rule,cast(:counts AS jsonb),:reason) ON CONFLICT(event_id) DO NOTHING
+        """),
+            {
+                "eid": eid,
+                "aid": aid,
+                "rule": rule,
+                "counts": json.dumps(counts) if counts is not None else None,
+                "reason": reason,
+            },
+        )
+
+    async def finish_usage(self, rid, state, reason):
+        await self._session.execute(
+            text("UPDATE billing.usage_jobs SET state=:state,reason=:reason WHERE request_id=:rid"),
+            {"rid": rid, "state": state, "reason": reason},
+        )
+
+    async def admission_function(self, statement, params):
+        try:
+            return (await self._session.execute(text(statement), params)).scalar_one()
+        except DBAPIError as error:
+            if getattr(error.orig, "sqlstate", None) != "P0001":
+                raise
+            code = error.orig.diag.message_primary
+            message = {
+                "request_conflict": "Request ID was used for different authorization facts",
+                "insufficient_funds": "Available balance is insufficient",
+            }.get(code, code.replace("_", " "))
+            raise ServiceError(
+                code, message, 422 if code in {"invalid_bounds", "invalid_reserve_amount"} else 409
+            ) from None
+
+    async def reserve_funds(self, admission, fingerprint, dimensions, at):
+        params = admission.model_dump()
+        await self.admission_function(
+            "SELECT billing.v1_reserve(:request_id,:organization_id,:project_id,"
+            ":service_account_id,"
+            ":api_key_id,:model_id,:input_limit,:output_limit,:ttl_seconds,:fingerprint,"
+            "CAST(:dimensions AS jsonb),:at,NULL,NULL,NULL)",
+            {
+                **params,
+                "fingerprint": fingerprint,
+                "dimensions": json.dumps(sorted(dimensions)),
+                "at": at,
+            },
+        )
+        return await self.get("request", admission.request_id, admission.organization_id)
+
+    async def begin_attempt(self, org_id, request_id, attempt_id, deployment_id, model_id):
+        result = await self.admission_function(
+            "SELECT billing.v1_attempt(:org,:rid,:aid,:dep,:model,NULL,:at,NULL)",
+            {
+                "org": org_id,
+                "rid": request_id,
+                "aid": attempt_id,
+                "dep": deployment_id,
+                "model": model_id,
+                "at": await self.now(),
+            },
+        )
+        return {
+            "attempt_id": attempt_id,
+            "cost_price_version_id": UUID(result["cost_price_version_id"]),
+            "state": result["state"],
+        }
 
     async def now(self):
         return (await self._session.execute(select(func.clock_timestamp()))).scalar_one()
@@ -354,29 +473,6 @@ class BillingRepository:
             query = query.where(model.kind == kind, model.scope_id == scope_id)
         return (await self._session.execute(query)).scalar_one()
 
-    async def applicable_budgets(self, request):
-        return (
-            (
-                await self._session.execute(
-                    select(m.BudgetPolicy)
-                    .where(
-                        m.BudgetPolicy.organization_id == request.organization_id,
-                        m.BudgetPolicy.status == "active",
-                        or_(
-                            m.BudgetPolicy.scope_type == "organization",
-                            (m.BudgetPolicy.scope_type == "project")
-                            & (m.BudgetPolicy.project_id == request.project_id),
-                            (m.BudgetPolicy.scope_type == "key")
-                            & (m.BudgetPolicy.api_key_id == request.api_key_id),
-                        ),
-                    )
-                    .order_by(m.BudgetPolicy.id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-
     async def budget_period(self, policy, at, *, backfill=False):
         start, end = period_bounds(at, policy.period)
         row = (
@@ -432,18 +528,6 @@ class BillingRepository:
                     row.spent += spent
         await self._session.flush()
         return row
-
-    async def add_budget_hold(self, period, request_id, amount):
-        period.reserved += amount
-        self._session.add(
-            m.BudgetHold(
-                request_id=request_id,
-                period_id=period.id,
-                organization_id=period.organization_id,
-                reserved=amount,
-                spent=Decimal(0),
-            )
-        )
 
     async def request_budgets(self, request_id):
         return (

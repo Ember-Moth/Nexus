@@ -27,6 +27,7 @@ async def run_worker(
     interval: float,
     ttl: int,
     stop: asyncio.Event | None = None,
+    extra_consumers: dict[str, Callable[[], Awaitable[int]]] | None = None,
     consume: Callable[[], Awaitable[int]] | None = None,
 ) -> None:
     owns_signals = stop is None
@@ -37,30 +38,33 @@ async def run_worker(
             loop.add_signal_handler(signum, stop.set)
     instance_id = str(uuid4())
     previous = None
-    consumer_healthy = True
+    consumers = dict(extra_consumers or {})
+    if consume:
+        consumers["billing_consumer"] = consume
+    health = dict.fromkeys(consumers, "ok")
 
-    async def consumer_loop():
-        nonlocal consumer_healthy
+    async def consumer_loop(name, callback):
         while not stop.is_set():
             try:
-                count = await consume()
-                consumer_healthy = True
+                count = await callback()
+                health[name] = "ok"
                 if count:
                     continue
             except Exception as error:
-                consumer_healthy = False
-                logger.warning("billing consumer failed: %s", type(error).__name__)
+                health[name] = "unavailable"
+                logger.warning("%s failed: %s", name, type(error).__name__)
             try:
                 await asyncio.wait_for(stop.wait(), timeout=0.5)
             except TimeoutError:
                 pass
 
-    consumer_task = asyncio.create_task(consumer_loop()) if consume else None
+    tasks = [
+        asyncio.create_task(consumer_loop(name, callback)) for name, callback in consumers.items()
+    ]
     try:
         while not stop.is_set():
             checks = await readiness()
-            if consume:
-                checks = {**checks, "billing_consumer": "ok" if consumer_healthy else "unavailable"}
+            checks = {**checks, **health}
             ready = bool(checks) and all(value == "ok" for value in checks.values())
             payload = json.dumps(
                 {
@@ -82,9 +86,9 @@ async def run_worker(
             except TimeoutError:
                 pass
     finally:
-        if consumer_task:
-            consumer_task.cancel()
-            await asyncio.gather(consumer_task, return_exceptions=True)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         try:
             await heartbeats.remove_heartbeat(worker_id, instance_id)
         except Exception:
@@ -104,6 +108,10 @@ async def serve_worker(settings: RuntimeSettings) -> None:
             interval=settings.worker_interval,
             ttl=settings.worker_heartbeat_ttl,
             consume=application.process_billing,
+            extra_consumers={
+                "settlement": application.usage.process,
+                "publication_outbox": application.publication.distribute,
+            },
         )
     finally:
         await application.close()

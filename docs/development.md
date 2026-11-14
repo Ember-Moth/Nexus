@@ -51,7 +51,7 @@ API 默认监听 `127.0.0.1:8000`，可通过进程环境中的 `NEXUS_HOST`、`
 
 `GET /health/live` 检查进程存活；`GET /health/ready` 检查 PostgreSQL 登录身份、迁移版本、Redis 和五个模块的存储权限，依赖异常时返回 503，响应不包含连接凭据或数据库错误详情。
 
-Worker 执行依赖监督、带 TTL 的心跳、可靠开户、到期预留核对和支付任务。支付任务带租约与 fencing_token，多进程可接管；远端 HTTP 调用不持有数据库事务。Token 用量收件箱与自动结算仍在 M4。每个并发 Worker 需使用不同的 `NEXUS_WORKER_ID`。
+Worker 执行依赖监督、带 TTL 的心跳、可靠开户、到期预留核对和支付任务。支付任务带租约与 fencing_token，多进程可接管；远端 HTTP 调用不持有数据库事务。M4 用量结算与配置分发由独立消费循环执行。独立消费循环的节点心跳分别报告 settlement 和 publication_outbox。每个并发 Worker 需使用不同的 `NEXUS_WORKER_ID`。
 
 ```sh
 uv run nexus --env-file .env.worker worker-health
@@ -84,9 +84,9 @@ M2 的接口流程见[登录与企业成员管理](identity-api.md)、[项目与
 
 模块的私有持久化层通过固定作用域事务执行 `SET LOCAL ROLE`，每次并发操作拥有独立 Session。事务结束即提交或回滚并恢复连接身份；模块对外门面不暴露 Session 或全局 Store。
 
-运行登录身份可以读取 `nexus_meta.alembic_version`，不能修改它或执行迁移。`identity.audit_events` 只允许相应模块读取和追加。新函数默认不向 PUBLIC 授予 EXECUTE，未来 gateway_v1 能力需明确授权。
+运行登录身份可以读取 `nexus_meta.alembic_version`，不能修改它或执行迁移。`identity.audit_events` 只允许相应模块读取和追加。新函数默认不向 PUBLIC 授予 EXECUTE，gateway_v1 只向专用网关组角色授权。
 
-M1 迁移创建五个模块 schema、迁移元数据、预留的 gateway_v1 schema 和管理员引导存储。M2 的 0002 增加身份管理，0003 增加项目凭据，0004 增加目录、加密凭据、部署映射与模型策略。M3 的 0005 增加账户与账本，0006 增加定价、预算、预留和尝试记录；M3P 的 0007 增加支付配置、订单、任务、通知、查单与收款证据，复用原资金账本；配置发布与 Token 用量收件箱仍待后续阶段。
+M1 迁移创建五个模块 schema、迁移元数据、预留的 gateway_v1 schema 和管理员引导存储。M2 的 0002 增加身份管理，0003 增加项目凭据，0004 增加目录、加密凭据、部署映射与模型策略。M3 的 0005 增加账户与账本，0006 增加定价、预算、预留和尝试记录；M3P 的 0007 增加支付配置、订单、任务、通知、查单与收款证据，复用原资金账本；0008 增加配置发布、受限 SQL 接口和 Token 用量收件箱。网关角色、运行参数和模拟器见[通信协议](plane-protocol.md)。
 
 Worker 已消费组织开户事件并标记到期预留。API 和 Worker 的 NEXUS_BILLING_CURRENCY 默认为 USD，首次账务事务将其固定在数据库；已有数据库不能通过改环境变量换币种。参见[定价与预付费账户](billing-api.md)。
 

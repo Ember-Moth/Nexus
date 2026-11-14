@@ -6,8 +6,12 @@ from nexus.shared.storage import ModuleName
 from .repository import transaction
 from .schemas import Visibility
 from .service import CatalogService
+from .snapshot_repository import RoutingPolicies, create_catalog_source
 
 __all__ = [
+    "create_catalog_source",
+    "RoutingPolicies",
+    "routing_api",
     "CatalogService",
     "Visibility",
     "create_service",

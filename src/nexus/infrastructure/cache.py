@@ -1,4 +1,10 @@
+import base64
+import json
+from uuid import uuid4
+
 from redis.asyncio import Redis
+
+from .gateway_cache import PREPARE, PUBLISH
 
 
 class Cache:
@@ -51,6 +57,26 @@ class Cache:
             1,
             f"{self._namespace}:workers:{worker_id}",
             instance_id,
+        )
+
+    async def prepare_limits(self, org, first):
+        await self._client.eval(
+            PREPARE, 1, f"{self._namespace}:limit:{{{org}}}:epoch", int(first), str(uuid4())
+        )
+
+    async def publish_config(self, cluster, revision, raw, digest):
+        prefix = f"{self._namespace}:cfg:{{{cluster}}}"
+        value = json.dumps(
+            {"sha256": digest, "bytes": base64.b64encode(raw).decode()}, separators=(",", ":")
+        )
+        await self._client.eval(
+            PUBLISH,
+            2,
+            prefix + ":snapshot:" + revision,
+            prefix + ":current",
+            revision,
+            value,
+            f"{self._namespace}:cfg:{cluster}:changed",
         )
 
     async def close(self) -> None:

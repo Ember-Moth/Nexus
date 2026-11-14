@@ -296,7 +296,7 @@ class AccountReady:
 class Admission(Schema):
     """Internal authorization facts. Never accepted from the management HTTP API.
 
-    The M4 gateway boundary must authenticate/lock identity and validate protocol bounds
+    The M4 gateway boundary authenticates identity and validates protocol bounds
     before calling the funds primitive in its transaction.
     """
 
@@ -312,7 +312,7 @@ class Admission(Schema):
 
 
 class Settlement(Schema):
-    """Trusted normalized final facts; transport and evidence normalization arrive in M4."""
+    """Trusted final facts produced by the usage processor."""
 
     outcome: Literal["success", "customer_cancelled", "upstream_failed", "not_started", "unknown"]
     delivered_attempt_id: UUID | None = None

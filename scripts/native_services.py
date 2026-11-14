@@ -195,7 +195,7 @@ class NativeServices:
         with self.admin_connection("postgres") as connection:
             if connection.info.server_version < 160000:
                 raise RuntimeError("PostgreSQL 16 or newer is required")
-            for module in MODULES:
+            for module in (*MODULES, "bridge", "gateway"):
                 role = f"nexus_{module}"
                 if not connection.execute(
                     "SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)
@@ -239,6 +239,15 @@ class NativeServices:
                         sql.Identifier(f"nexus_{module}")
                     )
                 )
+            for owner in (*MODULES, "bridge"):
+                connection.execute(
+                    sql.SQL("GRANT {} TO nexus_migrator").format(sql.Identifier(f"nexus_{owner}"))
+                )
+            connection.execute(
+                sql.SQL("GRANT CONNECT ON DATABASE {} TO nexus_gateway").format(
+                    sql.Identifier(db_name)
+                )
+            )
         with self.admin_connection() as connection:
             connection.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
 

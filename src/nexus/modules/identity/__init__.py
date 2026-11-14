@@ -13,7 +13,10 @@ from .schemas import BootstrapResult
 from .service import IdentityService
 
 # The HTTP adapter submodule is loaded only by the API entry point.
+from .snapshot_repository import create_identity_source
+
 __all__ = [
+    "create_identity_source",
     "BootstrapResult",
     "IdentityService",
     "ProjectService",

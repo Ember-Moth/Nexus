@@ -11,10 +11,11 @@ from nexus.bootstrap import Application
 from nexus.config import RuntimeSettings
 from nexus.modules.billing import api as billing_api
 from nexus.modules.billing import payment_api
-from nexus.modules.catalog import CatalogService
+from nexus.modules.catalog import CatalogService, routing_api
 from nexus.modules.catalog import api as catalog_api
 from nexus.modules.identity import IdentityService, ModelAccessService, ProjectService
 from nexus.modules.identity import api as identity_api
+from nexus.modules.publication import api as publication_api
 from nexus.shared.errors import ServiceError
 
 type Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
@@ -104,6 +105,9 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         application = Application(settings)
         app.state.readiness = application.readiness
+        app.state.publication = application.publication
+        app.state.routing = application.routing
+        app.state.usage = application.usage
         app.state.billing_service = application.billing
         app.state.payment_service = application.payments
         app.state.payment_processor = application.payment_processor
@@ -144,7 +148,15 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     def get_budgets(request: Request):
         return request.app.state.budget_service
 
+    def get_publication(request: Request):
+        return request.app.state.publication
+
+    def get_routing(request: Request):
+        return request.app.state.routing
+
     app = build_server(lifespan, development=settings.environment != "production")
+    app.include_router(publication_api.create_router(get_publication))
+    app.include_router(routing_api.create_router(get_routing))
     app.include_router(identity_api.create_router(get_identity))
     app.include_router(identity_api.create_project_router(get_projects))
     app.include_router(identity_api.create_policy_router(get_model_access))

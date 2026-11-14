@@ -59,3 +59,7 @@ def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
         raise ServiceError("invalid_idempotency_key", "Invalid Idempotency-Key", 422)
     return value
+
+
+def optional_version(if_match: Annotated[str | None, Header()] = None) -> int | None:
+    return expected_version(if_match) if if_match is not None else None

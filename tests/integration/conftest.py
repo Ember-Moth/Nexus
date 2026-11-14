@@ -45,7 +45,14 @@ def admin(service_directory):
 @pytest.fixture(autouse=True)
 def reset_identity(admin):
     admin.execute(
-        "TRUNCATE billing.payment_cases, billing.payment_receipts, billing.payment_observations, "
+        "TRUNCATE publication.limit_namespaces, "
+        "publication.previous_keys, publication.gateway_principals, "
+        "publication.gateway_clusters, publication.node_config_acks, "
+        "publication.config_outbox, publication.config_snapshots, "
+        "publication.credential_envelopes, publication.release_commands, "
+        "catalog.route_policies, catalog.quota_policies, billing.usage_jobs, "
+        "billing.normalized_usage, billing.usage_events, "
+        "billing.payment_cases, billing.payment_receipts, billing.payment_observations, "
         "billing.payment_events, billing.payment_rate_buckets, billing.payment_operations, "
         "billing.payment_orders, "
         "billing.payment_channel_versions, billing.payment_channels, billing.request_attempts, "

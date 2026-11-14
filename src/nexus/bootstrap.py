@@ -9,7 +9,7 @@ from nexus.infrastructure.cache import Cache
 from nexus.infrastructure.credential_cipher import CredentialCipher
 from nexus.infrastructure.payment_http import PaymentHttp
 from nexus.infrastructure.postgres import Database
-from nexus.modules import billing, catalog, identity
+from nexus.modules import billing, catalog, identity, publication
 from nexus.shared.storage import ModuleName
 
 
@@ -131,6 +131,22 @@ class Application:
             settings.billing_currency,
         )
 
+        self.routing = catalog.RoutingPolicies(
+            self._storage["catalog"], self.identity.financial_access
+        )
+        self.publication = publication.create_service(
+            self._storage["publication"],
+            self.identity.require_platform_admin,
+            identity.create_identity_source(self._storage["identity"]),
+            catalog.create_catalog_source(
+                self._storage["catalog"], CredentialCipher(settings.encryption_key_version, roots)
+            ),
+            billing.create_price_source(self._storage["billing"]),
+            self.cache,
+        )
+        self.usage = billing.create_usage_processor(
+            self._storage["billing"], settings.billing_currency, self.reservations
+        )
         self.payment_http = (
             PaymentHttp(settings.mock_payment_url) if settings.mock_payment_url else None
         )

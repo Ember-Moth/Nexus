@@ -32,7 +32,7 @@ gateway_v1 本身不拥有业务表。组合入口由应用迁移装配，各模
 
 ## PostgreSQL 桥接操作
 
-函数名属于设计契约，具体参数将由迁移和契约测试固定。PostgreSQL 函数在调用方事务内运行，函数返回一行并不等于事务已经提交。网关适配层必须收到 COMMIT 成功后，才把授权或事件接收视为成功；网络断开视为结果未知，用原业务 ID 查询或重试。
+函数参数由迁移 0008 和协议集成测试固定。PostgreSQL 函数在调用方事务内运行，函数返回一行并不等于事务已经提交。网关适配层必须收到 COMMIT 成功后，才把授权或事件接收视为成功；网络断开视为结果未知，用原业务 ID 查询或重试。
 
 | 操作 | 输入要点 | 行为 |
 | --- | --- | --- |
@@ -96,7 +96,7 @@ Key 撤销、组织冻结和权限收缩在请求授权时查数据库实时状�
 
 原始凭据由 catalog 拥有。catalog 的受限公开能力根据已验证的目标集群参数生成加密包，publication 只接收并存储封装结果，不直接查询 catalog 凭据表或传播解密后的明文。
 
-集群解密材料通过部署密钥设施提供，不放入公开配置、普通 Redis 缓存或日志。具体封装库和节点引导方式在发布模块实现前确定。凭据轮换支持短暂的新旧版本重叠，撤销版本在 `start_attempt` 中也要校验。
+集群解密材料通过部署密钥设施提供，不放入公开配置、普通 Redis 缓存或日志。当前封装使用 PyNaCl/libsodium sealed box，节点登录和集群私钥由部署方配置。凭据轮换支持短暂的新旧版本重叠，撤销版本在 `start_attempt` 中也要校验。
 
 ## 用量事件
 
@@ -197,3 +197,45 @@ RPM 首期按请求被全局限流器接纳时计数，即使后续余额不足�
 PostgreSQL `LISTEN/NOTIFY` 可作为无 Redis 配置通知的替代，但不是首期第二套完整实现。消息只携带版本标识，离线恢复依赖快照。开始监听需要先提交 LISTEN，再读取当前状态并复查通知，不能假设监听前的事件会重放。[PostgreSQL LISTEN](https://www.postgresql.org/docs/current/sql-listen.html)、[NOTIFY](https://www.postgresql.org/docs/current/sql-notify.html)
 
 如果未来采用 Redis Streams，配置广播不能简单让所有网关共享一个消费组，因为同组消费者分摊消息；结算 Worker 则适合使用同组分摊。Streams 的重试、保留、持久化与故障切换策略必须另行设计，不在首期默认为已解决。[Redis 消费组](https://redis.io/docs/latest/commands/xreadgroup/)
+
+## M4 部署与调用
+
+执行迁移 `0008_gateway_protocol` 后，API 提供集群、节点登记、路由、配额与发布入口。Worker 分别运行配置分发、用量结算和支付消费者。每条消费记录引用该请求的售价、折扣和最终交付尝试，每条尝试成本引用开始时的成本版本。
+
+1. 部署管理员创建 `nexus_bridge` 和 `nexus_gateway` 两个 NOLOGIN 角色。迁移身份须能 SET ROLE 到 identity、catalog、billing、publication 的模块角色及 nexus_bridge，以建立函数所有权。节点使用各自的 LOGIN 身份，继承 nexus_gateway 的权限并具有目标数据库 CONNECT 权限。各函数的实际授权清单随迁移固化。仓库的本机依赖脚本会准备组角色，节点登录及其凭据由部署方配置。
+2. 平台管理员调用 `POST /api/v1/gateway-clusters`，提供 name、region、organization_ids、deployment_ids 和 public_key。公钥使用 Base64 编码的 32 字节 Curve25519 公钥。catalog 用 PyNaCl/libsodium sealed box 封装上游凭据，密文内部绑定集群、凭据和版本。部署方把私钥交给相应集群。
+3. 用 `PUT /api/v1/gateway-clusters/{id}/principals/{node_id}` 登记 database_role、node_id、capabilities 与 active。节点身份由 PostgreSQL 登录角色确定。集群 PATCH 使用 If-Match，可暂停集群、修改范围或轮换公钥。key_grace_seconds 指定旧密钥包读取窗口，0 表示立即截止。缩小组织或部署范围会使先前范围的快照失效。新增范围随下一次发布生效。
+4. 使用 `POST /api/v1/route-policies` 为组织及模型设置部署候选、priority 和 weight。组织 owner 可通过 `POST /api/v1/organizations/{org}/quota-policies` 设置 customer 层限额，platform 层由平台管理员维护。多个适用上限共同约束请求。首次配置返回 201，更新同一作用域时携带上一版本的 If-Match。
+5. 调用 `POST /api/v1/gateway-clusters/{id}/releases`，附带 Idempotency-Key，正常发布使用空对象。rollback_revision 可选择历史资源集合。发布前重新核对源版本、当前价格和凭据资格，回滚生成更高修订。查询 `GET /api/v1/gateway-clusters/{id}/releases/{revision}` 获取期望修订、已分发修订、任务和各节点最近的确认。
+6. 节点调用 get_config_snapshot，校验原始字节的 SHA-256 后应用并确认。普通更新为已应用上一配置的节点提供 5 秒传播时间。权限收缩、Key 失效、凭据撤销及集群范围变动由数据库实时检查。旧节点仍可提交其在途请求的结束证据。分发 Worker 每 30 秒核对并重写当前副本，Redis 清空期间节点可从 PostgreSQL 恢复。
+
+### SQL 参数
+
+所有函数由 `gateway_v1` 提供，返回 JSONB。请求、尝试、模型、部署、凭据与 Key 标识使用 UUID。SQL 中修订号使用 bigint，JSON 中使用十进制字符串。
+
+| 调用 | 含义 |
+| --- | --- |
+| `get_config_snapshot(revision DEFAULT NULL)` | 当前或历史完整包，含 Base64 原文、摘要与节点身份 |
+| `get_credential_envelope(revision, credential_id, credential_version)` | 所选集群的密文包 |
+| `ack_config(revision, digest, applied, reason DEFAULT '')` | 成功修订单调推进，reason 使用有界错误代码 |
+| `reserve_request(request_id, key_id, model_id, revision, input_limit, output_limit)` | 服务端确定组织、账户、价格和预算，重复返回 replayed 与原状态 |
+| `get_request_status(request_id)` | 本节点请求、冻结的价格引用、尝试、关闭与处理状态 |
+| `start_attempt(request_id, attempt_id, sequence, deployment_id)` | 序号从 1 递增，候选来自授权时快照，重试使用原 attempt_id |
+| `append_usage_event(message)` | UTF-8 JSON 文本，最多 65536 字节，事务提交后读取 accepted 或 conflict |
+| `cancel_unstarted_request(request_id, reason)` | 在同一事务释放无尝试且未关闭的请求与各预算占用 |
+
+网关适配器负责本地检查请求正文与协议上界。模拟器用 API Key 验证摘要定位 key_id，使用真实节点登录通过 SQL 再次授权。发生提交响应丢失时，保留原 request_id、attempt_id 和完整序列化事件，通过状态查询或原样重放恢复。conflict 返回值和审计随事务一起提交。
+
+### 归一化、限额与模拟器
+
+fixture.tokens.v1 要求 input_total_tokens、cached_input_tokens 和 output_tokens。启用缓存写入计价时还需相应 cache_write_5m_tokens 或 cache_write_1h_tokens。reasoning_tokens 属于 output_tokens 的子集。fixture.dimensions.v1 接收与冻结价格维度完全一致的非负整数量。Worker 保存规则版本、证据引用和归一化数量。缺失最终事实保持等待，新事实提交会立即唤醒任务。证据无效或结果未知进入核对，预留继续有效。失败尝试独立记成本，上游失败的客户费用为零。
+
+Redis 限额使用按组织 hash tag 的原子脚本。RPM 在限流通过时占用。TPM 按输入与输出总上界占用，已知用量仅在原 UTC 分钟窗口核销，资金授权被明确拒绝时按零用量释放 TPM。未知用量保留上界，事后财务退款仍沿用原运行计数。并发占用使用独立租约标识，可续租或幂等释放。节点在安全截止时间前续租，过期或连接中断时停止执行。发布器按组织初始化限额代次。已初始化的运行状态丢失或 Redis 实例更换后，受限流策略约束的新调用等待 60 秒恢复窗口，旧代次租约失效。计数库应配置为禁止逐出。PostgreSQL 保留资金预留与原始用量事实。
+
+配置 NEXUS_GATEWAY_DSN、NEXUS_REDIS_URL、NEXUS_SIMULATION_API_KEY，启动 API 和 Worker，发布并登记集群后执行以下命令。模拟器按最低 priority 选择候选，并在相同优先级内按 weight 抽取部署。输出包含结算与成本处理状态。
+
+```sh
+uv run python -m nexus.gateway_simulator MODEL_UUID --input-tokens 2 --output-tokens 1
+```
+
+本机测试使用独立 PostgreSQL 节点登录和 Redis，覆盖授权到扣费、事务中断、乱序与重复事件、迟到成本、撤权、密钥轮换、旧确认和副本丢失恢复。真实厂商用量映射和 Rust 网关将在对应适配阶段验证。

@@ -1,4 +1,5 @@
-use std::time::Duration;
+use std::io::{Error, ErrorKind};
+use std::{future::Future, time::Duration};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -20,12 +21,14 @@ pub struct Gateway {
 
 #[derive(Deserialize)]
 struct SnapshotReply {
+    applied_revision: String,
     node_id: Uuid,
     sha256: String,
     bytes: String,
 }
 
 pub struct Snapshot {
+    pub applied_revision: i64,
     pub node_id: Uuid,
     pub cluster_id: Uuid,
     pub revision: i64,
@@ -45,10 +48,35 @@ impl Gateway {
         }
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
+            .after_connect(|conn, _| {
+                Box::pin(async move {
+                    sqlx::query("SET statement_timeout = '8s'")
+                        .execute(conn)
+                        .await?;
+                    Ok(())
+                })
+            })
             .acquire_timeout(timeout)
             .connect(url)
             .await?;
         Ok(Self { pool })
+    }
+
+    // statement_timeout covers execution at PostgreSQL. Bound the entire round trip
+    // as well: the connection can go silent after it has committed a write.
+    async fn call<T>(
+        &self,
+        query: impl Future<Output = Result<T, sqlx::Error>>,
+    ) -> Result<T, ControlError> {
+        tokio::time::timeout(Duration::from_secs(15), query)
+            .await
+            .map_err(|_| {
+                sqlx::Error::Io(Error::new(
+                    ErrorKind::TimedOut,
+                    "gateway response timed out",
+                ))
+            })?
+            .map_err(ControlError::from)
     }
 
     pub async fn snapshot(
@@ -56,11 +84,13 @@ impl Gateway {
         cluster: Uuid,
         revision: Option<i64>,
     ) -> Result<Snapshot, ControlError> {
-        let Json(reply): Json<SnapshotReply> =
-            sqlx::query_scalar("SELECT gateway_v1.get_config_snapshot($1)")
-                .bind(revision)
-                .fetch_one(&self.pool)
-                .await?;
+        let Json(reply): Json<SnapshotReply> = self
+            .call(
+                sqlx::query_scalar("SELECT gateway_v1.get_config_snapshot($1)")
+                    .bind(revision)
+                    .fetch_one(&self.pool),
+            )
+            .await?;
         let bytes = pg_base64(&reply.bytes)?;
         if format!("{:x}", Sha256::digest(&bytes)) != reply.sha256 {
             return Err(ControlError::Invalid("snapshot digest"));
@@ -88,6 +118,10 @@ impl Gateway {
             return Err(ControlError::Invalid("snapshot binding"));
         }
         Ok(Snapshot {
+            applied_revision: reply
+                .applied_revision
+                .parse()
+                .map_err(|_| ControlError::Invalid("applied revision"))?,
             node_id: reply.node_id,
             cluster_id: cluster,
             revision: rev,
@@ -109,12 +143,15 @@ impl Gateway {
             .iter()
             .any(|c| !supported.contains(&c.as_str()));
         let rejection = rejection.or(unsupported.then_some("unsupported_capability"));
-        let _: Json<Value> = sqlx::query_scalar("SELECT gateway_v1.ack_config($1,$2,$3,$4)")
-            .bind(snapshot.revision)
-            .bind(&snapshot.digest)
-            .bind(rejection.is_none())
-            .bind(rejection.unwrap_or(""))
-            .fetch_one(&self.pool)
+        let _: Json<Value> = self
+            .call(
+                sqlx::query_scalar("SELECT gateway_v1.ack_config($1,$2,$3,$4)")
+                    .bind(snapshot.revision)
+                    .bind(&snapshot.digest)
+                    .bind(rejection.is_none())
+                    .bind(rejection.unwrap_or(""))
+                    .fetch_one(&self.pool),
+            )
             .await?;
         if unsupported {
             return Err(ControlError::Invalid("required capability"));
@@ -127,13 +164,15 @@ impl Gateway {
         revision: i64,
         reference: &CredentialRef,
     ) -> Result<Envelope, ControlError> {
-        let Json(envelope) =
-            sqlx::query_scalar("SELECT gateway_v1.get_credential_envelope($1,$2,$3)")
-                .bind(revision)
-                .bind(reference.credential_id)
-                .bind(reference.credential_version)
-                .fetch_one(&self.pool)
-                .await?;
+        let Json(envelope) = self
+            .call(
+                sqlx::query_scalar("SELECT gateway_v1.get_credential_envelope($1,$2,$3)")
+                    .bind(revision)
+                    .bind(reference.credential_id)
+                    .bind(reference.credential_version)
+                    .fetch_one(&self.pool),
+            )
+            .await?;
         Ok(envelope)
     }
 
@@ -145,16 +184,18 @@ impl Gateway {
         revision: i64,
         bounds: ReservationBounds,
     ) -> Result<Value, ControlError> {
-        let Json(reply) =
-            sqlx::query_scalar("SELECT gateway_v1.reserve_request($1,$2,$3,$4,$5,$6)")
-                .bind(request)
-                .bind(key)
-                .bind(model)
-                .bind(revision)
-                .bind(i64::from(bounds.inputs))
-                .bind(i64::from(bounds.outputs))
-                .fetch_one(&self.pool)
-                .await?;
+        let Json(reply) = self
+            .call(
+                sqlx::query_scalar("SELECT gateway_v1.reserve_request($1,$2,$3,$4,$5,$6)")
+                    .bind(request)
+                    .bind(key)
+                    .bind(model)
+                    .bind(revision)
+                    .bind(i64::from(bounds.inputs))
+                    .bind(i64::from(bounds.outputs))
+                    .fetch_one(&self.pool),
+            )
+            .await?;
         Ok(reply)
     }
 
@@ -165,22 +206,27 @@ impl Gateway {
         sequence: i32,
         deployment: Uuid,
     ) -> Result<Value, ControlError> {
-        let Json(reply) = sqlx::query_scalar("SELECT gateway_v1.start_attempt($1,$2,$3,$4)")
-            .bind(request)
-            .bind(attempt)
-            .bind(sequence)
-            .bind(deployment)
-            .fetch_one(&self.pool)
+        let Json(reply) = self
+            .call(
+                sqlx::query_scalar("SELECT gateway_v1.start_attempt($1,$2,$3,$4)")
+                    .bind(request)
+                    .bind(attempt)
+                    .bind(sequence)
+                    .bind(deployment)
+                    .fetch_one(&self.pool),
+            )
             .await?;
         Ok(reply)
     }
 
     pub async fn status(&self, request: Uuid) -> Result<Option<Value>, ControlError> {
-        let reply: Option<Json<Value>> =
-            sqlx::query_scalar("SELECT gateway_v1.get_request_status($1)")
-                .bind(request)
-                .fetch_one(&self.pool)
-                .await?;
+        let reply: Option<Json<Value>> = self
+            .call(
+                sqlx::query_scalar("SELECT gateway_v1.get_request_status($1)")
+                    .bind(request)
+                    .fetch_one(&self.pool),
+            )
+            .await?;
         Ok(reply.map(|j| j.0))
     }
 
@@ -189,19 +235,25 @@ impl Gateway {
         request: Uuid,
         reason: &str,
     ) -> Result<Value, ControlError> {
-        let Json(reply) = sqlx::query_scalar("SELECT gateway_v1.cancel_unstarted_request($1,$2)")
-            .bind(request)
-            .bind(reason)
-            .fetch_one(&self.pool)
+        let Json(reply) = self
+            .call(
+                sqlx::query_scalar("SELECT gateway_v1.cancel_unstarted_request($1,$2)")
+                    .bind(request)
+                    .bind(reason)
+                    .fetch_one(&self.pool),
+            )
             .await?;
         Ok(reply)
     }
 
     /// Replay exactly this serialized envelope after an unknown commit outcome.
     pub async fn append_event(&self, event: &str) -> Result<Value, ControlError> {
-        let Json(reply) = sqlx::query_scalar("SELECT gateway_v1.append_usage_event($1)")
-            .bind(event)
-            .fetch_one(&self.pool)
+        let Json(reply) = self
+            .call(
+                sqlx::query_scalar("SELECT gateway_v1.append_usage_event($1)")
+                    .bind(event)
+                    .fetch_one(&self.pool),
+            )
             .await?;
         Ok(reply)
     }

@@ -4,9 +4,23 @@
 
 ## 运行现有实现
 
-从仓库根目录运行 `cargo test --locked --manifest-path src/relay/Cargo.toml` 验证协议样本。安装 Rust 和控制平面开发依赖后，运行 `uv run python scripts/run_integration.py -q tests/integration/test_plane.py`。隔离集成测试会在配置好节点数据库角色、快照和集群私钥后调用 Rust，用 Python Worker 核对结算。
+从仓库根目录执行 `cargo build --release --locked --manifest-path src/relay/Cargo.toml`，生成 `src/relay/target/release/nexus-relay`。节点通过 HTTP/1.1 提供非流式 `POST /v1/messages` 和 `POST /v1/responses`，向部署发起原生 HTTPS 请求。每个下游响应写完后关闭连接。对外 TLS 由入口负载均衡终止，`GET /ready` 可用于就绪检查。SSE 与 Responses WebSocket 在 P3 单独启用。
 
-部署可通过 catalog 的 `relay_profile` 声明端点、传输、分词规则、输入输出上界和验证依据。未配置的历史部署沿用 v1 资源。含原生部署的集群要求节点声明 `relay.native.v1`，含 WebSocket 的集群另要求 `relay.responses-ws.v1`。当前节点库提供协议解析、八个 SQL 调用和 sealed box 解密。Redis 租约和转发监听仍在后续阶段实施。
+| 环境变量 | 节点配置 |
+| --- | --- |
+| `NEXUS_RELAY_DATABASE_URL` | 节点专属 PostgreSQL 登录的连接 URL，使用已登记的 gateway principal |
+| `NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_NAMESPACE` | 与控制平面相同的 Redis 和命名空间，命名空间默认 `nexus:v1` |
+| `NEXUS_RELAY_CLUSTER_ID`、`NEXUS_RELAY_PRIVATE_KEY` | 已登记的集群 UUID 和对应的 base64 编码 32 字节 Curve25519 私钥 |
+| `NEXUS_RELAY_LISTEN`、`NEXUS_RELAY_POOL_SIZE` | 默认监听 `127.0.0.1:8081`，每个节点默认最多 8 个数据库连接 |
+| `NEXUS_RELAY_REQUEST_BYTES`、`NEXUS_RELAY_RESPONSE_BYTES` | 默认请求上限 2 MiB，解压后非流式响应上限 8 MiB |
+| `NEXUS_RELAY_CONCURRENCY`、`NEXUS_RELAY_LEASE_MS` | 默认最多 128 个并发任务，Redis 租期默认 15000 毫秒，范围 100 至 60000 毫秒 |
+| `NEXUS_RELAY_UPSTREAM_CA` | 可选的 PEM 根证书路径，用于拥有专用 CA 的 HTTPS 部署 |
+
+在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认强制 `store=false`，省略输出限制时使用部署上限。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。旧部署保留原配置，声明端点后才参与原生转发。
+
+本阶段节点支持 `reservation.v1`、`usage-events.v1`、`relay.native.v1` 三项能力。若快照要求 `relay.responses-ws.v1`，节点拒绝确认。节点校验修订和密文包后安装快照，监听 Redis 通知并定期向 PostgreSQL 复核。每次发送前重新核验凭据、预留及尝试，并续租。上游 POST 只发送一次；数据库回执丢失时按原 ID 重放。完成任务持有独立的交付回执，写出结果未知时由 Worker 核对。
+
+运行 `cargo test --locked --manifest-path src/relay/Cargo.toml` 验证协议、路由及写出跟踪。运行 `uv run python scripts/run_integration.py -q tests/integration/test_plane.py tests/integration/test_relay.py` 验证两种入口、隔离 PostgreSQL/Redis、本地 HTTPS 上游与真实 Worker，包括 SQL 提交后回执丢失、撤权、换钥、续租、丢失租约和计量缺失。生产收费启用另需该部署的授权商户验证。
 
 ## 阶段、依赖与交付
 

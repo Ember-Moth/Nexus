@@ -2,7 +2,7 @@
 
 首期 Relay 只支持 **Anthropic Messages** 和 **OpenAI Responses**，范围同时适用于客户端入口、上游部署、路由候选和协议转换。Messages 提供 `POST /v1/messages`，Responses 在 `/v1/responses` 同时提供 HTTP POST 和 GET WebSocket Upgrade。首期要求客户端到 Relay、Relay 到 Responses 上游均支持原生 WebSocket。
 
-**首期设计已于 2026-11-14 定稿。** Rust 协议库和受限 SQL 客户端已落地，当前可运行离线协议测试和节点到 Worker 的数据库契约测试。 在 `src/relay/` 先跑通两条原生链路，各自从企业调用 Key、资金预留走到可核对的 USD 消费流水，再分别验证两个转换方向。每条链路单独声明可用能力。[开发计划与验收用例](relay-development.md)
+**首期设计已于 2026-11-14 定稿。** Rust 节点已接入两种原生非流式 HTTP 链路，可在隔离 PostgreSQL、Redis 和 HTTPS 上游替身环境中验收从输入到 Worker 结算的完整过程。 在 `src/relay/` 先跑通两条原生链路，各自从企业调用 Key、资金预留走到可核对的 USD 消费流水，再分别验证两个转换方向。每条链路单独声明可用能力。[开发计划与验收用例](relay-development.md)
 
 ## 代码复用范围与维护归属
 

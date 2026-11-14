@@ -33,13 +33,15 @@ async def make_model(client, root, name, protocols=None):
     return response.json()
 
 
-async def make_upstream(client, root, name, protocol="openai_compatible"):
+async def make_upstream(
+    client, root, name, protocol="openai_compatible", base_url="https://api.example.com/v1"
+):
     response = await client.post(
         "/api/v1/upstreams",
         headers=auth(root),
         json={
             "name": name,
-            "base_url": "https://api.example.com/v1",
+            "base_url": base_url,
             "protocol_family": protocol,
         },
     )

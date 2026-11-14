@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import secrets
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
@@ -47,9 +48,15 @@ async def register_node(client, root, admin, cid):
 
 @pytest.fixture
 async def plane(http, admin):
+    async with provision_plane(http, admin) as values:
+        yield values
+
+
+@asynccontextmanager
+async def provision_plane(http, admin, protocol="openai_compatible", **upstream_options):
     client, root, app, settings = http
     org, _, _ = await setup_wallet(http)
-    model, dep, _, _, admission = await setup_model(http, org)
+    model, dep, _, _, admission = await setup_model(http, org, protocol, **upstream_options)
     from test_project_credentials import key as issue_key
 
     issued = (await issue_key(client, root, org, str(admission.service_account_id))).json()

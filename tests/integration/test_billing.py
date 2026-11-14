@@ -124,10 +124,10 @@ async def setup_wallet(http, amount="100"):
     return org, receiver, record
 
 
-async def setup_model(http, org):
+async def setup_model(http, org, protocol="openai_compatible", **upstream_options):
     client, root, _, _ = http
-    model = await make_model(client, root, "billable-model")
-    upstream = await make_upstream(client, root, "Billing upstream")
+    model = await make_model(client, root, "billable-model", [protocol])
+    upstream = await make_upstream(client, root, "Billing upstream", protocol, **upstream_options)
     credential = await make_credential(client, root, upstream)
     deployment = await make_deployment(client, root, model, upstream, credential)
     sale = await publish_price(client, root, "sale", model)

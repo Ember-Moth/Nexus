@@ -14,7 +14,7 @@ flowchart TB
     Worker <-->|下单与查单| Payment[Stripe / EPay / Antom]
     Payment -->|支付通知| API
     Client[企业 API 客户端] --> LB[负载均衡]
-    LB --> Gateway[Rust 网关集群 后续开发]
+    LB --> Gateway[Rust Relay 节点]
     Gateway --> Provider[上游 AI API]
     Gateway <-->|配置与运行状态| Redis
     Gateway <-->|受限 gateway_v1 接口| PG

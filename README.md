@@ -2,7 +2,7 @@
 
 Nexus 是企业 AI API 的控制平面。平台管理员配置模型、上游和访问权限，企业按项目签发调用 Key。网关为每次调用预留资金，Worker 根据用量结算 USD 预付费账户。充值支持人工登记、Stripe、彩虹易支付 V1/V2 和 Antom。
 
-控制平面由 Python 管理 API 和独立 Worker 构成。PostgreSQL 保存授权、价格、用量和账本，Redis 分发配置并协调限额。仓库提供 Python 网关模拟器验证两平面协议；Rust 协议核心与节点控制客户端位于 `src/relay/`，首期仅接入 Anthropic Messages 和 OpenAI Responses，定稿范围包含 Responses HTTP/SSE 和客户端到 Relay、Relay 到上游的原生 WebSocket。
+控制平面由 Python 管理 API 和独立 Worker 构成。PostgreSQL 保存授权、价格、用量和账本，Redis 分发配置并协调限额。Rust 节点 `nexus-relay` 已接入 Anthropic Messages 和 OpenAI Responses 的原生非流式 HTTP 转发；Python 网关模拟器用于验证两平面协议。SSE 和 Responses 双端 WebSocket 按 P3 推进。
 
 ## 从本机开始
 
@@ -19,7 +19,7 @@ Nexus 是企业 AI API 的控制平面。平台管理员配置模型、上游和
 | 发布价格和折扣，设置预算，登记收款、调整和对账 | [定价与预付费账户](docs/billing-api.md) |
 | 接入支付渠道，确认充值、查单和处理退款风险 | [支付网关与自动入账](docs/payments.md) |
 | 配置节点、发布快照、调用 SQL 函数、上报用量 | [两平面通信协议](docs/plane-protocol.md) |
-| 构建 Rust Relay 协议库并验证节点契约 | [Relay 设计](docs/relay-design.md) · [开发计划](docs/relay-development.md) |
+| 运行 Rust Relay、配置部署与验证结算 | [Relay 设计](docs/relay-design.md) · [开发计划](docs/relay-development.md) |
 | 查询费用、导出 CSV、处理异常和查看指标 | [查询与运营](docs/operations.md) |
 
 ## 维护与验证

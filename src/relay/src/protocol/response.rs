@@ -14,7 +14,7 @@ pub fn observe(endpoint: Endpoint, body: &Value) -> Result<Completion, ProtocolE
             terminal: Terminal::Failed,
             stop_reason: None,
             response_id: None,
-            usage: UsageEvidence::extract(endpoint, None)?,
+            usage: UsageEvidence::extract(endpoint, body.get("usage"))?,
         });
     }
     let (terminal, reason) = match endpoint {

@@ -86,6 +86,9 @@ impl Generate {
         };
         let output_field = match endpoint {
             Endpoint::AnthropicMessages => {
+                if obj.contains_key("mcp_servers") || obj.contains_key("container") {
+                    return Err(ProtocolError::Unsupported("hosted tool or container"));
+                }
                 if websocket {
                     return Err(ProtocolError::Unsupported("Messages WebSocket"));
                 }
@@ -101,6 +104,11 @@ impl Generate {
             Endpoint::OpenaiResponses => {
                 if obj.get("store").is_some_and(|v| v != false)
                     || obj.contains_key("conversation")
+                    || obj.contains_key("prompt")
+                    || obj
+                        .get("input")
+                        .and_then(Value::as_array)
+                        .is_some_and(|items| items.iter().any(|i| i["type"] == "item_reference"))
                     || obj.get("background").is_some_and(|v| v != false)
                     || (websocket && obj.contains_key("background"))
                 {
@@ -163,6 +171,40 @@ impl Generate {
             requested_output,
             body,
         })
+    }
+
+    pub fn has_tools(&self) -> bool {
+        self.body
+            .get("tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| !tools.is_empty())
+            || self
+                .body
+                .get("tool_choice")
+                .is_some_and(|choice| choice != "none")
+            || self
+                .body
+                .get("input")
+                .and_then(Value::as_array)
+                .is_some_and(|items| {
+                    items.iter().any(|i| {
+                        matches!(
+                            i["type"].as_str(),
+                            Some("function_call" | "function_call_output")
+                        )
+                    })
+                })
+            || self
+                .body
+                .get("messages")
+                .and_then(Value::as_array)
+                .is_some_and(|messages| {
+                    messages
+                        .iter()
+                        .filter_map(|m| m["content"].as_array())
+                        .flatten()
+                        .any(|b| matches!(b["type"].as_str(), Some("tool_use" | "tool_result")))
+                })
     }
 
     pub fn previous_response_id(&self) -> Option<&str> {

@@ -1,5 +1,6 @@
 """Billing's public services; all persistence remains inside this module."""
 
+from nexus.infrastructure.audit_reader import audit_reader
 from nexus.infrastructure.postgres import ModuleDatabase
 from nexus.shared.storage import ModuleName
 
@@ -7,11 +8,14 @@ from .budgets import BudgetService
 from .events import ACCOUNT_READY, ACCOUNT_READY_VERSION, FUNDING_POSTED, FUNDING_POSTED_VERSION
 from .gateways import GatewayRegistry
 from .mock_gateway import definition as mock_definition
+from .operations import Operations
+from .operations_repository import OperationsRepository
 from .payment_processing import PaymentProcessor
 from .payment_repository import PaymentRepository
 from .payments import PaymentService
 from .ports import DeploymentInfo, ModelInfo, Scope
 from .pricing import PricingService
+from .reports_repository import BillingReports
 from .repository import transaction
 from .reservations import ReservationService
 from .schemas import Admission, Settlement
@@ -20,6 +24,10 @@ from .snapshot_repository import create_price_source
 from .usage import UsageProcessor
 
 __all__ = [
+    "create_reports",
+    "create_operations",
+    "operations_api",
+    "create_audit_reader",
     "create_price_source",
     "ACCOUNT_READY",
     "ACCOUNT_READY_VERSION",
@@ -98,3 +106,19 @@ def create_payment_services(
 def create_usage_processor(database, currency, reservations):
     database.require_module(ModuleName.BILLING)
     return UsageProcessor(lambda: transaction(database, currency), reservations)
+
+
+def create_audit_reader(database):
+    return audit_reader(database, ModuleName.BILLING)
+
+
+def create_reports(database, currency):
+    database.require_module(ModuleName.BILLING)
+    return BillingReports(database, currency)
+
+
+def create_operations(database, currency, access, reservations):
+    database.require_module(ModuleName.BILLING)
+    return Operations(
+        lambda: transaction(database, currency, OperationsRepository), access, reservations
+    )

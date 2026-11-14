@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
+from time import monotonic
 
 from nexus.shared.errors import ServiceError
 
@@ -43,10 +44,13 @@ class PaymentProcessor:
                     )
                     await self._checkout(execution, gateway, result)
                 else:
+                    started = monotonic()
                     fact = await gateway.query_payment(
                         execution.expectation, execution.provider_payment_ref
                     )
-                    retry = await self._observation(execution, gateway, fact)
+                    retry = await self._observation(
+                        execution, gateway, fact, int((monotonic() - started) * 1000)
+                    )
                     if retry is not None:
                         prepared = await self._prepare_retry(execution, retry)
                         if prepared:
@@ -246,7 +250,7 @@ class PaymentProcessor:
                 )
                 order.block_credit = True
                 if order.credit_state == "credited":
-                    await repo.edit(account, {"status": "frozen"})
+                    await repo.restrict(account, "payment", order.id)
                 await repo.wake_query(order, target_ref=result.provider_payment_ref)
             elif (
                 order.version == execution.order_version
@@ -366,6 +370,8 @@ class PaymentProcessor:
         dispute = fact.dispute_state in {"open", "lost"} or fact.disputed_amount > 0
         if not reversal and not dispute:
             return False
+        if await repo.verified_risk_decision(order, fact):
+            return True
         order.block_credit = True
         order.reversed_amount = max(order.reversed_amount, fact.reversed_amount)
         order.disputed_amount = max(order.disputed_amount, fact.disputed_amount)
@@ -398,10 +404,10 @@ class PaymentProcessor:
                 max(order.disputed_amount - adjusted, Decimal(0)),
             )
         if order.credit_state == "credited":
-            await repo.edit(account, {"status": "frozen"})
+            await repo.restrict(account, "payment", order.id)
         return True
 
-    async def _observation(self, execution, gateway, fact):
+    async def _observation(self, execution, gateway, fact, elapsed_ms):
         async with self._transactions() as repo:
             account, order = await repo.payment_lock(execution.claim.order_id)
             operation = await repo.claimed_operation(execution.claim)
@@ -430,6 +436,7 @@ class PaymentProcessor:
                     "order_version": execution.order_version,
                     "checkout_generation": execution.checkout_generation,
                     "observed_at": fact.observed_at,
+                    "query_elapsed_ms": elapsed_ms,
                     "evidence_digest": digest(facts),
                     "facts": facts,
                     "disposition": "credentials_revoked"
@@ -461,6 +468,9 @@ class PaymentProcessor:
                         order, target_ref=fact.provider_payment_ref if binding_valid else None
                     )
                 return None
+            order.verified_observation_id = (
+                observation.id if binding_valid and fact.lookup_result == "found" else None
+            )
             if not binding_valid:
                 await repo.open_case(
                     order, "payment_binding_conflict", {"observation_id": str(observation.id)}
@@ -471,7 +481,7 @@ class PaymentProcessor:
                     or fact.reversal_state in {"pending", "succeeded"}
                     or fact.dispute_state in {"open", "lost"}
                 ):
-                    await repo.edit(account, {"status": "frozen"})
+                    await repo.restrict(account, "payment", order.id)
                 order.version += 1
                 if operation:
                     await repo.finish(operation, review=True, error="manual_review")
@@ -500,6 +510,9 @@ class PaymentProcessor:
             if order.credit_state == "credited" and receipt:
                 original = found(await repo.get("funding", order.funding_record_id))
                 extra = extra or original.payment_receipt_id != receipt.id
+            if extra and await repo.verified_risk_decision(order, fact):
+                await repo.finish(operation, delay=300, reset_attempts=True, handled=True)
+                return None
             if extra:
                 evidence = {
                     "observation_id": str(observation.id),
@@ -515,7 +528,7 @@ class PaymentProcessor:
                     await repo.open_case(order, "additional_payment_reversed_or_disputed", evidence)
                 order.block_credit = True
                 if order.credit_state == "credited":
-                    await repo.edit(account, {"status": "frozen"})
+                    await repo.restrict(account, "payment", order.id)
                 order.version += 1
                 await repo.finish(operation, delay=300, reset_attempts=True, handled=True)
                 return None
@@ -528,7 +541,7 @@ class PaymentProcessor:
                     order, "refund_pending", {"observation_id": str(observation.id)}
                 )
                 if order.credit_state == "credited":
-                    await repo.edit(account, {"status": "frozen"})
+                    await repo.restrict(account, "payment", order.id)
                 order.version += 1
                 await repo.finish(operation, delay=30, reset_attempts=True, handled=True)
                 return None
@@ -647,6 +660,7 @@ class PaymentProcessor:
             operation = await repo.claimed_operation(claim)
             if operation is None:
                 return
+            order.verified_observation_id = None
             if (
                 operation.kind == "create"
                 and order.credit_state != "credited"

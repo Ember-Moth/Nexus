@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from time import monotonic
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -7,13 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from nexus.shared.errors import StorageUnavailable
 from nexus.shared.storage import SCHEMA_REVISION, ModuleName
 
+from .metrics import ProcessMetrics
+
 
 class ModuleDatabase:
     """A fixed role scope, handed only to a module's persistence construction."""
 
-    def __init__(self, sessions: async_sessionmaker[AsyncSession], module: ModuleName) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], module: ModuleName, metrics=None
+    ) -> None:
         self._sessions = sessions
         self._module = module
+        self._metrics = metrics
 
     def require_module(self, expected: ModuleName) -> None:
         if self._module is not expected:
@@ -24,6 +30,10 @@ class ModuleDatabase:
         # Identifiers come exclusively from ModuleName, never from a request.
         role = f"nexus_{self._module.value}"
         async with self._sessions() as session, session.begin():
+            if self._metrics:
+                start = monotonic()
+                await session.connection()
+                self._metrics.connection(monotonic() - start)
             await session.execute(text(f'SET LOCAL ROLE "{role}"'))
             await session.execute(text("SET LOCAL search_path TO pg_catalog"))
             yield session
@@ -47,6 +57,7 @@ class Database:
         self, url: str, *, runtime_role: str, pool_size: int, max_overflow: int, timeout: float
     ) -> None:
         self._runtime_role = runtime_role
+        self.metrics = ProcessMetrics()
         self._engine = create_async_engine(
             url,
             pool_size=pool_size,
@@ -62,7 +73,7 @@ class Database:
         self._sessions = async_sessionmaker(self._engine, expire_on_commit=False)
 
     def for_module(self, module: ModuleName) -> ModuleDatabase:
-        return ModuleDatabase(self._sessions, module)
+        return ModuleDatabase(self._sessions, module, self.metrics)
 
     async def check_revision(self) -> None:
         async with self._engine.connect() as conn:
@@ -74,6 +85,20 @@ class Database:
             )
             if role != self._runtime_role or revisions != [SCHEMA_REVISION]:
                 raise StorageUnavailable("database identity or schema revision mismatch")
+
+    async def operational_metrics(self):
+        async with self._engine.connect() as conn:
+            locks = (
+                await conn.execute(
+                    text("""SELECT count(*) FROM pg_locks WHERE NOT granted
+                AND database=(SELECT oid FROM pg_database WHERE datname=current_database())""")
+                )
+            ).scalar_one()
+        return {
+            **self.metrics.snapshot(),
+            "waiting_locks": locks,
+            "pool_checked_out": self._engine.pool.checkedout(),
+        }
 
     async def close(self) -> None:
         await self._engine.dispose()

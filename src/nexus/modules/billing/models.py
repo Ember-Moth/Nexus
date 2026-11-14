@@ -225,6 +225,7 @@ class RequestRun(Record, Base):
     review_reason: Mapped[str | None] = mapped_column(String(100))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_decision_id: Mapped[UUID | None]
     settlement_digest: Mapped[str | None] = mapped_column(String(64))
     charge_details: Mapped[list | None] = mapped_column(JSONB)
 
@@ -280,6 +281,7 @@ class PaymentChannelVersion(Record, Base):
 
 
 class PaymentOrder(Record, Versioned, Base):
+    verified_observation_id: Mapped[UUID | None]
     __tablename__ = "payment_orders"
     __table_args__ = {"schema": "billing"}
     organization_id: Mapped[UUID]
@@ -354,6 +356,7 @@ class PaymentEvent(Record, Base):
 
 
 class PaymentObservationRow(Record, Base):
+    query_elapsed_ms: Mapped[int | None]
     __tablename__ = "payment_observations"
     __table_args__ = {"schema": "billing"}
     order_id: Mapped[UUID]
@@ -387,6 +390,9 @@ class PaymentCase(Record, Base):
     __table_args__ = {"schema": "billing"}
     organization_id: Mapped[UUID]
     order_id: Mapped[UUID]
+    version: Mapped[int] = mapped_column(default=1)
+    decision_id: Mapped[UUID | None]
+    decision_basis: Mapped[dict | None] = mapped_column(JSONB)
     reason: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="open")
     amount_at_risk: Mapped[Decimal] = mapped_column(Numeric(28, 12), default=Decimal(0))

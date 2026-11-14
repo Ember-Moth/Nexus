@@ -1,5 +1,6 @@
 """Public catalog operations and its bounded, read-only model lookup."""
 
+from nexus.infrastructure.audit_reader import audit_reader
 from nexus.infrastructure.postgres import ModuleDatabase
 from nexus.shared.storage import ModuleName
 
@@ -9,6 +10,7 @@ from .service import CatalogService
 from .snapshot_repository import RoutingPolicies, create_catalog_source
 
 __all__ = [
+    "create_audit_reader",
     "create_catalog_source",
     "RoutingPolicies",
     "routing_api",
@@ -46,3 +48,7 @@ def create_pricing_lookup(database: ModuleDatabase, versions):
             return await repo.deployment(resource_id, versions)
 
     return lookup
+
+
+def create_audit_reader(database):
+    return audit_reader(database, ModuleName.CATALOG)

@@ -45,7 +45,11 @@ def admin(service_directory):
 @pytest.fixture(autouse=True)
 def reset_identity(admin):
     admin.execute(
-        "TRUNCATE publication.limit_namespaces, "
+        "TRUNCATE reporting.export_jobs,reporting.request_facts,reporting.audit_events, "
+        "billing.upstream_statements,billing.ingest_counters,"
+        "billing.account_restrictions,billing.report_changes,billing.review_cases,"
+        "billing.account_checks,billing.case_decisions, "
+        "billing.cost_corrections,publication.audit_events,publication.limit_namespaces, "
         "publication.previous_keys, publication.gateway_principals, "
         "publication.gateway_clusters, publication.node_config_acks, "
         "publication.config_outbox, publication.config_snapshots, "

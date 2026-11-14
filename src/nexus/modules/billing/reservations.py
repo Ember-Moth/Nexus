@@ -142,7 +142,7 @@ class ReservationService:
     async def _review(self, repo, account, request, reason, facts, *, freeze=False):
         await repo.edit(request, {"state": "review", "review_reason": reason}, versioned=False)
         if freeze:
-            await repo.edit(account, {"status": "frozen"})
+            await repo.restrict(account, "request", request.id)
         await repo.audit(
             None,
             "request.review_required",
@@ -203,6 +203,33 @@ class ReservationService:
                 return await self._review(
                     repo, account, request, "authorized_bound_exceeded", facts, freeze=True
                 )
+        return await self.post_settlement(
+            repo,
+            account,
+            request,
+            amount,
+            lines,
+            fingerprint,
+            captured=facts.outcome in {"success", "customer_cancelled"},
+            canceled=facts.outcome == "not_started",
+            evidence=facts.model_dump(mode="json"),
+        )
+
+    async def post_settlement(
+        self,
+        repo,
+        account,
+        request,
+        amount,
+        lines,
+        fingerprint,
+        *,
+        captured,
+        canceled,
+        evidence=None,
+    ):
+        request_id = request.id
+        org_id = request.organization_id
         account.held_amount -= request.reserved_amount
         account.version += 1
         await repo.settle_budget_holds(request_id, amount)
@@ -210,10 +237,8 @@ class ReservationService:
         await repo.edit(
             request,
             {
-                "state": "canceled" if facts.outcome == "not_started" else "settled",
-                "reservation_state": "captured"
-                if facts.outcome in {"success", "customer_cancelled"}
-                else "released",
+                "state": "canceled" if canceled else "settled",
+                "reservation_state": "captured" if captured else "released",
                 "charged_amount": amount,
                 "charge_details": lines,
                 "settlement_digest": fingerprint,
@@ -227,7 +252,7 @@ class ReservationService:
             "request.settled",
             request.id,
             org_id,
-            {"amount": str(amount), "facts": facts.model_dump(mode="json")},
+            {"amount": str(amount), "facts": evidence or {"source": "review"}},
         )
         return view(RequestView, request)
 

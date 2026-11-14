@@ -31,7 +31,6 @@ from .schemas import (
     ReceivingCreate,
     ReceivingPatch,
     ReceivingView,
-    RequestView,
     SaleCreate,
 )
 from .service import BillingService
@@ -106,11 +105,15 @@ def create_router(get_billing, get_pricing, get_budgets):
     for path, kind, View in [
         ("funding-records", "funding", FundingView),
         ("adjustments", "adjustment", AdjustmentView),
-        ("ledger", "ledger", LedgerView),
         ("budget-policies", "budget", BudgetView),
-        ("requests", "request", RequestView),
     ]:
         add_org_reads(path, kind, View)
+
+    @router.get("/organizations/{organization_id}/ledger/{resource_id}", response_model=LedgerView)
+    async def ledger_entry(
+        organization_id: UUID, resource_id: UUID, token: Token, service: Billing
+    ):
+        return await service.get(token, "ledger", organization_id, resource_id)
 
     @router.post(
         "/organizations/{organization_id}/funding-records",

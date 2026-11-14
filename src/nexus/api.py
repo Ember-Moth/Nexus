@@ -1,21 +1,26 @@
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from time import monotonic
+from typing import Annotated
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from nexus.bootstrap import Application
 from nexus.config import RuntimeSettings
+from nexus.http import credentials
 from nexus.modules.billing import api as billing_api
-from nexus.modules.billing import payment_api
+from nexus.modules.billing import operations_api, payment_api
 from nexus.modules.catalog import CatalogService, routing_api
 from nexus.modules.catalog import api as catalog_api
 from nexus.modules.identity import IdentityService, ModelAccessService, ProjectService
 from nexus.modules.identity import api as identity_api
 from nexus.modules.publication import api as publication_api
+from nexus.modules.reporting import api as reporting_api
 from nexus.shared.errors import ServiceError
 
 type Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
@@ -34,12 +39,15 @@ def build_server(lifespan: Lifespan, *, development: bool = False) -> FastAPI:
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
+        started = monotonic()
         request.state.trace_id = str(uuid4())
         try:
             response = await call_next(request)
         except Exception as error:
             # Handle before ServerErrorMiddleware re-raises to Uvicorn's traceback logger.
             response = await unexpected_error(request, error)
+        if metrics := getattr(app.state, "process_metrics", None):
+            metrics.response(request.method, response.status_code, started)
         response.headers["X-Request-ID"] = request.state.trace_id
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
@@ -104,6 +112,10 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         application = Application(settings)
+        app.state.operational_metrics = application.metrics
+        app.state.process_metrics = application.database.metrics
+        app.state.reports = application.reports
+        app.state.operations = application.operations
         app.state.readiness = application.readiness
         app.state.publication = application.publication
         app.state.routing = application.routing
@@ -148,6 +160,12 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     def get_budgets(request: Request):
         return request.app.state.budget_service
 
+    def get_reports(request: Request):
+        return request.app.state.reports
+
+    def get_operations(request: Request):
+        return request.app.state.operations
+
     def get_publication(request: Request):
         return request.app.state.publication
 
@@ -155,6 +173,16 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
         return request.app.state.routing
 
     app = build_server(lifespan, development=settings.environment != "production")
+
+    @app.get("/internal/metrics", include_in_schema=False)
+    async def metrics(request: Request, token: Annotated[str, Depends(credentials)]):
+        return JSONResponse(
+            content=jsonable_encoder(await request.app.state.operational_metrics(token)),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    app.include_router(reporting_api.create_router(get_reports))
+    app.include_router(operations_api.create_router(get_operations))
     app.include_router(publication_api.create_router(get_publication))
     app.include_router(routing_api.create_router(get_routing))
     app.include_router(identity_api.create_router(get_identity))

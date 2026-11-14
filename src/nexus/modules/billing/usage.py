@@ -88,6 +88,7 @@ class UsageProcessor:
         finished = {}
         closed = None
         pending_cost = False
+        corrected = await repo.corrected_attempts(request.id)
         for event in await repo.usage_facts(request.id):
             if event.kind == "request.closed":
                 closed = event
@@ -100,8 +101,7 @@ class UsageProcessor:
                 reason = None
             except ValueError as error:
                 rule, counts, reason = "usage-normalizer/1", None, str(error)
-                pending_cost = True
-            if counts is not None:
+            if counts is not None and event.attempt_id not in corrected:
                 try:
                     await self._reservations.record_cost_in(
                         repo,
@@ -115,9 +115,21 @@ class UsageProcessor:
                     if error.code != "invalid_cost_usage":
                         raise
                     reason = "invalid_cost_usage"
-                    pending_cost = True
+            if reason and event.attempt_id not in corrected:
+                pending_cost = True
+                await repo.cost_review(request, event.attempt_id, reason)
             await repo.save_normalization(event.id, event.attempt_id, rule, counts, reason)
             finished[str(event.attempt_id)] = (payload["outcome"], counts, rule, reason)
+        if request.review_decision_id:
+            for attempt in await repo.attempts(request.id):
+                if attempt.state != "confirmed" and attempt.id not in corrected:
+                    pending_cost = True
+                    await repo.cost_review(request, attempt.id, "missing_attempt_cost")
+            return await repo.finish_usage(
+                request.id,
+                "review" if pending_cost else "done",
+                "cost_requires_review" if pending_cost else None,
+            )
         if closed is None:
             return await repo.finish_usage(
                 request.id,
@@ -164,6 +176,9 @@ class UsageProcessor:
             return await repo.finish_usage(
                 request.id, "review", result.review_reason or "cost_requires_review"
             )
-        if {str(UUID(i)) for i in body["attempt_ids"]} != finished.keys():
+        missing = {UUID(i) for i in body["attempt_ids"]} - set(map(UUID, finished)) - corrected
+        if missing:
+            for aid in missing:
+                await repo.cost_review(request, aid, "missing_attempt_cost")
             return await repo.finish_usage(request.id, "waiting", "awaiting_attempt_cost")
         await repo.finish_usage(request.id, "done", None)

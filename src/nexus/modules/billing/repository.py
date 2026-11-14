@@ -121,6 +121,48 @@ class BillingRepository:
             },
         )
 
+    async def restrict(self, account, kind, source_id):
+        await self._session.execute(
+            text("""INSERT INTO billing.account_restrictions(account_id,source_type,source_id)
+            VALUES(:acct, :kind, :id) ON CONFLICT(account_id, source_type, source_id) DO UPDATE
+            SET released_at=NULL"""),
+            {"acct": account.id, "kind": kind, "id": source_id},
+        )
+        if account.status != "frozen":
+            await self.edit(account, {"status": "frozen"})
+
+    async def requeue_usage(self, rid):
+        await self._session.execute(
+            text("""INSERT INTO billing.usage_jobs(request_id,state) VALUES(:rid,'ready')
+          ON CONFLICT(request_id) DO UPDATE SET state='ready',
+          generation=billing.usage_jobs.generation+1,
+          failures=0,reason=NULL,next_attempt_at=clock_timestamp()"""),
+            {"rid": rid},
+        )
+
+    async def cost_review(self, request, attempt_id, reason):
+        await self._session.execute(
+            text("""INSERT INTO billing.review_cases(organization_id,source_type,
+            source_id,request_id,reason) VALUES(:org,'attempt',:id,:rid,:reason)
+            ON CONFLICT(source_type,source_id) DO UPDATE SET reason=excluded.reason,state='open',
+            resolved_at=NULL,resolution_id=NULL,version=billing.review_cases.version+1
+            WHERE billing.review_cases.state<>'open' OR
+             (billing.review_cases.reason<>excluded.reason AND
+             billing.review_cases.reason<>'statement_difference')"""),
+            {"org": request.organization_id, "id": attempt_id, "rid": request.id, "reason": reason},
+        )
+
+    async def corrected_attempts(self, rid):
+        return set(
+            (
+                await self._session.execute(
+                    text("""SELECT DISTINCT c.attempt_id FROM billing.cost_corrections c
+            JOIN billing.request_attempts a ON a.id=c.attempt_id WHERE a.request_id=:rid"""),
+                    {"rid": rid},
+                )
+            ).scalars()
+        )
+
     async def finish_usage(self, rid, state, reason):
         await self._session.execute(
             text("UPDATE billing.usage_jobs SET state=:state,reason=:reason WHERE request_id=:rid"),

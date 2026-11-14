@@ -34,10 +34,11 @@ class PublicationService:
         }
 
     async def create(self, token, body):
-        await self.admin(token)
+        actor = await self.admin(token)
         cid = uuid4()
         async with self.tx() as repo:
             await repo.create_cluster(cid, body, base64.b64decode(body.public_key))
+            await repo.audit(actor, "cluster.created", cid)
             return self.public(await repo.cluster(cid))
 
     async def clusters(self, token):
@@ -46,7 +47,7 @@ class PublicationService:
             return [self.public(row) for row in await repo.list_clusters()]
 
     async def update(self, token, cid, body, version):
-        await self.admin(token)
+        actor = await self.admin(token)
         async with self.tx() as repo:
             c = await repo.cluster(cid, True)
             if c["version"] != version:
@@ -57,13 +58,15 @@ class PublicationService:
             )
             new_key = base64.b64decode(body.public_key) if body.public_key else None
             await repo.update_cluster(c, body, new_key, scope_changed)
+            await repo.audit(actor, "cluster.updated", cid, {"previous_version": version})
             return self.public(await repo.cluster(cid))
 
     async def principal(self, token, cid, body):
-        await self.admin(token)
+        actor = await self.admin(token)
         async with self.tx() as repo:
             await repo.cluster(cid, True)
             await repo.register(cid, body)
+            await repo.audit(actor, "principal.configured", body.node_id, {"cluster_id": str(cid)})
             return body
 
     async def _sources(self, c):
@@ -188,6 +191,7 @@ class PublicationService:
                 key,
                 params,
             )
+            await repo.audit(actor, "config.released", cid, {"revision": str(rev)})
             return {"revision": str(rev), "sha256": sha}
 
     async def status(self, token, cid, rev):
@@ -204,6 +208,10 @@ class PublicationService:
                 "distribution": job,
                 "nodes": [{**n, "applied_revision": str(n["applied_revision"])} for n in nodes],
             }
+
+    async def metrics(self):
+        async with self.tx() as repo:
+            return await repo.metrics()
 
     async def distribute(self):
         # A short retry lease survives publisher failure after the Redis write.

@@ -423,6 +423,7 @@ class PaymentService:
                     return gateway.build_notification_response("rejected")
                 old, conflict = await repo.notice(channel.receipt_namespace, event_key, fingerprint)
                 if old:
+                    await repo.count_duplicate()
                     return gateway.build_notification_response(
                         "ignored" if old.processing_state == "ignored" else "accepted"
                     )
@@ -449,6 +450,7 @@ class PaymentService:
                         conflict = True
                 operation = None
                 if not ignored:
+                    order.verified_observation_id = None
                     order.version += 1
                     operation = await repo.wake_query(
                         order, target_ref=verified.provider_payment_ref
@@ -480,13 +482,13 @@ class PaymentService:
                     reported_risk = (
                         verified.reversal_state == "succeeded" and verified.reversed_amount > 0
                     ) or verified.dispute_state in {"open", "lost"}
-                    if reported_risk:
+                    if reported_risk and not await repo.verified_risk_decision(order, verified):
                         order.block_credit = True
                         await repo.open_case(
                             order, "reported_reversal_or_dispute", {"event_id": str(event.id)}
                         )
                         if order.credit_state == "credited":
-                            await repo.edit(account, {"status": "frozen"})
+                            await repo.restrict(account, "payment", order.id)
                     await repo.audit(
                         None,
                         "payment_notice.received",

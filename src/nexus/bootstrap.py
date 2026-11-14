@@ -9,7 +9,7 @@ from nexus.infrastructure.cache import Cache
 from nexus.infrastructure.credential_cipher import CredentialCipher
 from nexus.infrastructure.payment_http import PaymentHttp
 from nexus.infrastructure.postgres import Database
-from nexus.modules import billing, catalog, identity, publication
+from nexus.modules import billing, catalog, identity, publication, reporting
 from nexus.shared.storage import ModuleName
 
 
@@ -131,6 +131,27 @@ class Application:
             settings.billing_currency,
         )
 
+        self.operations = billing.create_operations(
+            self._storage["billing"],
+            settings.billing_currency,
+            BillingAccess(self.identity, self.model_access),
+            self.reservations,
+        )
+        self.reports = reporting.create_service(
+            self._storage["reporting"],
+            self.identity.report_scope,
+            billing.create_reports(self._storage["billing"], settings.billing_currency),
+            [
+                module.create_audit_reader(self._storage[name])
+                for name, module in [
+                    ("identity", identity),
+                    ("catalog", catalog),
+                    ("billing", billing),
+                    ("publication", publication),
+                ]
+            ],
+            settings,
+        )
         self.routing = catalog.RoutingPolicies(
             self._storage["catalog"], self.identity.financial_access
         )
@@ -168,6 +189,15 @@ class Application:
             return_url=settings.payment_return_url,
             requests_per_minute=settings.payment_requests_per_merchant_per_minute,
         )
+
+    async def metrics(self, token):
+        await self.identity.require_platform_admin(token)
+        process, billing_metrics, publication_metrics = await asyncio.gather(
+            self.database.operational_metrics(),
+            self.reports.source.metrics(),
+            self.publication.metrics(),
+        )
+        return {"process": process, "billing": billing_metrics, "publication": publication_metrics}
 
     async def process_billing(self):
         await self.database.check_revision()

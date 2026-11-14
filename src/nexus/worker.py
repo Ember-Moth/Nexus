@@ -109,6 +109,9 @@ async def serve_worker(settings: RuntimeSettings) -> None:
             ttl=settings.worker_heartbeat_ttl,
             consume=application.process_billing,
             extra_consumers={
+                "report_projection": application.reports.project,
+                "exports": application.reports.process_export,
+                "account_reconciliation": application.operations.check_next,
                 "settlement": application.usage.process,
                 "publication_outbox": application.publication.distribute,
             },

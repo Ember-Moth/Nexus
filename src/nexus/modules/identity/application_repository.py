@@ -75,6 +75,18 @@ class ApplicationRepository:
             ).first()
         )
 
+    async def granted_projects(self, org_id, member_id):
+        return list(
+            (
+                await self._session.execute(
+                    select(Project.id).where(
+                        Project.organization_id == org_id,
+                        self._grant_filter(org_id, member_id, Project.id),
+                    )
+                )
+            ).scalars()
+        )
+
     async def projects(self, organization_id, membership_id, limit, cursor):
         stmt = select(Project).where(Project.organization_id == organization_id)
         if membership_id is not None:

@@ -69,6 +69,43 @@ class IdentityService:
             )
             return result
 
+    async def report_scope(
+        self, token, org_id=None, *, operation="usage", project_id=None, key_id=None
+    ):
+        async with self._access.authenticated(token) as (tx, actor):
+            platform = bool(actor.platform_roles & {"platform_admin", "platform_finance"})
+            finance = "platform_finance" in actor.platform_roles
+            if org_id is None:
+                if not platform or (operation == "finance" and not finance):
+                    raise forbidden()
+                return actor.user.id, None, platform, finance
+            await self._access.organization(tx, actor, org_id, finance_read=True)
+            member = await tx.directory.membership_for_user(org_id, actor.user.id)
+            role = member.role if member and member.status == "active" else None
+            projects = None
+            if not platform and role == "org_developer":
+                if operation != "usage":
+                    raise forbidden(org_id)
+                projects = await tx.applications.granted_projects(org_id, member.id)
+            elif not platform and role not in {"org_owner", "org_finance"}:
+                raise forbidden(org_id)
+            if operation == "finance" and not finance:
+                raise forbidden(org_id)
+            if project_id is not None:
+                if not await tx.applications.project(org_id, project_id) or (
+                    projects is not None and project_id not in projects
+                ):
+                    raise missing(project_id)
+            if key_id is not None:
+                key = await tx.applications.key(org_id, key_id)
+                if (
+                    key is None
+                    or (project_id and key.project_id != project_id)
+                    or (projects is not None and key.project_id not in projects)
+                ):
+                    raise missing(key_id)
+            return actor.user.id, projects, platform, finance
+
     async def financial_access(
         self,
         token,

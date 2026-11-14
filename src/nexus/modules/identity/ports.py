@@ -111,6 +111,7 @@ class Directory(Protocol):
 
 
 class Applications(Protocol):
+    async def granted_projects(self, org_id: UUID, member_id: UUID) -> list[UUID]: ...
     async def has_grant(
         self, organization_id: UUID, project_id: UUID, membership_id: UUID
     ) -> bool: ...

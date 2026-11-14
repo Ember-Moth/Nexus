@@ -5,7 +5,7 @@ from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from . import models as m
@@ -233,6 +233,13 @@ class PaymentRepository(BillingRepository):
             )
         await self.flush()
 
+    async def count_duplicate(self):
+        await self._session.execute(
+            text("""INSERT INTO billing.ingest_counters(name,total)
+           VALUES('payment', 1) ON CONFLICT(name) DO UPDATE SET
+           total=billing.ingest_counters.total+1""")
+        )
+
     async def notice(self, namespace, event_key, fingerprint):
         rows = (
             (
@@ -260,6 +267,37 @@ class PaymentRepository(BillingRepository):
             )
         ).scalar_one_or_none()
 
+    async def verified_risk_decision(self, order, fact):
+        rows = (
+            (
+                await self._session.execute(
+                    select(m.PaymentCase).where(
+                        m.PaymentCase.order_id == order.id,
+                        m.PaymentCase.status == "resolved",
+                        m.PaymentCase.decision_id.is_not(None),
+                        m.PaymentCase.decision_basis.is_not(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            basis = row.decision_basis
+            if (
+                basis["transaction_id"] == fact.transaction_id
+                and basis["provider_payment_ref"] == fact.provider_payment_ref
+                and Decimal(basis["reversed_amount"]) == fact.reversed_amount
+                and Decimal(basis["disputed_amount"]) == fact.disputed_amount
+                and basis["reversal_state"] == fact.reversal_state
+                and basis["dispute_state"] == fact.dispute_state
+                and basis.get("reversal_reference") == fact.reversal_reference
+                and basis.get("dispute_reference") == fact.dispute_reference
+                and basis["state"] == fact.state
+            ):
+                return True
+        return False
+
     async def open_case(self, order, reason, evidence, amount=Decimal(0)):
         row = (
             await self._session.execute(
@@ -280,6 +318,9 @@ class PaymentRepository(BillingRepository):
                 },
             )
         else:
+            row.version += 1
+            row.decision_id = None
+            row.decision_basis = None
             row.status = "open"
             row.amount_at_risk = amount
             row.evidence = evidence
@@ -313,6 +354,7 @@ class PaymentRepository(BillingRepository):
         for row in rows:
             if row.reason in transient:
                 row.status = "resolved"
+                row.version += 1
         remaining = [row for row in rows if row.status == "open"]
         order.review_required = bool(remaining)
         order.review_reason = remaining[-1].reason if remaining else None

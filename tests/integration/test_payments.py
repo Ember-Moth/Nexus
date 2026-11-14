@@ -1126,7 +1126,7 @@ async def test_payment_migration_cannot_erase_retained_remote_intents(
         await asyncio.to_thread(command.downgrade, config, "0006_pricing_reservations")
     assert (
         admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchone()[0]
-        == "0008_gateway_protocol"
+        == "0009_operations"
     )
     assert (
         admin.execute(
@@ -1313,3 +1313,69 @@ async def test_not_found_from_wrong_merchant_cannot_authorize_a_create_retry(pay
         ).fetchone()[0]
         == 1
     )
+
+
+async def test_resolved_refund_replay_and_independent_unfreeze(payments, admin):
+    from test_billing import adjustment
+
+    p = payments
+    org = await enterprise(p)
+    chan = await channel(p)
+    item = await order(p, org, chan)
+    await settle_paid(p, org, item, chan)
+    obj = p.provider.fact(item["merchant_order_ref"])
+    obj.update(
+        state="partially_reversed",
+        reversed_minor=300,
+        reversal_state="succeeded",
+        reversal_reference="reversal-001",
+    )
+    assert (await notify(p, chan, p.provider.notice(item["merchant_order_ref"]))).status_code == 200
+    await p.app.state.payment_processor.process()
+    await finance_role(p.client, p.root)
+    base = f"/api/v1/organizations/{org['id']}"
+    cases = (await p.client.get("/api/v1/reconciliation-cases", headers=auth(p.root))).json()[
+        "items"
+    ]
+    obs = admin.execute(
+        "SELECT verified_observation_id FROM billing.payment_orders WHERE id=%s", (item["id"],)
+    ).fetchone()[0]
+    body = {
+        "action": "verify_payment",
+        "reason": "Reversal verified",
+        "evidence": "ops-bank-ref",
+        "observation_id": str(obs),
+    }
+
+    async def resolve(case):
+        return await p.client.post(
+            f"/api/v1/reconciliation-cases/{case['id']}/resolve",
+            headers=headers(p.root, "resolve-" + case["id"], case["version"]),
+            json=body,
+        )
+
+    assert (await resolve(cases[0])).status_code == 409
+    funding = (await read_order(p, org, item))["ledger_entry_id"]
+    draft = await adjustment(p.client, p.root, org, funding, "3")
+    assert (
+        await p.client.post(
+            base + f"/adjustments/{draft['id']}/post", headers=headers(p.root, "book-refund", 1)
+        )
+    ).status_code == 200
+    for case in cases:
+        reply = await resolve(case)
+        assert reply.status_code == 200, reply.text
+    wallet = await balance(p.client, p.root, org)
+    reply = await p.client.post(
+        base + "/account/unfreeze",
+        headers=headers(p.root, "close-payment-freeze", wallet["version"]),
+        json={"reason": "Verified funding reversal", "evidence": "ops-bank-ref"},
+    )
+    assert reply.status_code == 200, reply.text
+    assert (await notify(p, chan, p.provider.notice(item["merchant_order_ref"]))).status_code == 200
+    await p.app.state.payment_processor.process()
+    wallet = await balance(p.client, p.root, org)
+    assert wallet["status"] == "active" and Decimal(wallet["balance"]) == 7
+    obj.update(reversed_minor=400, reversal_reference="reversal-002")
+    assert (await notify(p, chan, p.provider.notice(item["merchant_order_ref"]))).status_code == 200
+    assert (await balance(p.client, p.root, org))["status"] == "frozen"

@@ -38,6 +38,9 @@ class RuntimeSettings(BaseSettings):
     login_window_seconds: int = Field(default=60, ge=1, le=3600)
     login_per_account: int = Field(default=10, ge=1, le=1000)
     login_per_ip: int = Field(default=60, ge=1, le=10000)
+    export_per_org_minute: int = Field(default=10, ge=1, le=1000)
+    export_ttl_seconds: int = Field(default=86400, ge=60, le=2592000)
+    export_max_rows: int = Field(default=10000, ge=1, le=100000)
     billing_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
     payment_public_base_url: str | None = None
     payment_return_url: str | None = None

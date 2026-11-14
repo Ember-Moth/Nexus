@@ -28,6 +28,7 @@ Nexus 是面向企业客户的 AI API 中转与计费平台。控制平面负责
 | [本机开发与验证](docs/development.md) | 原生 PostgreSQL/Redis 实例、启动命令、迁移、管理员引导与测试 |
 | [登录与企业成员管理](docs/identity-api.md) | M2 第一部分已实现的流程、接口、权限与运行参数 |
 | [项目与应用凭据](docs/project-credentials.md) | 项目授权、服务账号、Key 签发、幂等、撤销与轮换 |
+| [查询与运营](docs/operations.md) | 范围授权、费用汇总、CSV 导出、审计和异常核对 |
 | [定价与预付费账户](docs/billing-api.md) | USD 账户、财务授权、价格与折扣、人工入账、预算、预留与调整 |
 | [模型与上游目录](docs/catalog-api.md) | 模型、上游、加密凭据、部署映射与模型访问策略 |
 | [PPanel 设计参考](docs/ppanel-reference.md) | 本地源码依据、模块边界与支付设计的采用范围 |
@@ -46,4 +47,4 @@ Nexus 是面向企业客户的 AI API 中转与计费平台。控制平面负责
 
 仅借鉴 PPanel 的模块化单体思想，目录按 Python/FastAPI 用例组织，不照搬其框架模板。模块边界为：identity、catalog、billing、publication、reporting 各有数据属主，支付、定价、计量和钱包作为 billing 内部子域，跨模块通过窄门面与可靠事件协作。
 
-设计版本：v1.0。定稿日期：2026-11-08。已完成：M0、M1、M2 核心管理流程、M3 定价与账户、M3P 通用支付入账与模拟网关。M4 通信与自动结算已实现。下一阶段为 M5 查询与运营。
+设计版本：v1.0。定稿日期：2026-11-08。已完成：M0、M1、M2 核心管理流程、M3 定价与账户、M3P 通用支付入账与模拟网关。M4 通信与自动结算已实现。M5 已接入查询与运营，下一阶段为 M6 控制平面验收。

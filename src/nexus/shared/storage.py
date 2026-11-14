@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0008_gateway_protocol"
+SCHEMA_REVISION = "0009_operations"

@@ -158,11 +158,14 @@ class RoutingPolicies:
                 },
             )
             await session.execute(
-                text("""INSERT INTO catalog.audit_events(id,actor_id,action,resource_id,details)
-                VALUES(:id,:actor,'route.configured',:model,cast(:details AS jsonb))"""),
+                text("""
+                INSERT INTO catalog.audit_events(id,actor_id,action,resource_id,
+              organization_id,details)
+                VALUES(:id,:actor,'route.configured',:model,:org,cast(:details AS jsonb))"""),
                 {
                     "id": uuid4(),
                     "actor": actor.actor_id,
+                    "org": actor.organization_id,
                     "model": body.model_id,
                     "details": body.model_dump_json(),
                 },
@@ -212,11 +215,14 @@ class RoutingPolicies:
             )
             policy_id = result.scalar_one()
             await session.execute(
-                text("""INSERT INTO catalog.audit_events(id,actor_id,action,resource_id,details)
-                VALUES(:id,:actor,'quota.configured',:policy,cast(:details AS jsonb))"""),
+                text("""
+                INSERT INTO catalog.audit_events(id,actor_id,action,resource_id,
+              organization_id,details)
+                VALUES(:id,:actor,'quota.configured',:policy,:org,cast(:details AS jsonb))"""),
                 {
                     "id": uuid4(),
                     "actor": actor.actor_id,
+                    "org": actor.organization_id,
                     "policy": policy_id,
                     "details": body.model_dump_json(),
                 },

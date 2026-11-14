@@ -1,5 +1,6 @@
 """Identity's public API; storage and implementation stay inside this package."""
 
+from nexus.infrastructure.audit_reader import audit_reader
 from nexus.infrastructure.passwords import Argon2Passwords
 from nexus.infrastructure.postgres import ModuleDatabase
 from nexus.shared.storage import ModuleName
@@ -16,6 +17,7 @@ from .service import IdentityService
 from .snapshot_repository import create_identity_source
 
 __all__ = [
+    "create_audit_reader",
     "create_identity_source",
     "BootstrapResult",
     "IdentityService",
@@ -51,3 +53,7 @@ def create_project_service(database: ModuleDatabase) -> ProjectService:
 def create_model_access_service(database: ModuleDatabase, models) -> ModelAccessService:
     database.require_module(ModuleName.IDENTITY)
     return ModelAccessService(lambda: IdentityUnitOfWork(database), models)
+
+
+def create_audit_reader(database):
+    return audit_reader(database, ModuleName.IDENTITY)

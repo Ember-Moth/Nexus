@@ -17,6 +17,33 @@ class PublicationRepository:
     async def execute(self, sql, **params):
         await self.session.execute(text(sql), params)
 
+    async def audit(self, actor, action, resource, details=None):
+        await self.execute(
+            """INSERT INTO publication.audit_events(actor_id,action,resource_id,details)
+            VALUES(:actor,:action,:resource,cast(:details AS jsonb))""",
+            actor=actor,
+            action=action,
+            resource=resource,
+            details=json.dumps(details or {}),
+        )
+
+    async def metrics(self):
+        return dict(
+            (
+                await self.rows("""SELECT
+            (SELECT count(*) FROM publication.config_outbox WHERE delivered_at IS NULL)
+            publication_backlog,
+            (SELECT max(extract(epoch FROM clock_timestamp()-s.created_at)) FROM
+            publication.config_snapshots s
+              JOIN publication.config_outbox o USING(cluster_id, revision) WHERE o.delivered_at
+              IS NULL) publication_lag_seconds,
+            (SELECT count(*) FROM publication.gateway_principals n JOIN
+            publication.gateway_clusters c ON c.id=n.cluster_id
+             WHERE c.active AND n.active AND
+                n.applied_revision<c.desired_revision) lagging_nodes""")
+            )[0]
+        )
+
     async def cluster(self, cid, lock=False):
         rows = await self.rows(
             "SELECT * FROM publication.gateway_clusters WHERE id=:cid"

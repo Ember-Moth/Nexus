@@ -4,11 +4,11 @@
 
 以下为待评审的实现方案。建议先在 `src/relay/` 跑通两条原生链路，各自从企业调用 Key、资金预留走到可核对的 USD 消费流水，再分别验证这两个协议间的转换。每条链路单独声明可用能力。
 
-## 上游基线与迁移清单
+## 代码复用范围与维护归属
 
-选取 `farion1231/cc-switch` 的固定提交 `8c76bfe1e2628fe385b2c009020036d85510b01d`。Rust 项目位于 `src-tauri/`，代理是其中的 `src/proxy/` 模块。其服务器状态持有桌面应用句柄和数据库，转发器还依赖本地 provider 路由与多种账户认证。迁移单位应为可测试的协议能力。每批引入记录原路径、提交号、本地改动与移植的测试，随代码和发行包保留上游 MIT 声明，核对文件内的其他来源说明。[上游源码](https://github.com/farion1231/cc-switch/tree/8c76bfe1e2628fe385b2c009020036d85510b01d/src-tauri/src/proxy) · [上游许可证](https://github.com/farion1231/cc-switch/blob/8c76bfe1e2628fe385b2c009020036d85510b01d/LICENSE)
+Nexus 自主设计和维护 Relay。CC Switch 仅作为初次开发时可复用的代码和测试来源，用于减少协议转换、SSE 分帧等工作量。Relay 的对外行为以 Anthropic Messages、OpenAI Responses 的官方协议及 Nexus 的控制平面契约为准。功能取舍、缺陷修复和版本发布均按 Nexus 自身需求推进，独立于 CC Switch 的发布周期。
 
-下表路径相对上游 `src-tauri/src/proxy/`。
+初次选材参考 `farion1231/cc-switch` 的提交 `8c76bfe1e2628fe385b2c009020036d85510b01d`。下表路径相对该提交的 `src-tauri/src/proxy/`。提交号用于追溯复用片段；实际引入时记录原路径和本地改动，随代码与发行包保留相应版权及许可声明。[参考源码](https://github.com/farion1231/cc-switch/tree/8c76bfe1e2628fe385b2c009020036d85510b01d/src-tauri/src/proxy) · [原项目许可证](https://github.com/farion1231/cc-switch/blob/8c76bfe1e2628fe385b2c009020036d85510b01d/LICENSE)
 
 | 能力 | 源码锚点 | 迁移处理 |
 | --- | --- | --- |
@@ -47,7 +47,7 @@
 | `POST /v1/messages` | OpenAI Responses | 将 Messages 请求转换为 Responses，返回 Messages 响应或 SSE。逐项核对工具往返、停止语义和客户端可见内容。 |
 | `POST /v1/responses` | Anthropic Messages | 将 Responses 请求转换为 Messages，返回 Responses 输出项或 SSE。核对调用 ID、参数增量、终止状态及不可映射字段的错误行为。 |
 
-入口路由使用明确的 HTTP 方法和路径。OpenAI Chat Completions、Gemini 和其他协议均在首期范围外，也不能作为中转协议或失败后的回退目标。每个启用组合分别记录文本、SSE、工具能力、真实用量格式和输入输出上界。涉及前序响应 ID、服务端会话或有额外收费的托管工具时，在具备对应的租户归属、恢复及计量能力前，准入阶段拒绝相应请求。[目录当前字段](../src/nexus/modules/catalog/application/schemas.py) · [上游路由表](https://github.com/farion1231/cc-switch/blob/8c76bfe1e2628fe385b2c009020036d85510b01d/src-tauri/src/proxy/server.rs)
+入口路由使用明确的 HTTP 方法和路径。OpenAI Chat Completions、Gemini 和其他协议均在首期范围外，也不能作为中转协议或失败后的回退目标。每个启用组合分别记录文本、SSE、工具能力、真实用量格式和输入输出上界。涉及前序响应 ID、服务端会话或有额外收费的托管工具时，在具备对应的租户归属、恢复及计量能力前，准入阶段拒绝相应请求。[目录当前字段](../src/nexus/modules/catalog/application/schemas.py)
 
 ## 一次请求如何执行
 
@@ -77,11 +77,11 @@
 
 | 阶段 | 交付物 | 通过条件 |
 | --- | --- | --- |
-| P0 上游基线 | 固定来源、许可证、移植清单及可独立编译的协议核心 | 脱离桌面应用运行移植测试；随机分块、跨块 UTF-8、CRLF、工具参数、异常 EOF 和上游错误样本通过。 |
+| P0 协议核心 | 可独立编译的协议核心、复用片段及其来源与许可记录 | 脱离桌面应用运行移植测试；随机分块、跨块 UTF-8、CRLF、工具参数、异常 EOF 和上游错误样本通过。 |
 | P1 节点契约 | 节点登录、快照与密文包、限额、尝试与证据上报 | 用同一真实 PostgreSQL/Redis 测试环境对照 Python 模拟器；验证撤权、错集群、提交丢响应、重复事件和租约过期。 |
 | P2 两条原生链路 | Messages → Messages、Responses → Responses 的非流式文本 | 各选一个明确支持该端点的部署。两条链路分别用 HTTP 替身验证预留到扣费、重复事件和未知用量核对，再用获授权的真实上游校验计量口径。 |
 | P3 两种原生 SSE 与故障 | Messages、Responses 各自的流事件、背压、超时、取消、受控重试和优雅退出 | 对慢客户端、断流、跨块工具、重试后成功逐项核对交付内容、每次成本、客户扣费和剩余预留。 |
 | P4 双向转换 | Messages → Responses、Responses → Messages | 每个方向分别验收非流式、SSE、工具和错误映射。转换后的客户端响应与原生基准对照，账务始终由上游原始用量驱动；无法无损表达的必需字段在预留前拒绝。 |
 | P5 部署验收 | 独立二进制、运行配置与多节点报告 | 至少复现已有 8/64 节点、热点企业、512 请求突发，再补长流和上游故障。报告 p99、错误/超时/未完成数、进程内存、积压清空和账本一致性。 |
 
-第一项实施工作建议是为两条原生链路各确定一个付费 API 部署、测试模型、计量样本和上界，再据此锁定 P0 移植文件。每次升级 CC Switch 时按固定提交比较导入文件，重跑协议样本和 Nexus 的资金契约测试。
+第一项实施工作建议是为两条原生链路各确定一个付费 API 部署、测试模型、计量样本和上界，再据此锁定 P0 移植文件。后续修改协议实现时，用两种官方协议的样本和 Nexus 的资金契约测试验收。

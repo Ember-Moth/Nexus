@@ -208,9 +208,11 @@ pub fn confirmed_tokens(endpoint: Endpoint, usage: &UsageEvidence) -> Option<u64
     let output = n("output_tokens")?;
     match endpoint {
         Endpoint::OpenaiResponses => {
-            if n("cached_input_tokens")? > input
+            let writes = n("cache_write_tokens").unwrap_or(0);
+            if n("cached_input_tokens")? + writes > input
                 || n("reasoning_tokens").unwrap_or(0) > output
-                || n("cache_write_tokens").unwrap_or(0) > 0
+                || (writes > 0
+                    && (n("cache_write_30m_tokens")? + n("cache_write_12h_tokens")? != writes))
                 || n("total_tokens").is_some_and(|total| total != input + output)
             {
                 return None;

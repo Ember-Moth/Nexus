@@ -49,6 +49,10 @@ pub fn prepare(request: &Generate) -> Result<Value> {
     } else {
         request.body()
     };
+    prepare_messages(src)
+}
+
+fn prepare_messages(src: &Value) -> Result<Value> {
     convert::fields(
         src,
         &[
@@ -214,4 +218,112 @@ pub fn prepare(request: &Generate) -> Result<Value> {
         result["toolConfig"] = tool_config;
     }
     Ok(result)
+}
+
+/// Converse expresses cache boundaries as sibling blocks, including in system and tool lists.
+pub fn prepare_cached(request: &Generate) -> Result<Value> {
+    let mut src = if request.endpoint == Endpoint::OpenaiResponses {
+        crate::protocol::cache::to_messages(request.body())?
+    } else {
+        request.body().clone()
+    };
+    let automatic = src.as_object_mut().unwrap().remove("cache_control");
+    let mut marks = 0;
+    let mut system = Vec::new();
+    let mut tools = Vec::new();
+    let mut turns = Vec::new();
+    fn markers(blocks: &mut Value, count: &mut usize) -> Result<Vec<(usize, Value)>> {
+        let mut marks = Vec::new();
+        if let Some(blocks) = blocks.as_array_mut() {
+            for (i, b) in blocks.iter_mut().enumerate() {
+                if let Some(marker) = b.as_object_mut().and_then(|p| p.remove("cache_control")) {
+                    marks.push((i, cache_point(&marker)?));
+                    *count += 1;
+                }
+            }
+        }
+        Ok(marks)
+    }
+    fn cache_point(marker: &Value) -> Result<Value> {
+        convert::fields(marker, &["type", "ttl"])?;
+        if marker["type"] != "ephemeral"
+            || marker.get("ttl").is_some_and(|v| v != "5m" && v != "1h")
+        {
+            return Err(ProtocolError::Unsupported("Bedrock cache lifetime"));
+        }
+        let mut point = json!({"cachePoint":{"type":"default"}});
+        if let Some(ttl) = marker.get("ttl") {
+            point["cachePoint"]["ttl"] = ttl.clone();
+        }
+        Ok(point)
+    }
+    fn insert(target: &mut Value, marks: Vec<(usize, Value)>) -> Result<()> {
+        if marks.is_empty() {
+            return Ok(());
+        }
+        let a = target
+            .as_array_mut()
+            .ok_or(ProtocolError::Unsupported("cache checkpoint location"))?;
+        for (i, point) in marks.into_iter().rev() {
+            if i >= a.len() {
+                return Err(ProtocolError::Invalid("cache checkpoint index"));
+            }
+            a.insert(i + 1, point);
+        }
+        Ok(())
+    }
+    if let Some(v) = src.get_mut("system") {
+        system = markers(v, &mut marks)?;
+    }
+    if let Some(v) = src.get_mut("tools") {
+        tools = markers(v, &mut marks)?;
+    }
+    if let Some(msgs) = src["messages"].as_array_mut() {
+        for (i, msg) in msgs.iter_mut().enumerate() {
+            let content = msg
+                .get_mut("content")
+                .ok_or(ProtocolError::Invalid("message content"))?;
+            let points = markers(content, &mut marks)?;
+            if !points.is_empty() {
+                turns.push((i, points));
+            }
+        }
+    }
+    let mut body = prepare_messages(&src)?;
+    let mut auto_point = automatic.as_ref().map(cache_point).transpose()?;
+    if marks == 0 && auto_point.is_none() && request.endpoint == Endpoint::AnthropicMessages {
+        auto_point = Some(json!({"cachePoint":{"type":"default"}}));
+    }
+    // If the last content block already carries an equivalent marker, it also serves
+    // as the automatic breakpoint. A conflicting explicit lifetime cannot be preserved.
+    if let Some(auto) = &auto_point
+        && let Some((i, points)) = turns.last()
+        && *i + 1 == body["messages"].as_array().unwrap().len()
+        && let Some((j, existing)) = points.last()
+        && *j + 1 == body["messages"][*i]["content"].as_array().unwrap().len()
+    {
+        if existing["cachePoint"]["ttl"].as_str().unwrap_or("5m")
+            != auto["cachePoint"]["ttl"].as_str().unwrap_or("5m")
+        {
+            return Err(ProtocolError::Unsupported("conflicting cache TTL"));
+        }
+        auto_point = None;
+    }
+    if marks + usize::from(auto_point.is_some()) > 4 {
+        return Err(ProtocolError::Unsupported("too many cache checkpoints"));
+    }
+    if !system.is_empty() {
+        insert(&mut body["system"], system)?;
+    }
+    if !tools.is_empty() {
+        insert(&mut body["toolConfig"]["tools"], tools)?;
+    }
+    for (i, points) in turns {
+        insert(&mut body["messages"][i]["content"], points)?;
+    }
+    if let Some(p) = auto_point {
+        let last = body["messages"].as_array_mut().unwrap().last_mut().unwrap();
+        last["content"].as_array_mut().unwrap().push(p);
+    }
+    Ok(body)
 }

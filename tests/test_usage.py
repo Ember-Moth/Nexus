@@ -143,3 +143,36 @@ def test_bedrock_no_cache_counters_require_a_matching_total():
     }
     with pytest.raises(ValueError, match="conflicting_token_total"):
         normalize({"usage_format": fmt, "raw_usage": raw | {"total_tokens": 17}}, dimensions, fmt)
+
+
+def test_responses_cache_write_lifetimes_are_disjoint_and_priced():
+    fmt = "openai.responses.v1"
+    raw = {
+        "input_tokens": 12000,
+        "cached_input_tokens": 4000,
+        "output_tokens": 10,
+        "cache_write_tokens": 7000,
+        "cache_write_30m_tokens": 3000,
+        "cache_write_12h_tokens": 4000,
+    }
+    expected = {
+        "input_uncached_tokens": 1000,
+        "input_cache_read_tokens": 4000,
+        "output_tokens": 10,
+        "input_cache_write_30m_tokens": 3000,
+        "input_cache_write_12h_tokens": 4000,
+    }
+
+    def check(values, dimensions=expected):
+        return normalize({"usage_format": fmt, "raw_usage": values}, dimensions, fmt)[1]
+
+    assert check(raw) == expected
+    for key in ("cache_write_30m_tokens", "cache_write_12h_tokens"):
+        with pytest.raises(ValueError, match="missing_cache_counter"):
+            check({k: v for k, v in raw.items() if k != key})
+    with pytest.raises(ValueError, match="overlapping_token_counts"):
+        check(raw | {"cache_write_tokens": 3000})
+    with pytest.raises(ValueError, match="overlapping_token_counts"):
+        check(raw | {"input_tokens": 10000})
+    with pytest.raises(ValueError, match="dimension_mismatch"):
+        check(raw, set(expected) - {"input_cache_write_12h_tokens"})

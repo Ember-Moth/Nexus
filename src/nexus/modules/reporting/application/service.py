@@ -141,6 +141,10 @@ class Reports:
             "currency": self.source.currency,
         }
 
+    async def cache_usage(self, token, org, filters):
+        _, projects, _, _ = await self.scope(token, org, filters, "finance")
+        return await self.source.cache_usage(org, projects, filters.model_dump())
+
     async def project(self):
         batch = sorted(await self.source.fetch_changes(), key=lambda row: row["id"])
         if batch:

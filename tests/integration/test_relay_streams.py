@@ -18,10 +18,29 @@ pytestmark = pytest.mark.integration
 
 
 @asynccontextmanager
-async def stream_plane(http, admin, binary, ca, port, family, *, ws=False, convert_from=None):
+async def stream_plane(
+    http, admin, binary, ca, port, family, *, ws=False, convert_from=None, auto_cache=False
+):
     client, root, app, settings = http
     async with provision_plane(
-        http, admin, family, base_url=f"https://127.0.0.1:{port}/v1"
+        http,
+        admin,
+        family,
+        base_url=f"https://127.0.0.1:{port}/v1",
+        dimensions=(
+            {
+                "input_uncached_tokens": "1",
+                "output_tokens": "1",
+                "input_cache_read_tokens": "0.1",
+                (
+                    "input_cache_write_30m_tokens"
+                    if family == "openai_compatible"
+                    else "input_cache_write_5m_tokens"
+                ): "1.25",
+            }
+            if auto_cache
+            else None
+        ),
     ) as plane:
         peer, private, org, model, dep, admission, token, cid = plane
         await make_budget(client, root, org, "100")
@@ -37,6 +56,8 @@ async def stream_plane(http, admin, binary, ca, port, family, *, ws=False, conve
             "bound_reference": "isolated-stream",
             "count_rule": "deployment_ceiling.v1",
         }
+        if auto_cache:
+            profile["auto_prompt_cache"] = True
         if convert_from:
             profile["convert_from"] = convert_from
         r = await client.patch(
@@ -71,6 +92,23 @@ async def stream_plane(http, admin, binary, ca, port, family, *, ws=False, conve
                 else "responses-to-messages"
             )
             caps.append(f"relay.{direction}.v1")
+            r = await client.put(
+                f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
+                headers=auth(root),
+                json={"node_id": str(nid), "database_role": role, "capabilities": caps},
+            )
+            assert r.status_code == 200, r.text
+        if auto_cache:
+            blocked = await client.post(
+                f"/api/v1/gateway-clusters/{cid}/releases",
+                headers=headers(root, "node-without-prompt-cache"),
+                json={},
+            )
+            assert (
+                blocked.status_code == 409
+                and blocked.json()["error"]["code"] == "unsupported_capability"
+            )
+            caps.append("relay.prompt-cache.v1")
             r = await client.put(
                 f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
                 headers=auth(root),

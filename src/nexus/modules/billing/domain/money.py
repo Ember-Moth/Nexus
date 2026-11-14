@@ -13,6 +13,8 @@ DIMENSIONS = frozenset(
         "input_cache_read_tokens",
         "input_cache_write_5m_tokens",
         "input_cache_write_1h_tokens",
+        "input_cache_write_30m_tokens",
+        "input_cache_write_12h_tokens",
         "output_tokens",
     }
 )

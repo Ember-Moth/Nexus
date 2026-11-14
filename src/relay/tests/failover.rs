@@ -60,7 +60,7 @@ fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
     let resources = json!({
         "key_verifiers":[{"id":key,"project_id":project,"organization_id":org,
             "digest":format!("{:x}",Sha256::digest(b"enterprise")),"expires_at":null}],
-        "models":[{"id":model,"public_name":"public","max_input_tokens":100,
+        "models":[{"id":model,"public_name":"public","token_dimensions":["input_cache_read_tokens","input_cache_write_30m_tokens","input_cache_write_5m_tokens"],"max_input_tokens":100,
             "max_output_tokens":20,"capabilities":{"tools":true,"streaming":true}}],
         "routes":[{"organization_id":org,"model_id":model,"candidates":route}],
         "access_policies":[{"organization_id":org,"scope_id":org,"scope_type":"organization",
@@ -78,6 +78,7 @@ fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
         digest: String::new(),
         required_capabilities: [
             "relay.native.v1",
+            "relay.prompt-cache.v1",
             "relay.sse.v1",
             "relay.responses-ws.v1",
             "relay.messages-to-responses.v1",
@@ -360,4 +361,140 @@ async fn refused_connection_and_failed_tls_handshake_were_never_sent() {
     let handshake = send(port).await;
     assert!(handshake.unsent(), "handshake: {handshake}");
     server.abort();
+}
+
+#[test]
+fn sticky_workflows_keep_prefixes_warm_without_losing_weight_or_fallback() {
+    let f = fixture(&[(0, 1, json!({})), (0, 3, json!({})), (1, 100, json!({}))]);
+    let mut heavy = 0;
+    for i in 0..1024 {
+        let mut r = messages(json!({}));
+        r.set_affinity_key(Some(format!("workflow-{i}")));
+        let dep = f.index.select("enterprise", &r).unwrap().deployment.id;
+        heavy += usize::from(dep == f.ids[1]);
+        for _ in 0..3 {
+            assert_eq!(f.index.select("enterprise", &r).unwrap().deployment.id, dep);
+        }
+        let backup = fallback(&f, &r, &[dep]).unwrap().deployment.id;
+        assert_ne!(dep, backup);
+        assert_ne!(backup, f.ids[2]);
+        assert_eq!(
+            fallback(&f, &r, &[dep, backup]).unwrap().deployment.id,
+            f.ids[2]
+        );
+    }
+    assert!(
+        (675..850).contains(&heavy),
+        "3:1 weighted assignment: {heavy}/1024"
+    );
+}
+
+#[test]
+fn appending_turns_preserves_the_converted_prefix_key_and_deployment() {
+    let config = json!({"endpoint":"openai_responses","convert_from":"anthropic_messages","auto_prompt_cache":true});
+    let f = fixture(&[(0, 1, config.clone()), (0, 1, config)]);
+    let mut first = messages(
+        json!({"system":[{"type":"text","text":"rules","cache_control":{"type":"ephemeral"}}],
+        "tools":[{"name":"lookup","input_schema":{"type":"object","properties":{}}}]}),
+    );
+    let first_body = f.index.select("enterprise", &first).unwrap();
+    let next = messages(
+        json!({"system":[{"type":"text","text":"rules","cache_control":{"type":"ephemeral"}}],
+        "tools":[{"name":"lookup","input_schema":{"type":"object","properties":{}}}],
+        "messages":[{"role":"user","content":"hello"},{"role":"assistant","content":[{"type":"tool_use","id":"call","name":"lookup","input":{}}]},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"call","content":"result"}]}]}),
+    );
+    let continued = f.index.select("enterprise", &next).unwrap();
+    assert_eq!(first_body.deployment.id, continued.deployment.id);
+    assert_eq!(
+        first_body.body["prompt_cache_key"],
+        continued.body["prompt_cache_key"]
+    );
+    assert_eq!(first_body.body["tools"], continued.body["tools"]);
+    assert_eq!(
+        &continued.body["input"].as_array().unwrap()[..2],
+        first_body.body["input"].as_array().unwrap().as_slice()
+    );
+    assert_eq!(
+        continued.body["input"][0]["content"][0]["prompt_cache_breakpoint"]["mode"],
+        "explicit"
+    );
+    assert_eq!(continued.body["input"][2]["call_id"], "call");
+    assert_eq!(continued.body["input"][3]["call_id"], "call");
+    first.set_affinity_key(Some("unlogged-workflow".into()));
+    let changed = f.index.select("enterprise", &first).unwrap();
+    assert_ne!(
+        changed.body["prompt_cache_key"],
+        first_body.body["prompt_cache_key"]
+    );
+    assert_ne!(changed.body["prompt_cache_key"], "unlogged-workflow");
+}
+
+#[test]
+fn replaying_the_same_workload_improves_deployment_local_prefix_reuse() {
+    use std::collections::HashMap;
+    let baseline = fixture(&[
+        (0, 1, json!({})),
+        (0, 1, json!({})),
+        (0, 1, json!({})),
+        (0, 1, json!({})),
+    ]);
+    let optimized = fixture(&[
+        (0, 1, json!({"auto_prompt_cache":true})),
+        (0, 1, json!({"auto_prompt_cache":true})),
+        (0, 1, json!({"auto_prompt_cache":true})),
+        (0, 1, json!({"auto_prompt_cache":true})),
+    ]);
+    fn replay(index: &Index) -> (u64, u64) {
+        let mut prefixes = HashMap::new();
+        let (mut read, mut input) = (0, 0);
+        for tenant_workflow in 0..96 {
+            let mut history = vec![
+                json!({"role":"user","content":format!("reference document {tenant_workflow}")}),
+            ];
+            for turn in 0..12 {
+                // Fixed synthetic token counts: 2048 reusable tokens followed by 64 new tokens per turn.
+                let tokens = 2048 + turn * 64;
+                let req = messages(json!({"messages":history}));
+                let selected = index.select("enterprise", &req).unwrap();
+                let slot = prefixes
+                    .entry((tenant_workflow, selected.deployment.id))
+                    .or_insert(0);
+                read += *slot;
+                input += tokens;
+                *slot = tokens;
+                history.extend([
+                    json!({"role":"assistant","content":"answer"}),
+                    json!({"role":"user","content":format!("step {turn}")}),
+                ]);
+            }
+        }
+        (read, input)
+    }
+    let (base, total) = replay(&baseline.index);
+    let (sticky, input) = replay(&optimized.index);
+    assert_eq!(total, input);
+    assert_eq!(sticky, 96 * (0..11).map(|i| 2048 + i * 64).sum::<u64>());
+    assert!(sticky > base + total / 10);
+    println!(
+        "deployment-local synthetic prefix reads: random={base}, affinity={sticky}, total={total}"
+    );
+}
+
+#[test]
+fn native_and_converted_workflow_use_the_same_scoped_responses_key() {
+    let config = json!({"endpoint":"openai_responses","convert_from":"anthropic_messages","auto_prompt_cache":true});
+    let f = fixture(&[(0, 1, config)]);
+    let native = Generate::parse(
+        Endpoint::OpenaiResponses,
+        json!({"model":"public","input":"hello","prompt_cache_key":"session"}),
+        false,
+    )
+    .unwrap();
+    let mut cross = messages(json!({}));
+    cross.set_affinity_key(Some("session".to_owned()));
+    let a = f.index.select("enterprise", &native).unwrap();
+    let b = f.index.select("enterprise", &cross).unwrap();
+    assert_eq!(a.body["prompt_cache_key"], b.body["prompt_cache_key"]);
+    assert_eq!(a.body["prompt_cache_key"].as_str().unwrap().len(), 64);
 }

@@ -86,6 +86,8 @@ PATCH、发布、过账与草稿取消要求 `If-Match`。收款账户、入账�
 
 预留时锁定售价与折扣，开始每次尝试时锁定成本版本。客户费用先用基础价格与折扣计算各维度未舍入金额，再对总和执行一次 ROUND_HALF_UP 到 12 位小数；预留上限向上舍入。pricing 返回的 discounted_unit_price 仅供展示，不能作为再次计价的输入。客户接口不返回上游成本。
 
+Responses 缓存读取使用 `input_cache_read_tokens`，30 分钟和 12 小时写入分别使用 `input_cache_write_30m_tokens` 与 `input_cache_write_12h_tokens`。普通输入从供应商总输入中扣除读取和写入，推理 token 包含在输出中。Messages 和 Bedrock 的 5 分钟、1 小时写入沿用 `input_cache_write_5m_tokens` 和 `input_cache_write_1h_tokens`。实际费率由销售价与成本价分别指定，非零写入缺乏 TTL 分项、遇到未定价维度或总数矛盾时进入核对。开启部署自动缓存至少需要读取和默认时长的写入维度；同一公开模型可以为多个上游配置不同写入时长的费率。[Relay 配置与统计](relay-development.md#提高上游提示词缓存复用率)
+
 ## 预算、调整与核对
 
 预算的 layer 为 platform 或 organization，scope_type 为 organization、project 或 key，非组织作用域必须给出 scope_id。所有命中的平台与企业预算共同限制请求，企业自建预算不能覆盖平台上限。scope、周期和归属创建后不可修改。预算策略、期间、请求和占用使用包含组织 ID 的复合外键，预留请求的企业、项目和服务账号也必须与引用的 Key 一致；这些引用约束不授予 billing 读取 identity 私有表的权限。

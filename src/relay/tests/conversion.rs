@@ -269,3 +269,152 @@ fn implicit_responses_tools_close_fully_required_object_schemas() {
         schema["required"]
     );
 }
+
+#[test]
+fn cache_controls_preserve_explicit_boundaries_and_user_content() {
+    use nexus_relay::protocol::cache;
+    let src = json!({"model":"x","input":[{"role":"developer","content":[{"type":"input_text","text":"policy","prompt_cache_breakpoint":{"mode":"explicit"}}]},
+        {"role":"user","content":[{"type":"input_text","text":"hi"}]}],
+        "prompt_cache_options":{"mode":"explicit"}, "prompt_cache_key":"tenant-private"});
+    let out = cache::to_messages(&src).unwrap();
+    assert_eq!(
+        out["system"],
+        json!([{"type":"text","text":"policy","cache_control":{"type":"ephemeral"}}])
+    );
+    assert!(out.get("cache_control").is_none() && out.get("prompt_cache_key").is_none());
+    assert_eq!(out["messages"][0]["content"][0]["text"], "hi");
+    let mut unsupported = src.clone();
+    unsupported["prompt_cache_options"]["ttl"] = "12h".into();
+    assert!(cache::to_messages(&unsupported).is_err());
+    let blank =
+        cache::to_messages(&json!({"input":"hi","prompt_cache_options":{"mode":"explicit"}}))
+            .unwrap();
+    assert!(blank.get("cache_control").is_none());
+    assert_eq!(
+        cache::to_messages(&json!({"input":"hi","prompt_cache_key":"group"})).unwrap()["cache_control"]
+            ["type"],
+        "ephemeral"
+    );
+}
+
+#[test]
+fn bedrock_cache_points_follow_marked_blocks_and_only_use_the_selected_ttl() {
+    use nexus_relay::{bedrock, protocol::request::Generate};
+    let body = json!({"model":"m","max_tokens":6,"system":[{"type":"text","text":"policy","cache_control":{"type":"ephemeral","ttl":"1h"}}],
+        "tools":[{"name":"f","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}}],
+        "messages":[{"role":"user","content":[{"type":"text","text":"reference","cache_control":{"type":"ephemeral"}},{"type":"text","text":"question"}]}]});
+    let req = Generate::parse(M, body, false).unwrap();
+    let v = bedrock::prepare_cached(&req).unwrap();
+    assert_eq!(
+        v["system"][1],
+        json!({"cachePoint":{"type":"default","ttl":"1h"}})
+    );
+    assert_eq!(v["toolConfig"]["tools"][1]["cachePoint"]["type"], "default");
+    assert_eq!(
+        v["messages"][0]["content"],
+        json!([{"text":"reference"},{"cachePoint":{"type":"default"}},{"text":"question"}])
+    );
+    assert!(bedrock::prepare(&req).is_err());
+}
+
+#[test]
+fn affinity_is_tenant_scoped_and_header_is_bounded_and_unambiguous() {
+    use http::{HeaderMap, HeaderValue};
+    use nexus_relay::protocol::{cache, request::cache_key_header};
+    use uuid::Uuid;
+    let org = Uuid::new_v4();
+    let other = Uuid::new_v4();
+    let model = Uuid::new_v4();
+    let b = json!({"input":"hello","prompt_cache_key":"shared"});
+    assert_ne!(
+        cache::affinity(org, model, R, &b, None, true),
+        cache::affinity(other, model, R, &b, None, true)
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert("x-nexus-cache-key", HeaderValue::from_static("client-key"));
+    assert_eq!(
+        cache_key_header(&headers).unwrap().as_deref(),
+        Some("client-key")
+    );
+    headers.append("x-nexus-cache-key", HeaderValue::from_static("second"));
+    assert!(cache_key_header(&headers).is_err());
+    assert!(!cache::valid_key(&"x".repeat(257)));
+}
+
+#[test]
+fn text_breakpoints_remain_on_the_same_part_across_protocols() {
+    use nexus_relay::protocol::cache;
+    let src = json!({"max_tokens":8,"messages":[{"role":"user","content":[
+        {"type":"text","text":"long reference","cache_control":{"type":"ephemeral"}},
+        {"type":"text","text":"changes every turn"}]}]});
+    let r = cache::to_responses(&src).unwrap();
+    let parts = r["input"][0]["content"].as_array().unwrap();
+    assert_eq!(parts[0]["prompt_cache_breakpoint"]["mode"], "explicit");
+    assert!(parts[1].get("prompt_cache_breakpoint").is_none());
+    let back = cache::to_messages(&r).unwrap();
+    assert_eq!(back["messages"], src["messages"]);
+    assert!(back.get("cache_control").is_none());
+    let mut invalid = src.clone();
+    invalid["messages"][0]["content"][0]["cache_control"]["ttl"] = "1h".into();
+    assert!(cache::to_responses(&invalid).is_err());
+    invalid["messages"][0]["content"][0]["cache_control"]["ttl"] = "5m".into();
+    assert!(cache::to_responses(&invalid).is_err());
+}
+
+#[test]
+fn shared_templates_reuse_placement_without_requiring_a_conversation_id() {
+    use nexus_relay::protocol::cache;
+    use uuid::Uuid;
+    let org = Uuid::new_v4();
+    let model = Uuid::new_v4();
+    let stable = "shared runbook ".repeat(180);
+    let a = json!({"instructions":stable,"input":"one question"});
+    let b = json!({"instructions":stable,"input":"different question"});
+    assert_eq!(
+        cache::affinity(org, model, R, &a, None, true),
+        cache::affinity(org, model, R, &b, None, true)
+    );
+    assert!(cache::affinity(org, model, R, &a, None, false).is_none());
+    assert_ne!(
+        cache::affinity(org, model, R, &a, Some("a"), true),
+        cache::affinity(org, model, R, &a, Some("b"), true)
+    );
+}
+
+#[test]
+fn cached_tool_result_keeps_the_call_id_and_endpoint_of_the_cached_history() {
+    use nexus_relay::protocol::cache;
+    let src = json!({"max_tokens":16,"messages":[{"role":"user","content":"lookup"},
+        {"role":"assistant","content":[{"type":"tool_use","name":"f","id":"call","input":{}}]},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"call","content":"answer","cache_control":{"type":"ephemeral"}},{"type":"text","text":"next"}]}]});
+    let response = cache::to_responses(&src).unwrap();
+    assert_eq!(response["input"][2]["call_id"], "call");
+    assert_eq!(
+        response["input"][2]["output"][0]["prompt_cache_breakpoint"]["mode"],
+        "explicit"
+    );
+    let back = cache::to_messages(&response).unwrap();
+    assert_eq!(back["messages"][2]["content"][0]["tool_use_id"], "call");
+    assert_eq!(
+        back["messages"][2]["content"][0]["cache_control"]["type"],
+        "ephemeral"
+    );
+    assert_eq!(
+        back["messages"][2]["content"][1],
+        src["messages"][2]["content"][1]
+    );
+}
+
+#[test]
+fn bedrock_cached_request_validation_rejects_non_message_elements() {
+    use nexus_relay::{bedrock, protocol::request::Generate};
+    for invalid in [json!(42), json!(null), json!({}), json!({"role":"user"})] {
+        let req = Generate::parse(
+            M,
+            json!({"model":"m","max_tokens":1,"messages":[invalid]}),
+            false,
+        )
+        .unwrap();
+        assert!(bedrock::prepare_cached(&req).is_err());
+    }
+}

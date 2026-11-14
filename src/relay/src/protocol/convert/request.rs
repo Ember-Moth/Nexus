@@ -70,9 +70,53 @@ fn plain_text(v: &Value, kind: &str) -> Result<Vec<String>> {
 }
 
 pub fn convert(source: Endpoint, body: &Value) -> Result<Value> {
+    translate(source, body, false)
+}
+
+pub(crate) fn convert_cached(source: Endpoint, body: &Value) -> Result<Value> {
+    translate(source, body, true)
+}
+
+// Tool results with block-level cache hints need their block boundaries preserved.
+fn result_parts(
+    source: Endpoint,
+    parts: &Value,
+    cache: bool,
+    marks: &mut usize,
+) -> Result<Vec<Value>> {
+    let (from, to, hint) = match source {
+        Endpoint::AnthropicMessages => ("text", "input_text", "cache_control"),
+        Endpoint::OpenaiResponses => ("input_text", "text", "prompt_cache_breakpoint"),
+    };
+    array(parts, "tool result content")?
+        .iter()
+        .map(|part| {
+            if cache {
+                fields(part, &["type", "text", "annotations", hint])?;
+            } else {
+                fields(part, &["type", "text", "annotations"])?;
+            }
+            if part["type"] != from
+                || part
+                    .get("annotations")
+                    .is_some_and(|a| !a.is_null() && a.as_array().is_none_or(|v| !v.is_empty()))
+            {
+                return Err(ProtocolError::Unsupported("nonportable tool result"));
+            }
+            let mut out = json!({"type":to,"text":text(part,"text")?});
+            if cache {
+                crate::protocol::cache::text_breakpoint(source, part, &mut out)?;
+                *marks += usize::from(part.get(hint).is_some());
+            }
+            Ok(out)
+        })
+        .collect()
+}
+
+fn translate(source: Endpoint, body: &Value, cache: bool) -> Result<Value> {
     let mut out = match source {
-        Endpoint::AnthropicMessages => messages(body)?,
-        Endpoint::OpenaiResponses => responses(body)?,
+        Endpoint::AnthropicMessages => messages(body, cache)?,
+        Endpoint::OpenaiResponses => responses(body, cache)?,
     };
     if let Some(stream) = body.get("stream") {
         out["stream"] = stream.clone();
@@ -93,7 +137,7 @@ pub fn convert(source: Endpoint, body: &Value) -> Result<Value> {
     Ok(out)
 }
 
-fn messages(body: &Value) -> Result<Value> {
+fn messages(body: &Value, cache: bool) -> Result<Value> {
     fields(
         body,
         &[
@@ -107,8 +151,16 @@ fn messages(body: &Value) -> Result<Value> {
             "temperature",
             "top_p",
             "stop_sequences",
+            "cache_control",
         ],
     )?;
+    let automatic = body.get("cache_control");
+    if let Some(marker) = automatic {
+        if !cache {
+            return Err(ProtocolError::Unsupported("cache_control"));
+        }
+        crate::protocol::cache::check_marker(marker, Endpoint::AnthropicMessages)?;
+    }
     if body
         .get("stop_sequences")
         .is_some_and(|v| v.as_array().is_none_or(|a| !a.is_empty()))
@@ -123,10 +175,34 @@ fn messages(body: &Value) -> Result<Value> {
         return Err(ProtocolError::Unsupported("assistant prefill"));
     }
     let mut out = json!({"store":false});
-    if let Some(system) = body.get("system") {
-        out["instructions"] = plain_text(system, "text")?.join("\n\n").into();
-    }
     let mut input = Vec::new();
+    let mut marks = 0;
+    if let Some(system) = body.get("system") {
+        if cache
+            && system
+                .as_array()
+                .is_some_and(|a| a.iter().any(|b| b.get("cache_control").is_some()))
+        {
+            let mut content = Vec::new();
+            for part in array(system, "system")? {
+                fields(part, &["type", "text", "cache_control"])?;
+                if part["type"] != "text" {
+                    return Err(ProtocolError::Unsupported("system block"));
+                }
+                let mut block = json!({"type":"input_text","text":text(part,"text")?});
+                crate::protocol::cache::text_breakpoint(
+                    Endpoint::AnthropicMessages,
+                    part,
+                    &mut block,
+                )?;
+                marks += usize::from(part.get("cache_control").is_some());
+                content.push(block);
+            }
+            input.push(json!({"role":"developer","content":content}));
+        } else {
+            out["instructions"] = plain_text(system, "text")?.join("\n\n").into();
+        }
+    }
     let mut calls = Calls::default();
     for m in array(&body["messages"], "messages")? {
         fields(m, &["role", "content"])?;
@@ -149,12 +225,28 @@ fn messages(body: &Value) -> Result<Value> {
         let mut text_parts = Vec::new();
         for p in parts {
             if p["type"] == "text" {
-                fields(p, &["type", "text"])?;
+                fields(
+                    p,
+                    if cache {
+                        &["type", "text", "cache_control"][..]
+                    } else {
+                        &["type", "text"]
+                    },
+                )?;
                 if role == "user" {
                     calls.resolved()?;
                 }
                 // EasyInputMessage accepts input_text for explicit user and assistant history.
-                text_parts.push(json!({"type":"input_text","text":text(p,"text")?}));
+                let mut part = json!({"type":"input_text","text":text(p,"text")?});
+                if cache {
+                    crate::protocol::cache::text_breakpoint(
+                        Endpoint::AnthropicMessages,
+                        p,
+                        &mut part,
+                    )?;
+                    marks += usize::from(p.get("cache_control").is_some());
+                }
+                text_parts.push(part);
                 continue;
             }
             if !text_parts.is_empty() {
@@ -176,20 +268,52 @@ fn messages(body: &Value) -> Result<Value> {
                     input.push(json!({"type":"function_call","call_id":p["id"],"name":id(p,"name")?,"arguments":p["input"].to_string()}));
                 }
                 ("user", Some("tool_result")) => {
-                    fields(p, &["type", "tool_use_id", "content", "is_error"])?;
+                    fields(
+                        p,
+                        if cache {
+                            &[
+                                "type",
+                                "tool_use_id",
+                                "content",
+                                "is_error",
+                                "cache_control",
+                            ][..]
+                        } else {
+                            &["type", "tool_use_id", "content", "is_error"]
+                        },
+                    )?;
                     if p.get("is_error").is_some_and(|v| v != false) {
                         return Err(ProtocolError::Unsupported("tool result error flag"));
                     }
                     calls.result(id(p, "tool_use_id")?)?;
-                    let output = if let Some(s) = p["content"].as_str() {
-                        json!(s)
+                    let boundary = p.get("cache_control");
+                    let output = if p["content"].is_string() && boundary.is_none() {
+                        p["content"].clone()
                     } else {
-                        json!(
-                            plain_text(&p["content"], "text")?
-                                .into_iter()
-                                .map(|s| json!({"type":"input_text","text":s}))
-                                .collect::<Vec<_>>()
-                        )
+                        let mut parts = if let Some(value) = p["content"].as_str() {
+                            vec![json!({"type":"input_text","text":value})]
+                        } else {
+                            result_parts(
+                                Endpoint::AnthropicMessages,
+                                &p["content"],
+                                cache,
+                                &mut marks,
+                            )?
+                        };
+                        if boundary.is_some() {
+                            let last = parts
+                                .last_mut()
+                                .ok_or(ProtocolError::Unsupported("empty cache breakpoint"))?;
+                            if last.get("prompt_cache_breakpoint").is_none() {
+                                marks += 1;
+                            }
+                            crate::protocol::cache::text_breakpoint(
+                                Endpoint::AnthropicMessages,
+                                p,
+                                last,
+                            )?;
+                        }
+                        Value::Array(parts)
                     };
                     input.push(json!({"type":"function_call_output","call_id":p["tool_use_id"],"output":output}));
                 }
@@ -201,11 +325,20 @@ fn messages(body: &Value) -> Result<Value> {
         }
     }
     calls.resolved()?;
+    if cache {
+        if marks + usize::from(automatic.is_some()) > 4 {
+            return Err(ProtocolError::Invalid("cache breakpoint count"));
+        }
+        if marks > 0 || automatic.is_some() {
+            out["prompt_cache_options"] =
+                json!({"mode":if automatic.is_some() {"implicit"} else {"explicit"}});
+        }
+    }
     out["input"] = input.into();
     Ok(out)
 }
 
-fn responses(body: &Value) -> Result<Value> {
+fn responses(body: &Value, cache: bool) -> Result<Value> {
     fields(
         body,
         &[
@@ -222,8 +355,32 @@ fn responses(body: &Value) -> Result<Value> {
             "store",
             "background",
             "previous_response_id",
+            "prompt_cache_options",
+            "prompt_cache_key",
         ],
     )?;
+    let opts = body.get("prompt_cache_options");
+    if !cache && (opts.is_some() || body.get("prompt_cache_key").is_some()) {
+        return Err(ProtocolError::Unsupported("Responses cache options"));
+    }
+    if body.get("prompt_cache_key").is_some_and(|v| {
+        v.as_str()
+            .is_none_or(|s| !crate::protocol::cache::valid_key(s))
+    }) {
+        return Err(ProtocolError::Invalid("prompt_cache_key"));
+    }
+    if let Some(v) = opts {
+        fields(v, &["mode", "ttl"])?;
+        if v.get("ttl").is_some()
+            || v.get("mode")
+                .is_some_and(|v| v != "implicit" && v != "explicit")
+        {
+            return Err(ProtocolError::Unsupported("nonportable cache options"));
+        }
+    }
+    let automatic = cache && opts.is_none_or(|v| v["mode"] != "explicit");
+    let mut marks = 0;
+    let mut marked_system = None;
     let mut out = json!({});
     let mut system = Vec::new();
     if let Some(s) = body.get("instructions") {
@@ -264,10 +421,34 @@ fn responses(body: &Value) -> Result<Value> {
                         calls.resolved()?;
                     }
                     if matches!(role, "system" | "developer") {
-                        if !msgs.is_empty() || !system.is_empty() {
+                        if !msgs.is_empty() || !system.is_empty() || marked_system.is_some() {
                             return Err(ProtocolError::Unsupported("instruction hierarchy"));
                         }
-                        system.extend(plain_text(&item["content"], "input_text")?);
+                        if cache
+                            && item["content"].as_array().is_some_and(|a| {
+                                a.iter().any(|p| p.get("prompt_cache_breakpoint").is_some())
+                            })
+                        {
+                            let mut blocks = Vec::new();
+                            for p in array(&item["content"], "developer content")? {
+                                fields(p, &["type", "text", "prompt_cache_breakpoint"])?;
+                                if p["type"] != "input_text" {
+                                    return Err(ProtocolError::Unsupported("developer content"));
+                                }
+                                let mut block = json!({"type":"text","text":text(p,"text")?});
+                                crate::protocol::cache::text_breakpoint(
+                                    Endpoint::OpenaiResponses,
+                                    p,
+                                    &mut block,
+                                )?;
+                                marks += usize::from(p.get("prompt_cache_breakpoint").is_some());
+                                blocks.push(block);
+                            }
+                            marked_system = Some(blocks);
+                        } else {
+                            system.extend(plain_text(&item["content"], "input_text")?);
+                        }
+
                         continue;
                     }
                     if !matches!(role, "assistant" | "user") {
@@ -281,7 +462,20 @@ fn responses(body: &Value) -> Result<Value> {
                             return Err(ProtocolError::Invalid("empty content"));
                         }
                         for part in parts {
-                            fields(part, &["type", "text", "annotations", "logprobs"])?;
+                            fields(
+                                part,
+                                if cache {
+                                    &[
+                                        "type",
+                                        "text",
+                                        "annotations",
+                                        "logprobs",
+                                        "prompt_cache_breakpoint",
+                                    ][..]
+                                } else {
+                                    &["type", "text", "annotations", "logprobs"]
+                                },
+                            )?;
                             if !(part["type"] == "input_text"
                                 || role == "assistant" && part["type"] == "output_text")
                                 || ["annotations", "logprobs"].iter().any(|k| {
@@ -292,11 +486,16 @@ fn responses(body: &Value) -> Result<Value> {
                             {
                                 return Err(ProtocolError::Unsupported("nonportable content"));
                             }
-                            message_block(
-                                &mut msgs,
-                                role,
-                                json!({"type":"text","text":text(part,"text")?}),
-                            );
+                            let mut block = json!({"type":"text","text":text(part,"text")?});
+                            if cache {
+                                crate::protocol::cache::text_breakpoint(
+                                    Endpoint::OpenaiResponses,
+                                    part,
+                                    &mut block,
+                                )?;
+                                marks += usize::from(part.get("prompt_cache_breakpoint").is_some());
+                            }
+                            message_block(&mut msgs, role, block);
                         }
                     }
                 }
@@ -315,21 +514,31 @@ fn responses(body: &Value) -> Result<Value> {
                 Some("function_call_output") => {
                     fields(item, &["type", "id", "call_id", "output", "status"])?;
                     calls.result(id(item, "call_id")?)?;
-                    let content = if let Some(s) = item["output"].as_str() {
+                    let mut block = json!({"type":"tool_result","tool_use_id":item["call_id"]});
+                    block["content"] = if let Some(s) = item["output"].as_str() {
                         json!(s)
                     } else {
-                        json!(
-                            plain_text(&item["output"], "input_text")?
-                                .into_iter()
-                                .map(|s| json!({"type":"text","text":s}))
-                                .collect::<Vec<_>>()
-                        )
+                        let mut parts = result_parts(
+                            Endpoint::OpenaiResponses,
+                            &item["output"],
+                            cache,
+                            &mut marks,
+                        )?;
+                        // Messages can express the result boundary on the outer tool_result.
+                        if let Some(last) = parts.last_mut()
+                            && let Some(marker) =
+                                last.as_object_mut().unwrap().remove("cache_control")
+                        {
+                            block["cache_control"] = marker;
+                        }
+                        if parts.iter().any(|v| v.get("cache_control").is_some()) {
+                            return Err(ProtocolError::Unsupported(
+                                "cache breakpoint inside tool result",
+                            ));
+                        }
+                        Value::Array(parts)
                     };
-                    message_block(
-                        &mut msgs,
-                        "user",
-                        json!({"type":"tool_result","tool_use_id":item["call_id"],"content":content}),
-                    );
+                    message_block(&mut msgs, "user", block);
                 }
                 _ => return Err(ProtocolError::Unsupported("nonportable input item")),
             }
@@ -344,6 +553,15 @@ fn responses(body: &Value) -> Result<Value> {
     }
     if !system.is_empty() {
         out["system"] = system.join("\n\n").into();
+    }
+    if let Some(blocks) = marked_system {
+        out["system"] = blocks.into();
+    }
+    if marks + usize::from(automatic) > 4 {
+        return Err(ProtocolError::Unsupported("too many cache breakpoints"));
+    }
+    if automatic {
+        out["cache_control"] = json!({"type":"ephemeral"});
     }
     out["messages"] = msgs.into();
     Ok(out)

@@ -16,11 +16,12 @@ pytestmark = pytest.mark.integration
 UPSTREAM_SECRET = "provider-secret-do-not-echo"
 
 
-async def make_model(client, root, name, protocols=None):
+async def make_model(client, root, name, protocols=None, *, dimensions=None):
     response = await client.post(
         "/api/v1/models",
         headers=auth(root),
         json={
+            **({"token_dimensions": list(dimensions)} if dimensions else {}),
             "public_name": name,
             "display_name": name,
             "protocols": protocols or ["openai_compatible"],

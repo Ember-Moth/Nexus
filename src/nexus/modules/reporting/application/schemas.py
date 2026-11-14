@@ -157,6 +157,17 @@ class LedgerRecord(View):
     model_id: UUID | None
 
 
+class CacheUsage(View):
+    deployment_id: UUID
+    model_id: UUID
+    attempts: int
+    metered_attempts: int
+    cache_hit_attempts: int
+    input_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+
+
 class UsageBucket(View):
     group: str
     requests: int

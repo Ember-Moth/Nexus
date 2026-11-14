@@ -7,12 +7,13 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::{ControlError, credential::CredentialRef, database::Snapshot};
-use crate::protocol::{Endpoint, request::Generate, tokens::ReservationBounds};
+use crate::protocol::{Endpoint, cache, request::Generate, tokens::ReservationBounds};
 
 pub const CAPABILITIES: &[&str] = &[
     "reservation.v1",
     "usage-events.v1",
     "relay.native.v1",
+    "relay.prompt-cache.v1",
     "relay.bedrock-converse.v1",
     "relay.sse.v1",
     "relay.responses-ws.v1",
@@ -97,6 +98,8 @@ struct Model {
     max_input_tokens: u32,
     max_output_tokens: u32,
     capabilities: ModelCapabilities,
+    #[serde(default)]
+    token_dimensions: Vec<String>,
 }
 #[derive(Deserialize)]
 struct ModelCapabilities {
@@ -170,6 +173,8 @@ impl From<Endpoint> for UpstreamProtocol {
 
 #[derive(Deserialize)]
 struct Profile {
+    #[serde(default)]
+    auto_prompt_cache: bool,
     convert_from: Option<Endpoint>,
     #[serde(default)]
     streaming: bool,
@@ -311,7 +316,11 @@ impl Index {
             unique(
                 &mut models,
                 model.id,
-                (model.max_input_tokens, model.max_output_tokens),
+                (
+                    model.max_input_tokens,
+                    model.max_output_tokens,
+                    model.token_dimensions.clone(),
+                ),
             )?;
         }
         for m in r.models {
@@ -333,7 +342,7 @@ impl Index {
             unique(&mut index.credentials, c.credential_id, c)?;
         }
         for d in r.deployments {
-            let (inputs, outputs) = models
+            let (inputs, outputs, dimensions) = models
                 .get(&d.model_id)
                 .ok_or(ControlError::Invalid("deployment model"))?;
             if !index
@@ -350,6 +359,23 @@ impl Index {
                 return Err(ControlError::Invalid("deployment binding"));
             }
             if let Some(p) = &d.relay_profile {
+                if p.auto_prompt_cache {
+                    let write_dim = if p.endpoint == UpstreamProtocol::OpenaiResponses {
+                        "input_cache_write_30m_tokens"
+                    } else {
+                        "input_cache_write_5m_tokens"
+                    };
+                    if !snapshot
+                        .required_capabilities
+                        .iter()
+                        .any(|c| c == "relay.prompt-cache.v1")
+                        || ![write_dim, "input_cache_read_tokens"]
+                            .iter()
+                            .all(|d| dimensions.iter().any(|v| v == d))
+                    {
+                        return Err(ControlError::Invalid("prompt cache configuration"));
+                    }
+                }
                 let family = match p.endpoint {
                     UpstreamProtocol::BedrockConverse => "aws_bedrock",
                     UpstreamProtocol::AnthropicMessages => "anthropic",
@@ -515,6 +541,30 @@ impl Index {
         let mut bedrock_body = None;
         let mut incompatible = false;
         let mut best = u32::MAX;
+        let cache_enabled = route.iter().any(|c| {
+            self.deployments[&c.deployment_id]
+                .relay_profile
+                .as_ref()
+                .is_some_and(|p| p.auto_prompt_cache)
+        });
+        let keyed = request.affinity_key().is_some()
+            || (request.endpoint == Endpoint::OpenaiResponses
+                && request.body().get("prompt_cache_key").is_some());
+        let affinity = if cache_enabled || keyed {
+            cache::affinity(
+                key.organization_id,
+                m.id,
+                request.endpoint,
+                request.body(),
+                request.affinity_key(),
+                cache_enabled,
+            )
+        } else {
+            None
+        };
+        let mut best_score = f64::INFINITY;
+        let mut cache_conversion = None;
+        let mut cache_bedrock = None;
         let mut weight = 0;
         for candidate in route {
             let dep = &self.deployments[&candidate.deployment_id];
@@ -544,24 +594,56 @@ impl Index {
             {
                 continue;
             }
-            if profile.endpoint == UpstreamProtocol::BedrockConverse
-                && bedrock_body
-                    .get_or_insert_with(|| crate::bedrock::prepare(request))
-                    .is_err()
+            if profile.auto_prompt_cache
+                && request.endpoint == Endpoint::OpenaiResponses
+                && request
+                    .body()
+                    .get("prompt_cache_key")
+                    .is_some_and(|v| v.as_str().is_none_or(|s| !cache::valid_key(s)))
             {
                 incompatible = true;
                 continue;
             }
-            if cross && conversion.get_or_insert_with(|| request.convert()).is_err() {
+            let prepared = if profile.endpoint == UpstreamProtocol::BedrockConverse {
+                Some(if profile.auto_prompt_cache {
+                    cache_bedrock.get_or_insert_with(|| crate::bedrock::prepare_cached(request))
+                } else {
+                    bedrock_body.get_or_insert_with(|| crate::bedrock::prepare(request))
+                })
+            } else if cross {
+                Some(if profile.auto_prompt_cache {
+                    cache_conversion.get_or_insert_with(|| match request.endpoint {
+                        Endpoint::AnthropicMessages => cache::to_responses(request.body()),
+                        Endpoint::OpenaiResponses => cache::to_messages(request.body()),
+                    })
+                } else {
+                    conversion.get_or_insert_with(|| request.convert())
+                })
+            } else {
+                None
+            };
+            if prepared.is_some_and(|r| r.is_err()) {
                 incompatible = true;
                 continue;
             }
             if candidate.priority < best {
                 best = candidate.priority;
                 weight = 0;
+                best_score = f64::INFINITY;
             }
-            weight += u64::from(candidate.weight);
-            if rand::thread_rng().gen_range(0..weight) < u64::from(candidate.weight) {
+            let take = if let Some(seed) = affinity {
+                let score = cache::score(&seed, dep.id, candidate.weight);
+                if score < best_score {
+                    best_score = score;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                weight += u64::from(candidate.weight);
+                rand::thread_rng().gen_range(0..weight) < u64::from(candidate.weight)
+            };
+            if take {
                 selected = Some((dep, profile));
             }
         }
@@ -572,10 +654,14 @@ impl Index {
         })?;
         // A later attempt sends exactly the output limit already reserved for this request.
         let requested = retry.map_or(request.requested_output, |(_, frozen)| Some(frozen.outputs));
-        let (body, bounds) = if p.endpoint == UpstreamProtocol::BedrockConverse {
-            let mut body = bedrock_body
-                .and_then(Result::ok)
-                .ok_or(Rejection::Unsupported)?;
+        let (mut body, bounds) = if p.endpoint == UpstreamProtocol::BedrockConverse {
+            let mut body = (if p.auto_prompt_cache {
+                cache_bedrock
+            } else {
+                bedrock_body
+            })
+            .and_then(Result::ok)
+            .ok_or(Rejection::Unsupported)?;
             let bounds =
                 ReservationBounds::for_deployment(p.input_ceiling, p.output_ceiling, requested)
                     .map_err(|_| Rejection::Unsupported)?;
@@ -591,9 +677,13 @@ impl Index {
                 )
                 .map_err(|_| Rejection::Unsupported)?
         } else {
-            let mut body = conversion
-                .and_then(Result::ok)
-                .ok_or(Rejection::Unsupported)?;
+            let mut body = (if p.auto_prompt_cache {
+                cache_conversion
+            } else {
+                conversion
+            })
+            .and_then(Result::ok)
+            .ok_or(Rejection::Unsupported)?;
             let bounds =
                 ReservationBounds::for_deployment(p.input_ceiling, p.output_ceiling, requested)
                     .map_err(|_| Rejection::Unsupported)?;
@@ -604,6 +694,27 @@ impl Index {
             }] = bounds.outputs.into();
             (body, bounds)
         };
+        if p.auto_prompt_cache {
+            match p.endpoint {
+                UpstreamProtocol::OpenaiResponses => {
+                    if body.get("prompt_cache_key").is_none() {
+                        if let Some(seed) = affinity {
+                            body["prompt_cache_key"] = cache::provider_key(seed).into();
+                        }
+                    } else if let Some(value) = body["prompt_cache_key"].as_str() {
+                        body["prompt_cache_key"] =
+                            cache::scoped_key(key.organization_id, m.id, value).into();
+                    }
+                }
+                UpstreamProtocol::AnthropicMessages
+                    if request.endpoint == Endpoint::AnthropicMessages
+                        && !cache::has_messages_breakpoint(&body) =>
+                {
+                    body["cache_control"] = serde_json::json!({"type":"ephemeral"});
+                }
+                _ => {}
+            }
+        }
         let selection = Selection {
             upstream: p.endpoint,
             deployment: dep,

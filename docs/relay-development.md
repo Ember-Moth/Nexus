@@ -48,6 +48,22 @@ Messages 和 Responses 的 HTTP 请求通过 Bedrock `Converse` 转发，`stream
 
 运行 `uv run python scripts/run_integration.py -q tests/integration/test_bedrock_relay.py` 可验证两种入口、两种鉴权、普通及流式响应、异常流和 Worker 账本。该用例使用隔离 PostgreSQL、Redis 及本地 HTTPS 上游。
 
+## 提高上游提示词缓存复用率
+
+同一个多轮工作流可在 HTTP POST 或 Responses WebSocket 握手中携带 `X-Nexus-Cache-Key`，例如 `support-session-73`。使用稳定的不透明值，最多 256 字节。重复或无效的头返回 400。Relay 对通过鉴权和能力筛选的同优先级候选使用带权 rendezvous 选路，并沿用原有故障转移和预留上限。该头仅用于 Relay 选路。Responses 请求也可使用 `prompt_cache_key`。已有部署在没有提示时继续按权重随机分流。
+
+要在部署上自动优化，先为公开模型配置缓存读和目标上游的写入维度，并分别发布匹配的销售价和部署成本价。向节点注册能力加入 `relay.prompt-cache.v1`，在现有部署的 `relay_profile` 中加上 `"auto_prompt_cache": true` 后发布快照。开关默认关闭。按实际部署支持的模型、断点位置和 TTL 开启。对于新请求，路由若含已启用的候选，优先使用显式工作流键；无键时，对至少 1024 个序列化字节的系统指令及工具模板计算摘要，否则使用第一条用户消息。这里的字节门槛仅用于选择路由依据，模型自行判定可缓存 token 数。显式工作流键适合为高流量公共模板分摊负载。路由摘要按组织和模型隔离，进程不保存对话或缓存键，缓存读取以供应商回执为准。
+
+| 启用后的实际部署 | 发送给上游的缓存提示 |
+| --- | --- |
+| Anthropic Messages | 原生请求保留客户断点；无断点时使用顶层 `cache_control`。来自 Responses 的隐式模式使用同一机制，显式文本断点映射到对应内容块，工具结果尾部的断点映射到对应的 tool_result。显式模式没有断点时不添加自动标记。 |
+| OpenAI Responses | 生成租户与模型范围内的 `prompt_cache_key`。既有原生键在该范围内稳定映射，原生 `prompt_cache_options` 保留。来自 Messages 的自动缓存映射到隐式模式，系统和消息文本块断点映射到相同位置；系统指令通过首条 developer 消息表达显式断点。 |
+| Bedrock Converse | 用 `cachePoint` 标记消息尾部，或在客户端指定的系统、工具和消息内容块后放置检查点。仅在已确认该模型支持相应位置时启用。 |
+
+跨协议时，未指定 TTL 的缓存标记使用目标上游默认时长，Messages 为 5 分钟，支持新版缓存模式的 Responses 为 30 分钟。客户显式指定的 TTL 在两种协议间没有相同档位，转换会在预留前拒绝；工具定义断点等不能映射的位置同样拒绝。Bedrock 支持相同 TTL 的标记时原样保留。消息顺序、工具列表顺序和工具 ID 保持原有转换语义。[OpenAI 缓存](https://developers.openai.com/api/docs/guides/prompt-caching) · [Claude 缓存](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) · [Bedrock 检查点](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)
+
+平台财务可用 `GET /api/v1/organizations/{org}/cache-usage` 按组织、时间、模型、项目和 API Key 筛选，结果按模型与部署分组。输入 token 命中率用所有选定行的 `sum(cache_read_tokens) / sum(input_tokens)`，请求尝试命中率用 `sum(cache_hit_attempts) / sum(metered_attempts)`。分母为零表示没有可计算的样本。对比 `metered_attempts / attempts` 可判断计量覆盖度；等待 Worker 处理或需要核对的尝试不会被误计为缓存未命中。按不同方案回放相同的多轮流量，同时比较写缓存量、每次完成任务的实际费用和首 token 延迟。
+
 ## 启用 HTTP 和 SSE 协议转换
 
 `relay_profile.endpoint` 始终是部署的真实上游协议。`convert_from` 可省略，省略时只接受原生请求。要让同一部署额外服务另一种客户端，在部署上设置下表对应的值，登记集群节点能力，然后发布新修订。移除 `convert_from` 并发布新修订即可关闭该方向。

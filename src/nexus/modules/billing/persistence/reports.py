@@ -218,6 +218,43 @@ class BillingReports:
             "time_basis": at,
         }
 
+    async def cache_usage(self, org, projects, filters):
+        conditions, values = predicates(org, projects, filters)
+        time = "r.settled_at" if filters["time_basis"] == "posted_at" else "a.created_at"
+        window(conditions, values, time, filters)
+        # One normalized fact per completed attempt; count unmappable, pending and
+        # absent receipts separately from measured misses. Corrections are not cache evidence.
+        sql = (
+            """
+            WITH attempts AS (
+                SELECT a.deployment_id,r.model_id,n.quantities q
+                FROM billing.request_runs r JOIN billing.request_attempts a ON a.request_id=r.id
+                LEFT JOIN billing.normalized_usage n ON n.attempt_id=a.id
+                AND n.review_reason IS NULL
+                WHERE a.expected_usage_format IN
+                ('openai.responses.v1','anthropic.messages.v1','aws.bedrock.converse.v1') AND
+            """
+            + " AND ".join(conditions)
+            + """
+            ), counts AS (
+                SELECT *, coalesce((q->>'input_cache_read_tokens')::bigint,0) AS reads,
+                  coalesce((q->>'input_uncached_tokens')::bigint,0) AS uncached,
+                  coalesce((q->>'input_cache_write_5m_tokens')::bigint,0)
+                  + coalesce((q->>'input_cache_write_1h_tokens')::bigint,0)
+                  + coalesce((q->>'input_cache_write_30m_tokens')::bigint,0)
+                  + coalesce((q->>'input_cache_write_12h_tokens')::bigint,0) AS writes
+                FROM attempts
+            )
+            SELECT deployment_id,model_id,count(*) AS attempts,count(q) AS metered_attempts,
+                   count(*) FILTER (WHERE reads>0) AS cache_hit_attempts,
+                   sum(uncached+reads+writes) AS input_tokens,sum(reads) AS cache_read_tokens,
+                   sum(writes) AS cache_write_tokens
+            FROM counts GROUP BY deployment_id,model_id ORDER BY model_id,deployment_id
+        """
+        )
+        async with self.database.transaction() as session:
+            return (await session.execute(text(sql), values)).mappings().all()
+
     async def metrics(self):
         async with self.database.transaction() as session:
             return dict(

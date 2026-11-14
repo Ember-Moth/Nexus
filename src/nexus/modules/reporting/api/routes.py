@@ -10,6 +10,7 @@ from nexus.shared.errors import ServiceError
 from ..application.schemas import (
     AttemptCostEntry,
     AuditEvent,
+    CacheUsage,
     ChargeRecord,
     ExportJob,
     ExportRequest,
@@ -107,6 +108,10 @@ def create_router(get_service):
         include_cost: bool = False,
     ):
         return await service.usage(token, organization_id, filters, group_by, include_cost)
+
+    @router.get("/organizations/{organization_id}/cache-usage", response_model=list[CacheUsage])
+    async def cache_usage(organization_id: UUID, token: Token, service: Service, filters: Filters):
+        return await service.cache_usage(token, organization_id, filters)
 
     @router.get("/audit-events", response_model=Page[AuditEvent])
     async def audits(

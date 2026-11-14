@@ -30,6 +30,18 @@ fn single_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<&'a s
     Ok(first)
 }
 
+pub fn cache_key_header(headers: &HeaderMap) -> Result<Option<String>, ProtocolError> {
+    let name = "x-nexus-cache-key";
+    if !headers.contains_key(name) {
+        return Ok(None);
+    }
+    let key = single_header(headers, name)?;
+    if !super::cache::valid_key(key) {
+        return Err(ProtocolError::Invalid(name));
+    }
+    Ok(Some(key.to_owned()))
+}
+
 impl Route {
     pub fn key(self, headers: &HeaderMap) -> Result<&str, ProtocolError> {
         let key = match self {
@@ -64,6 +76,7 @@ pub struct Generate {
     pub stream: bool,
     pub requested_output: Option<u32>,
     body: Value,
+    affinity_key: Option<String>,
 }
 
 impl Generate {
@@ -169,8 +182,17 @@ impl Generate {
             endpoint,
             stream,
             requested_output,
+            affinity_key: None,
             body,
         })
+    }
+
+    pub fn set_affinity_key(&mut self, key: Option<String>) {
+        self.affinity_key = key;
+    }
+
+    pub fn affinity_key(&self) -> Option<&str> {
+        self.affinity_key.as_deref()
     }
 
     pub fn has_tools(&self) -> bool {

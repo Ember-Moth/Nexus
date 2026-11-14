@@ -297,13 +297,23 @@ async fn generate(
             Failure(StatusCode::BAD_REQUEST, "invalid_json"),
         );
     };
-    let Ok(request) = Generate::parse(endpoint, json, false) else {
+    let Ok(mut request) = Generate::parse(endpoint, json, false) else {
         return error(
             id,
             endpoint,
             Failure(StatusCode::BAD_REQUEST, "invalid_request"),
         );
     };
+    match crate::protocol::request::cache_key_header(&parts.headers) {
+        Ok(key) => request.set_affinity_key(key),
+        Err(_) => {
+            return error(
+                id,
+                endpoint,
+                Failure(StatusCode::BAD_REQUEST, "invalid_cache_key"),
+            );
+        }
+    }
     if request.stream {
         tally.set_transport(Transport::Sse);
         streaming.0.cancel();

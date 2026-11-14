@@ -168,7 +168,7 @@ class Rate(Schema):
 
 class Prices(Schema):
     currency: Currency
-    rates: dict[str, Rate] = Field(min_length=2, max_length=5)
+    rates: dict[str, Rate] = Field(min_length=2, max_length=7)
     enabled: bool = Field(default=True, strict=True)
 
     @field_validator("rates")

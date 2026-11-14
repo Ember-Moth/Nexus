@@ -99,6 +99,13 @@ pub(super) async fn upgrade(
     headers: HeaderMap,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Response {
+    let Ok(cache_key) = crate::protocol::request::cache_key_header(&headers) else {
+        return error(
+            session_id,
+            EP,
+            Failure(StatusCode::BAD_REQUEST, "invalid_cache_key"),
+        );
+    };
     let Ok(raw) = Route::ResponsesWebSocket.key(&headers) else {
         return error(
             session_id,
@@ -148,7 +155,7 @@ pub(super) async fn upgrade(
         let _slot = slot;
         if let Ok(Ok(socket)) = timeout(Duration::from_secs(10), rx).await {
             info!(session_id = %session_id, "websocket session opened");
-            session(node, socket, raw, stop, session_id).await;
+            session(node, socket, raw, stop, session_id, cache_key).await;
         }
     });
     ws.max_message_size(limit)
@@ -233,6 +240,7 @@ async fn session(
     raw: Zeroizing<String>,
     stop: tokio_util::sync::CancellationToken,
     session_id: Uuid,
+    cache_key: Option<String>,
 ) {
     let (mut sink, mut source) = ws.split();
     let mut state = Conversation::default();
@@ -274,7 +282,7 @@ async fn session(
         let ClientEvent::Create {
             event_id,
             stream_id,
-            request,
+            mut request,
         } = event
         else {
             if let ClientEvent::Cancel {
@@ -296,6 +304,7 @@ async fn session(
             }
             continue;
         };
+        request.set_affinity_key(cache_key.clone());
         // Every turn that ends before its attempt starts counts as rejected.
         let mut tally = RequestTally::new(EP, Transport::Websocket);
         let Some(index) = node.current() else {

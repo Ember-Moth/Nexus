@@ -20,6 +20,8 @@ type Dimension = Literal[
     "input_cache_read_tokens",
     "input_cache_write_5m_tokens",
     "input_cache_write_1h_tokens",
+    "input_cache_write_30m_tokens",
+    "input_cache_write_12h_tokens",
     "output_tokens",
 ]
 
@@ -48,7 +50,7 @@ class ModelCreate(Schema):
     token_dimensions: list[Dimension] = Field(
         default_factory=lambda: ["input_uncached_tokens", "output_tokens"],
         min_length=2,
-        max_length=5,
+        max_length=7,
     )
     max_input_tokens: int = Field(ge=1, le=1_000_000_000, strict=True)
     max_output_tokens: int = Field(ge=1, le=1_000_000_000, strict=True)
@@ -79,7 +81,7 @@ class ModelPatch(Schema):
     display_name: str | None = Field(default=None, min_length=1, max_length=200)
     capabilities: Capabilities | None = None
     protocols: list[ProtocolFamily] | None = Field(default=None, min_length=1, max_length=4)
-    token_dimensions: list[Dimension] | None = Field(default=None, min_length=2, max_length=5)
+    token_dimensions: list[Dimension] | None = Field(default=None, min_length=2, max_length=7)
     max_input_tokens: int | None = Field(default=None, ge=1, le=1_000_000_000, strict=True)
     max_output_tokens: int | None = Field(default=None, ge=1, le=1_000_000_000, strict=True)
     status: Status | None = None
@@ -173,7 +175,18 @@ class CredentialView(Schema):
     created_at: datetime
 
 
+def cache_dimensions(endpoint):
+    # The operator sets rates on the model; the gateway never guesses a write price.
+    write = (
+        "input_cache_write_30m_tokens"
+        if endpoint == "openai_responses"
+        else "input_cache_write_5m_tokens"
+    )
+    return {"input_cache_read_tokens", write}
+
+
 class RelayProfile(Schema):
+    auto_prompt_cache: bool = False
     convert_from: Literal["anthropic_messages", "openai_responses"] | None = None
     endpoint: Literal["anthropic_messages", "openai_responses", "bedrock_converse"]
     transports: list[Literal["http", "websocket"]] = Field(min_length=1, max_length=2)

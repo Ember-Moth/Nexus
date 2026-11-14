@@ -5,7 +5,7 @@ from uuid import uuid4
 from nexus.shared.errors import ServiceError
 
 from .ports import Access, Cipher, Transactions
-from .schemas import DeploymentCreate, ModelCreate, UpstreamCreate
+from .schemas import DeploymentCreate, ModelCreate, UpstreamCreate, cache_dimensions
 
 
 def found(value):
@@ -77,6 +77,14 @@ class CatalogService:
                     "Disable incompatible deployments before changing protocols",
                     409,
                 )
+            if "token_dimensions" in body.model_fields_set:
+                for endpoint in await repo.cache_endpoints(model_id):
+                    if not cache_dimensions(endpoint) <= set(values["token_dimensions"]):
+                        raise ServiceError(
+                            "price_dimensions_mismatch",
+                            "Active caching deployments require cache pricing dimensions",
+                            422,
+                        )
             if body.status:
                 values["status"] = body.status
             result = await repo.update_model(model_id, values, self._cipher.versions)
@@ -234,6 +242,14 @@ class CatalogService:
                 "protocol_mismatch", "Upstream protocol is not supported by the public model", 409
             )
         if profile := values.get("relay_profile"):
+            if profile.get("auto_prompt_cache") and not cache_dimensions(
+                profile["endpoint"]
+            ) <= set(model.token_dimensions):
+                raise ServiceError(
+                    "price_dimensions_mismatch",
+                    "Configure cache read and write dimensions before enabling automatic caching",
+                    422,
+                )
             family = {
                 "openai_responses": "openai_compatible",
                 "anthropic_messages": "anthropic",

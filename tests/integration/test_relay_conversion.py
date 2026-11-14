@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -524,3 +525,161 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
             75,
             rejection_hold + 20,
         )
+
+
+@pytest.mark.parametrize("family", ["anthropic", "openai_compatible"])
+async def test_cache_usage(http, admin, tls, relay_binary, family):  # noqa: F811
+    from test_identity_api import auth
+
+    messages = family == "anthropic"
+    client_is_messages = not messages
+    upstream_bodies = []
+
+    # A deterministic local provider, with an explicit cold write then a read on append.
+    async def provider(reader, writer):
+        try:
+            head = (await reader.readuntil(b"\r\n\r\n")).decode().split("\r\n")
+            fields = {
+                k.lower(): v.strip() for line in head[1:] if line for k, v in [line.split(":", 1)]
+            }
+            req = json.loads(await reader.readexactly(int(fields["content-length"])))
+            assert "x-nexus-cache-key" not in fields
+            answer = output(messages)
+            history = "messages" if messages else "input"
+            previous = upstream_bodies[-1] if upstream_bodies else None
+            enabled = (
+                req.get("cache_control") == {"type": "ephemeral"}
+                if messages
+                else (
+                    req.get("prompt_cache_options") == {"mode": "explicit"}
+                    and req["input"][0]["content"][0].get("prompt_cache_breakpoint")
+                    == {"mode": "explicit"}
+                )
+            )
+            hit = bool(
+                previous
+                and enabled
+                and req[history][: len(previous[history])] == previous[history]
+                and req.get("prompt_cache_key") == previous.get("prompt_cache_key")
+                and req.get("tools") == previous.get("tools")
+            )
+            upstream_bodies.append(req)
+            reads, writes = (2, 0) if hit else (0, 2)
+            answer["usage"] = (
+                {
+                    "input_tokens": 1,
+                    "output_tokens": 2,
+                    "cache_read_input_tokens": reads,
+                    "cache_creation_input_tokens": writes,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": writes,
+                        "ephemeral_1h_input_tokens": 0,
+                    },
+                }
+                if messages
+                else {
+                    "input_tokens": 3,
+                    "output_tokens": 2,
+                    "input_tokens_details": {
+                        "cached_tokens": reads,
+                        "cache_write_tokens": writes,
+                        "cache_write_tokens_details": {
+                            "ttl_30m_tokens": writes,
+                            "ttl_12h_tokens": 0,
+                        },
+                    },
+                }
+            )
+            packet = json.dumps(answer).encode()
+            writer.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                + f"Content-Length: {len(packet)}\r\nConnection: close\r\n\r\n".encode()
+                + packet
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(provider, "127.0.0.1", 0, ssl=tls[0])
+    async with (
+        server,
+        stream_plane(
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            family,
+            convert_from="anthropic_messages" if client_is_messages else "openai_responses",
+            auto_cache=True,
+        ) as (relay, model, key, _, plane),
+    ):
+        body = scenarios(model)[0 if client_is_messages else 1]
+        if client_is_messages:
+            body["system"] = [
+                {"type": "text", "text": "stable rules", "cache_control": {"type": "ephemeral"}}
+            ]
+        else:
+            body["prompt_cache_key"] = "shared-workflow"
+        # An enabled deployment keeps its price dimensions even after later model edits.
+        model_path = "/api/v1/models/" + plane[3]["id"]
+        before = (await http[0].get(model_path, headers=auth(http[1]))).json()
+        rejected = await http[0].patch(
+            model_path,
+            headers=auth(http[1], before["version"]),
+            json={"token_dimensions": ["input_uncached_tokens", "output_tokens"]},
+        )
+        assert (
+            rejected.status_code == 422
+            and rejected.json()["error"]["code"] == "price_dimensions_mismatch"
+        )
+        history = body["messages" if client_is_messages else "input"]
+        hdr = {"x-api-key": key} if client_is_messages else {"Authorization": "Bearer " + key}
+        hdr["X-Nexus-Cache-Key"] = "private-workflow"
+        for i in range(2):
+            if i:
+                history.extend(
+                    [
+                        {"role": "assistant", "content": "answer"},
+                        {"role": "user", "content": "continue"},
+                    ]
+                )
+            reply = await relay.post(
+                "/v1/messages" if client_is_messages else "/v1/responses", headers=hdr, json=body
+            )
+            assert reply.status_code == 200, reply.text
+        if client_is_messages:
+            assert all("ttl" not in b["prompt_cache_options"] for b in upstream_bodies)
+            assert all(len(b["prompt_cache_key"]) == 64 for b in upstream_bodies)
+        assert len(upstream_bodies) == 2
+        org = plane[2]["id"]
+        pending = await http[0].get(
+            f"/api/v1/organizations/{org}/cache-usage", headers=auth(http[1])
+        )
+        assert pending.json()[0]["attempts"] == 2 and pending.json()[0]["metered_attempts"] == 0
+        await wait_events(admin, 4)
+        assert await http[2].state.usage.process() == 2
+        charges = admin.execute(
+            "SELECT charged_amount FROM billing.request_runs ORDER BY charged_amount"
+        ).fetchall()
+        costs = admin.execute(
+            "SELECT cost_amount FROM billing.request_attempts ORDER BY cost_amount"
+        ).fetchall()
+        assert charges == [(Decimal("3.2"),), (Decimal("5.5"),)]
+        assert costs == [(Decimal("1.28"),), (Decimal("2.20"),)]
+        report = await http[0].get(
+            f"/api/v1/organizations/{plane[2]['id']}/cache-usage", headers=auth(http[1])
+        )
+        assert report.status_code == 200, report.text
+        assert report.json() == [
+            {
+                "deployment_id": plane[4]["id"],
+                "model_id": plane[3]["id"],
+                "attempts": 2,
+                "metered_attempts": 2,
+                "cache_hit_attempts": 1,
+                "input_tokens": 6,
+                "cache_read_tokens": 2,
+                "cache_write_tokens": 2,
+            }
+        ]

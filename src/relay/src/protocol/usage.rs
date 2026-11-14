@@ -112,7 +112,11 @@ impl UsageEvidence {
                             .filter(|&n| n <= 1_000_000_000)
                             .ok_or(ProtocolError::Invalid("cache write breakdown"))
                     };
-                    let total = read("ttl_30m_tokens")? + read("ttl_12h_tokens")?;
+                    let short = read("ttl_30m_tokens")?;
+                    let long = read("ttl_12h_tokens")?;
+                    counts.insert("cache_write_30m_tokens", short as u32);
+                    counts.insert("cache_write_12h_tokens", long as u32);
+                    let total = short + long;
                     if counts.get("cache_write_tokens").map(|n| u64::from(*n)) != Some(total) {
                         return Err(ProtocolError::Invalid("cache write breakdown"));
                     }

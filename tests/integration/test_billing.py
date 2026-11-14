@@ -84,13 +84,18 @@ async def post_funding(client, token, org, record, key=None):
     return response.json()
 
 
-async def publish_price(client, root, kind, target, amount="1"):
+async def publish_price(client, root, kind, target, amount="1", *, dimensions=None):
     path = "/api/v1/" + kind + "-price-versions"
     body = {
         "currency": "USD",
         "rates": {
-            dimension: {"unit_price": amount, "unit_quantity": 1}
-            for dimension in ("input_uncached_tokens", "output_tokens")
+            dimension: {
+                "unit_price": amount
+                if not isinstance(dimensions, dict)
+                else str(Decimal(amount) * Decimal(dimensions[dimension])),
+                "unit_quantity": 1,
+            }
+            for dimension in dimensions or ("input_uncached_tokens", "output_tokens")
         },
     }
     body["model_id" if kind == "sale" else "deployment_id"] = target["id"]
@@ -131,14 +136,16 @@ async def setup_wallet(http, amount="100"):
     return org, receiver, record
 
 
-async def setup_model(http, org, protocol="openai_compatible", **upstream_options):
+async def setup_model(
+    http, org, protocol="openai_compatible", *, dimensions=None, **upstream_options
+):
     client, root, _, _ = http
-    model = await make_model(client, root, "billable-model", [protocol])
+    model = await make_model(client, root, "billable-model", [protocol], dimensions=dimensions)
     upstream = await make_upstream(client, root, "Billing upstream", protocol, **upstream_options)
     credential = await make_credential(client, root, upstream)
     deployment = await make_deployment(client, root, model, upstream, credential)
-    sale = await publish_price(client, root, "sale", model)
-    cost = await publish_price(client, root, "cost", deployment, "0.4")
+    sale = await publish_price(client, root, "sale", model, dimensions=dimensions)
+    cost = await publish_price(client, root, "cost", deployment, "0.4", dimensions=dimensions)
     await make_policy(client, root, org, [model["id"]])
     proj = await project(client, root, org, "metered-project")
     sa = await service_account(client, root, org, proj["id"])

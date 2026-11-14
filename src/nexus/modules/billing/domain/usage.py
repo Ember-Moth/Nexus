@@ -21,6 +21,12 @@ def normalize(payload, dimensions, expected_format=None):
     }
     if expected_format in native_rules:
         counts = native_rules[expected_format](raw)
+        for dimension in (
+            ("input_cache_write_5m_tokens", "input_cache_write_1h_tokens")
+            if expected_format == "openai.responses.v1"
+            else ("input_cache_write_30m_tokens", "input_cache_write_12h_tokens")
+        ):
+            counts[dimension] = 0
         if set(dimensions) - counts.keys() or any(
             count for key, count in counts.items() if key not in dimensions
         ):
@@ -76,7 +82,13 @@ def _responses(raw):
     _require(
         raw,
         {"input_tokens", "cached_input_tokens", "output_tokens"},
-        {"total_tokens", "reasoning_tokens", "cache_write_tokens"},
+        {
+            "total_tokens",
+            "reasoning_tokens",
+            "cache_write_tokens",
+            "cache_write_30m_tokens",
+            "cache_write_12h_tokens",
+        },
     )
     inputs, cached, outputs = raw["input_tokens"], raw["cached_input_tokens"], raw["output_tokens"]
     if (
@@ -85,10 +97,16 @@ def _responses(raw):
         or ("total_tokens" in raw and raw["total_tokens"] != inputs + outputs)
     ):
         raise ValueError("overlapping_token_counts")
-    if raw.get("cache_write_tokens", 0):
-        raise ValueError("unsupported_usage_fields")
+    created = raw.get("cache_write_tokens", 0)
+    if created and not {"cache_write_30m_tokens", "cache_write_12h_tokens"} <= raw.keys():
+        raise ValueError("missing_cache_counter")
+    short, long = raw.get("cache_write_30m_tokens", 0), raw.get("cache_write_12h_tokens", 0)
+    if created != short + long or cached + created > inputs:
+        raise ValueError("overlapping_token_counts")
     return {
-        "input_uncached_tokens": inputs - cached,
+        "input_uncached_tokens": inputs - cached - created,
+        "input_cache_write_30m_tokens": short,
+        "input_cache_write_12h_tokens": long,
         "input_cache_read_tokens": cached,
         "output_tokens": outputs,
     }

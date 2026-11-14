@@ -13,6 +13,7 @@ from ..application.payments.schemas import (
     ChannelPatch,
     ChannelVersionView,
     ChannelView,
+    GatewayTypes,
     NotificationEnvelope,
     PaymentCaseView,
     PaymentCreate,
@@ -40,7 +41,7 @@ def create_router(get_service):
         response.headers["ETag"] = f'"{row.version}"'
         return row
 
-    @router.get("/payment-gateway-types")
+    @router.get("/payment-gateway-types", response_model=GatewayTypes)
     async def types(token: Token, service: Service):
         return await service.gateway_types(token)
 

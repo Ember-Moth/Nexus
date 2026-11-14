@@ -1,11 +1,16 @@
 import base64
+from typing import Annotated
 from uuid import UUID
 
 from nacl.exceptions import CryptoError
 from nacl.public import PublicKey, SealedBox
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from nexus.shared.views import Timestamp, View
+
 CAPABILITIES = ("reservation.v1", "usage-events.v1")
+# Revisions are bigint in SQL and decimal strings in JSON to survive any client's integers.
+Revision = Annotated[str, Field(pattern=r"^[0-9]+$")]
 
 
 class Command(BaseModel):
@@ -52,3 +57,50 @@ class ClusterUpdate(Command):
     @classmethod
     def valid_key(cls, value):
         return Cluster.valid_key(value) if value is not None else None
+
+
+class ClusterView(View):
+    id: UUID
+    name: str
+    region: str
+    organization_ids: list[UUID]
+    deployment_ids: list[UUID]
+    public_key: str = Field(description="Base64 Curve25519 public key")
+    key_version: int
+    active: bool
+    desired_revision: Revision
+    distributed_revision: Revision
+    version: int
+    scope_generation: int
+
+
+class ReleaseAccepted(View):
+    revision: Revision
+    sha256: str
+
+
+class ReleaseDelivery(View):
+    attempts: int
+    delivered_at: Timestamp | None
+
+
+class NodeAck(View):
+    revision: Revision
+    applied: bool
+    error_code: str | None
+
+
+class NodeStatus(View):
+    node_id: UUID
+    active: bool
+    applied_revision: Revision
+    last_ack: NodeAck | None
+
+
+class ReleaseStatus(View):
+    revision: Revision
+    sha256: str
+    desired_revision: Revision
+    distributed_revision: Revision
+    distribution: ReleaseDelivery
+    nodes: list[NodeStatus]

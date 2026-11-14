@@ -1,0 +1,44 @@
+"""Wire types for response views assembled from rows and stored JSON documents.
+
+Views keep the representation a value already has on the wire. Timestamps read from
+PostgreSQL JSON stay as their original RFC 3339 text and Python datetimes use ``isoformat``,
+matching the encoding these responses had before they were typed. Money stays a decimal string.
+"""
+
+from datetime import datetime
+from typing import Annotated, Any
+
+from pydantic import BaseModel, ConfigDict, PlainSerializer, PlainValidator, WithJsonSchema
+
+
+class View(BaseModel):
+    """A response view; undeclared fields fail validation instead of leaking."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _aware_timestamp(value: Any) -> datetime | str:
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            parsed = None
+    if isinstance(parsed, datetime) and parsed.tzinfo is not None:
+        return value
+    raise ValueError("expected a timezone-aware timestamp")
+
+
+type Timestamp = Annotated[
+    datetime | str,
+    PlainValidator(_aware_timestamp),
+    PlainSerializer(
+        lambda value: value.isoformat() if isinstance(value, datetime) else value,
+        return_type=str,
+    ),
+    WithJsonSchema({"type": "string", "format": "date-time"}),
+]
+type DecimalString = Annotated[
+    str,
+    WithJsonSchema({"type": "string", "format": "decimal", "pattern": r"^-?[0-9]+(\.[0-9]+)?$"}),
+]

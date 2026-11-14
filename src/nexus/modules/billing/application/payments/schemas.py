@@ -6,7 +6,9 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, JsonValue, model_validator
+
+from nexus.shared.views import View
 
 from ..schemas import Currency, Money, PositiveMoney, Schema
 
@@ -294,3 +296,13 @@ class PaymentReceiptView(Schema):
     observation_id: UUID
     confirmed_at: AwareDatetime
     created_at: AwareDatetime
+
+
+class GatewayType(View):
+    adapter_type: str
+    configuration_schema: dict[str, JsonValue]
+    test_only: bool
+
+
+class GatewayTypes(View):
+    items: list[GatewayType]

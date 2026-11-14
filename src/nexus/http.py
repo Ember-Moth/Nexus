@@ -105,18 +105,16 @@ def declare_error_responses(openapi: dict[str, Any]) -> dict[str, Any]:
             if method not in {"get", "put", "post", "patch", "delete"}:
                 continue
             responses = operation.setdefault("responses", {})
-            for status in sorted(_error_statuses(operation)):
-                if status != 422 and str(status) in responses:
-                    continue
-                model = ValidationErrorResponse if status == 422 else ErrorResponse
-                responses[str(status)] = {
-                    "description": ERROR_DESCRIPTIONS[status],
-                    "content": {
-                        "application/json": {
-                            "schema": {"$ref": SCHEMA_REF.format(model=model.__name__)}
-                        }
-                    },
-                }
+            for status in _error_statuses(operation):
+                if status == 422 or str(status) not in responses:
+                    responses[str(status)] = {"description": ERROR_DESCRIPTIONS[status]}
+            for status, response in responses.items():
+                if status.isdigit() and int(status) >= 400:
+                    # Errors are JSON even where the success body is a file.
+                    model = ValidationErrorResponse if status == "422" else ErrorResponse
+                    ref = {"$ref": SCHEMA_REF.format(model=model.__name__)}
+                    response["content"] = {"application/json": {"schema": ref}}
+            operation["responses"] = dict(sorted(responses.items()))
     # Drop FastAPI's validation schemas once nothing references them.
     for name in ("HTTPValidationError", "ValidationError"):
         schemas.pop(name, None)

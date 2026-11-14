@@ -32,6 +32,7 @@ from ..application.schemas import (
     ReceivingCreate,
     ReceivingPatch,
     ReceivingView,
+    ReconciliationRun,
     SaleCreate,
 )
 
@@ -396,7 +397,12 @@ def create_router(get_billing, get_pricing, get_budgets):
             token, organization_id, resource_id, limit, cursor_value(cursor)
         )
 
-    @router.post("/organizations/{organization_id}/account/reconcile")
+    @router.post(
+        "/organizations/{organization_id}/account/reconcile",
+        response_model=ReconciliationRun,
+        # Each issue carries only the references that apply to its kind.
+        response_model_exclude_unset=True,
+    )
     async def reconcile(organization_id: UUID, token: Token, service: Billing):
         return await service.reconcile(token, organization_id)
 

@@ -3,18 +3,23 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
 
-from nexus.http import credentials, optional_version
+from nexus.http import credentials, error_responses, optional_version
 
-from ..application.routing_schemas import Quota, Route
+from ..application.routing import RoutingPolicies
+from ..application.routing_schemas import Quota, QuotaPolicyResult, Route, RoutePolicyView
 
 
 def create_router(get_service):
     router = APIRouter(prefix="/api/v1")
     Token = Annotated[str, Depends(credentials)]
-    Service = Annotated[object, Depends(get_service)]
+    Service = Annotated[RoutingPolicies, Depends(get_service)]
     Version = Annotated[int | None, Depends(optional_version)]
 
-    @router.post("/route-policies")
+    @router.post(
+        "/route-policies",
+        response_model=RoutePolicyView,
+        responses={201: {"model": RoutePolicyView, "description": "Created"}},
+    )
     async def route(
         body: Route, token: Token, service: Service, version: Version, response: Response
     ):
@@ -27,7 +32,14 @@ def create_router(get_service):
     async def routes(token: Token, service: Service):
         return {"items": await service.list_routes(token)}
 
-    @router.post("/organizations/{org}/quota-policies")
+    @router.post(
+        "/organizations/{org}/quota-policies",
+        response_model=QuotaPolicyResult,
+        responses={
+            201: {"model": QuotaPolicyResult, "description": "Created"},
+            **error_responses(409),
+        },
+    )
     async def quota(
         org: UUID, body: Quota, token: Token, service: Service, version: Version, response: Response
     ):

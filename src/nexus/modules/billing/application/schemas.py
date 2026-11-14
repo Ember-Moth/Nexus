@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from nexus.shared.views import DecimalString, Timestamp, View
+
 from ..domain.money import DIMENSIONS, Factor, Money
 
 
@@ -43,6 +45,26 @@ class AccountView(Schema):
     status: str
     version: int
     as_of: datetime
+
+
+class ReconciliationIssue(View):
+    """One difference between projections and ledger facts; references depend on `kind`."""
+
+    kind: str
+    projection: DecimalString | None = None
+    facts: DecimalString | None = None
+    entry_id: UUID | None = None
+    record_id: UUID | None = None
+    request_id: UUID | None = None
+    period_id: UUID | None = None
+
+
+class ReconciliationRun(View):
+    id: UUID
+    organization_id: UUID
+    consistent: bool
+    issues: list[ReconciliationIssue]
+    as_of: Timestamp
 
 
 class ReceivingCreate(Schema):

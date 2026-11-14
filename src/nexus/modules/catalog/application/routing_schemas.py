@@ -24,3 +24,22 @@ class Quota(Schema):
     scope_id: UUID | None = None
     metric: Literal["rpm", "tpm", "concurrency"]
     limit_value: int = Field(ge=1, le=2000000000, strict=True)
+
+
+class RoutePolicyView(Schema):
+    organization_id: UUID
+    model_id: UUID
+    candidates: list[Candidate]
+    version: int
+
+
+class QuotaPolicyResult(Schema):
+    """The written policy; `scope_id` echoes the request and is null for organization scope."""
+
+    layer: Literal["platform", "customer"]
+    scope_type: Literal["organization", "project", "key"]
+    scope_id: UUID | None
+    metric: Literal["rpm", "tpm", "concurrency"]
+    limit_value: int
+    id: UUID
+    version: int

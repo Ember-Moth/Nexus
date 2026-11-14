@@ -18,9 +18,9 @@
 
 1. 部署管理员创建 `nexus_bridge` 和 `nexus_gateway` 两个 NOLOGIN 角色。迁移身份须能 SET ROLE 到 identity、catalog、billing、publication 的模块角色及 nexus_bridge，以建立函数所有权。节点使用各自的 LOGIN 身份，继承 nexus_gateway 的权限并具有目标数据库 CONNECT 权限。各函数的实际授权清单随迁移固化。仓库的本机依赖脚本会准备组角色，节点登录及其凭据由部署方配置。
 2. 平台管理员调用 `POST /api/v1/gateway-clusters`，提供 name、region、organization_ids、deployment_ids 和 public_key。公钥使用 Base64 编码的 32 字节 Curve25519 公钥。catalog 用 PyNaCl/libsodium sealed box 封装上游凭据，密文内部绑定集群、凭据和版本。部署方把私钥交给相应集群。
-3. 用 `PUT /api/v1/gateway-clusters/{id}/principals/{node_id}` 登记 database_role、node_id、capabilities 与 active。节点身份由 PostgreSQL 登录角色确定。集群 PATCH 使用 If-Match，可暂停集群、修改范围或轮换公钥。key_grace_seconds 指定旧密钥包读取窗口，0 表示立即截止。缩小组织或部署范围会使先前范围的快照失效。新增范围随下一次发布生效。
-4. 使用 `POST /api/v1/route-policies` 为组织及模型设置部署候选、priority 和 weight。组织 owner 可通过 `POST /api/v1/organizations/{org}/quota-policies` 设置 customer 层限额，platform 层由平台管理员维护。多个适用上限共同约束请求。首次配置返回 201，更新同一作用域时携带上一版本的 If-Match。
-5. 调用 `POST /api/v1/gateway-clusters/{id}/releases`，附带 Idempotency-Key，正常发布使用空对象。rollback_revision 可选择历史资源集合。发布前重新核对源版本、当前价格和凭据资格，回滚生成更高修订。查询 `GET /api/v1/gateway-clusters/{id}/releases/{revision}` 获取期望修订、已分发修订、任务和各节点最近的确认。
+3. 用 `PUT /api/v1/gateway-clusters/{cluster_id}/principals/{node_id}` 登记 database_role、node_id、capabilities 与 active。节点身份由 PostgreSQL 登录角色确定。集群 PATCH 使用 If-Match，可暂停集群、修改范围或轮换公钥。key_grace_seconds 指定旧密钥包读取窗口，0 表示立即截止。缩小组织或部署范围会使先前范围的快照失效。新增范围随下一次发布生效。
+4. 路由和限额按自然键用 PUT 写入。`PUT /api/v1/route-policies/{organization_id}/{model_id}` 为组织及模型设置部署候选 candidates，每个候选含 deployment_id、priority 和 weight。组织 owner 可通过 `PUT /api/v1/organizations/{organization_id}/quota-policies/{layer}/{scope_type}/{scope_id}/{metric}` 设置 customer 层限额，请求体为 `{"limit_value": …}`；platform 层由平台管理员维护。scope_type 为 organization 时 scope_id 即组织 ID。多个适用上限共同约束请求。不带 If-Match 时只创建，成功返回 201；策略已存在则返回 428。更新时携带上一版本的 If-Match，成功返回 200；版本不是当前版本或策略不存在时返回 412。`GET /api/v1/route-policies`、`GET /api/v1/organizations/{organization_id}/quota-policies` 和 `GET /api/v1/gateway-clusters` 使用 limit 与 cursor 分页。原 `POST /api/v1/route-policies` 和 `POST /api/v1/organizations/{organization_id}/quota-policies` 仍按原语义工作，但已标记为废弃，新客户端应改用 PUT。
+5. 调用 `POST /api/v1/gateway-clusters/{cluster_id}/releases`，附带 Idempotency-Key，正常发布使用空对象。rollback_revision 可选择历史资源集合。发布前重新核对源版本、当前价格和凭据资格，回滚生成更高修订。查询 `GET /api/v1/gateway-clusters/{cluster_id}/releases/{revision}` 获取期望修订、已分发修订、任务和各节点最近的确认。
 6. 节点调用 get_config_snapshot，校验原始字节的 SHA-256 后应用并确认。普通更新给已应用旧配置的节点保留最多 5 秒传播窗口。权限收缩、Key 失效、凭据撤销及集群范围变动由数据库实时检查。旧节点仍可提交其在途请求的结束证据。分发 Worker 每 30 秒核对并重写当前副本，Redis 清空期间节点可从 PostgreSQL 恢复。
 
 ## 数据库身份与权限

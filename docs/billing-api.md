@@ -35,7 +35,7 @@ Worker 每 500 ms 检查一次开户事件和到期预留，有待处理数据�
 
 ## 接口
 
-`{org}`、`{id}` 为 UUID。列表使用 limit（1–100，默认 50）与 cursor 分页。
+`{org}`、`{id}` 为 UUID，OpenAPI 中分别名为 organization_id 和资源专属的标识，例如 funding_record_id、adjustment_id、budget_policy_id、price_version_id、discount_version_id。列表使用 limit（1–100，默认 50）与 cursor 分页。
 
 | 接口 | 行为 |
 | --- | --- |

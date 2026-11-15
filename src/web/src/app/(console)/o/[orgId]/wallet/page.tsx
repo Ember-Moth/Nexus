@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DownloadIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -22,7 +22,6 @@ import { useCursorList } from "@/lib/api/hooks";
 import { orgKey, useAccount, useProjectOptions } from "@/lib/api/queries";
 import type { LedgerRecord } from "@/lib/api/types";
 import { formatDateTime, shortId } from "@/lib/format";
-import { rememberExport } from "../audit/exports";
 
 const KIND_DOTS: Record<string, string> = {
   funding_credit: "bg-emerald-600",
@@ -54,6 +53,8 @@ export default function WalletPage() {
       ).data,
   });
 
+  const queryClient = useQueryClient();
+
   const exportLedger = useMutation({
     mutationFn: async () =>
       (
@@ -64,8 +65,8 @@ export default function WalletPage() {
           }),
         )
       ).data,
-    onSuccess: (job) => {
-      rememberExport(orgId, job);
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orgKey(orgId, "exports", "list") });
       toast.success(t("wallet.exportQueued"), {
         action: { label: t("nav.items.audit"), onClick: () => router.push(`/o/${orgId}/audit`) },
       });

@@ -1,12 +1,12 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DownloadIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { DataTable } from "@/components/data-table";
-import { EmptyState, ErrorAlert, Spinner } from "@/components/feedback";
+import { EmptyState, ErrorAlert, LoadingRows, Spinner } from "@/components/feedback";
 import { LoadMoreFooter, PageContainer, PageHeader } from "@/components/page";
 import { useOrgWorkspace } from "@/components/shell/workspace";
 import { StatusBadge, toneFor } from "@/components/status-badge";
@@ -21,12 +21,14 @@ import { orgKey } from "@/lib/api/queries";
 import type { AuditEvent, ExportJob, ExportKind } from "@/lib/api/types";
 import { formatDate, formatDateTime, shortId, startOfUtcDay, startOfUtcMonth, utcInputToIso } from "@/lib/format";
 
-import { isFinished, rememberedExports, rememberExport } from "./exports";
+import { isFinished } from "./exports";
 
-function ExportRow({ orgId, exportId }: { orgId: string; exportId: string }) {
+function ExportRow({ orgId, initial }: { orgId: string; initial: ExportJob }) {
   const { t, maybeT } = useI18n();
-  // 202 workflow: poll the job until it is ready or failed (2 s, then 5 s, then 10 s).
+  const exportId = initial.id;
+  // 202 workflow: poll an unfinished job until it is ready or failed (2 s, then 5 s, then 10 s).
   const job = useQuery({
+    initialData: initial,
     queryKey: orgKey(orgId, "exports", exportId),
     queryFn: async () =>
       (
@@ -82,17 +84,23 @@ function ExportRow({ orgId, exportId }: { orgId: string; exportId: string }) {
 
 function Exports({ orgId }: { orgId: string }) {
   const { t } = useI18n();
-  const [ids, setIds] = useState<string[]>([]);
+  const queryClient = useQueryClient();
   const [kind, setKind] = useState<ExportKind>("ledger");
   const [from, setFrom] = useState(() => formatDate(startOfUtcMonth()));
   const [to, setTo] = useState(() => formatDate(startOfUtcDay(-1)));
 
-  useEffect(() => {
-    const sync = () => setIds(rememberedExports(orgId));
-    sync();
-    window.addEventListener("nexus-exports", sync);
-    return () => window.removeEventListener("nexus-exports", sync);
-  }, [orgId]);
+  // GET /organizations/{organization_id}/exports: the caller's readable jobs, newest first.
+  const jobs = useCursorList<ExportJob>({
+    queryKey: orgKey(orgId, "exports", "list"),
+    fetchPage: async (cursor) =>
+      (
+        await call(() =>
+          nexus.GET("/api/v1/organizations/{organization_id}/exports", {
+            params: { path: { organization_id: orgId }, query: { limit: 20, cursor } },
+          }),
+        )
+      ).data,
+  });
 
   const create = useMutation({
     mutationFn: async () =>
@@ -111,7 +119,7 @@ function Exports({ orgId }: { orgId: string }) {
           }),
         )
       ).data,
-    onSuccess: (job) => rememberExport(orgId, job),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: orgKey(orgId, "exports", "list") }),
   });
 
   return (
@@ -159,11 +167,25 @@ function Exports({ orgId }: { orgId: string }) {
         </Button>
         {create.error ? <ErrorAlert error={create.error} className="basis-full" /> : null}
       </form>
-      {ids.length === 0 ? (
+      {jobs.error ? (
+        <div className="p-4">
+          <ErrorAlert error={jobs.error} onRetry={() => void jobs.refetch()} />
+        </div>
+      ) : jobs.isPending ? (
+        <LoadingRows rows={2} columns={3} />
+      ) : jobs.items.length === 0 ? (
         <p className="px-4 py-6 text-sm text-muted-foreground">{t("audit.exportsEmpty")}</p>
       ) : (
-        ids.map((id) => <ExportRow key={id} orgId={orgId} exportId={id} />)
+        jobs.items.map((job) => <ExportRow key={job.id} orgId={orgId} initial={job} />)
       )}
+      {jobs.hasNextPage ? (
+        <LoadMoreFooter
+          count={jobs.items.length}
+          hasNext
+          loading={jobs.isFetchingNextPage}
+          onLoadMore={() => void jobs.fetchNextPage()}
+        />
+      ) : null}
     </section>
   );
 }

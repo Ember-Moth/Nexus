@@ -25,9 +25,11 @@ import { orgKey } from "@/lib/api/queries";
 import type { Project, ServiceAccount } from "@/lib/api/types";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ProjectGrants } from "@/components/workspace/project-grants";
 
 import { IssueKeyDialog } from "../keys/issue-key-dialog";
 import { RotateKeyDialog } from "../keys/key-actions";
+import { ProjectPolicies } from "../policies/policy-editor";
 import type { ApiKey } from "@/lib/api/types";
 
 function ServiceAccounts({ orgId, project, canManage }: { orgId: string; project: Project; canManage: boolean }) {
@@ -276,11 +278,11 @@ function ProjectDetail({ orgId, projectId, canManageProject, canManageAccounts }
             {t("nav.items.keys")} →
           </Link>
         </TabsContent>
-        <TabsContent value="grants" className="pt-4 text-sm text-muted-foreground">
-          {t("skeleton.body")} <code className="font-mono text-xs">GET/POST /organizations/{"{organization_id}"}/project-grants</code>
+        <TabsContent value="grants" className="pt-4">
+          <ProjectGrants orgId={orgId} project={project} canManage={canManageProject} />
         </TabsContent>
-        <TabsContent value="policies" className="pt-4 text-sm text-muted-foreground">
-          {t("skeleton.body")} <code className="font-mono text-xs">GET/POST /organizations/{"{organization_id}"}/access-policies</code>
+        <TabsContent value="policies" className="pt-4">
+          <ProjectPolicies orgId={orgId} projectId={project.id} />
         </TabsContent>
       </Tabs>
     </div>

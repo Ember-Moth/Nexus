@@ -18,7 +18,7 @@ use crate::{
         usage::UsageEvidence,
     },
     server::Node,
-    upstream::{Reply, UpstreamError},
+    upstream::{ErrorContract, Refusal, Reply, UpstreamError, refusal},
 };
 use http::StatusCode;
 use std::{sync::Arc, time::Duration};
@@ -269,18 +269,17 @@ async fn open(
             }
         })
         .await;
-    // Classify ambiguous replies even when there is no retry budget.
-    let failover = node.max_attempts > 1 && !request.background() && request.interpreter.is_none();
+    // Classify unexecuted attempts even when this request gets no further attempt:
+    // the caller decides whether another deployment may be tried.
     let response = match opened {
         Ok(Some(Ok(response))) => response,
-        Ok(Some(Err(error))) if request.interpreter.is_some() && error.unsent() => {
-            let _ = node
-                .db
-                .unused_container(run.reservation.id, selected.key.id, true)
-                .await;
-            return Opened::Lost;
-        }
-        Ok(Some(Err(error))) if failover && error.unsent() => {
+        Ok(Some(Err(error))) if error.unsent() => {
+            if request.interpreter.is_some() {
+                let _ = node
+                    .db
+                    .unused_container(run.reservation.id, selected.key.id, true)
+                    .await;
+            }
             let reason = match error {
                 UpstreamError::Signing => FailoverReason::Signing,
                 _ => FailoverReason::Connect,
@@ -298,20 +297,20 @@ async fn open(
         return Opened::Answer(response);
     }
     let reason = FailoverReason::declined(response.status().as_u16());
-    // Bedrock's buffered error shape is derived from its HTTP status. Verify the
+    // Bedrock's buffered error shape is derived from its HTTP status. Keep the
     // service error header before projecting the response into a client protocol.
-    let bedrock_declined = bedrock
-        && matches!(
-            (
-                response.status().as_u16(),
-                response
-                    .headers()
-                    .get("x-amzn-errortype")
-                    .and_then(|header| header.to_str().ok())
-                    .and_then(|value| value.split(':').next())
-            ),
-            (429, Some("ThrottlingException")) | (503, Some("ServiceUnavailableException"))
-        );
+    let contract = if bedrock {
+        ErrorContract::Bedrock
+    } else if ep == Endpoint::AnthropicMessages {
+        ErrorContract::Anthropic
+    } else {
+        ErrorContract::OpenAi
+    };
+    let aws_error_type = response
+        .headers()
+        .get("x-amzn-errortype")
+        .and_then(|header| header.to_str().ok())
+        .map(str::to_owned);
     let rid = run.reservation.id.to_string();
     let limit = node.upstream.response_limit();
     let reply = run
@@ -342,16 +341,27 @@ async fn open(
         }))
         .await;
     match reply {
-        Ok(Ok(Ok(mut reply)))
-            if (bedrock_declined
-                || (!bedrock
-                    && crate::upstream::confirms_rejection(ep, reply.status, &reply.body)))
-                && reply
-                    .usage
-                    .raw_usage
-                    .as_ref()
-                    .is_none_or(|counts| counts.values().all(|n| *n == 0)) =>
-        {
+        Ok(Ok(Ok(mut reply))) => {
+            let unbilled = reply
+                .usage
+                .raw_usage
+                .as_ref()
+                .is_none_or(|counts| counts.values().all(|n| *n == 0));
+            let refusal = if unbilled {
+                refusal(
+                    contract,
+                    reply.status,
+                    aws_error_type.as_deref(),
+                    &reply.body,
+                )
+            } else {
+                Refusal::Unknown
+            };
+            if refusal == Refusal::Unknown {
+                reply.outcome = "unknown";
+                return Opened::Buffered(reply);
+            }
+            // Nothing was delivered: the customer is not charged for this attempt.
             reply.outcome = "failed";
             if request.interpreter.is_some() {
                 let _ = node
@@ -359,15 +369,10 @@ async fn open(
                     .unused_container(run.reservation.id, selected.key.id, true)
                     .await;
             }
-            if failover {
-                Opened::Declined(Some(reply), reason)
-            } else {
-                Opened::Buffered(reply)
+            match refusal {
+                Refusal::Declined => Opened::Declined(Some(reply), reason),
+                _ => Opened::Buffered(reply),
             }
-        }
-        Ok(Ok(Ok(mut reply))) => {
-            reply.outcome = "unknown";
-            Opened::Buffered(reply)
         }
         _ => Opened::Lost,
     }
@@ -512,7 +517,11 @@ pub async fn run(
                 // snapshot, within the frozen bounds, gets a newly committed attempt.
                 // The gate checks the same conditions in the same order and names the one
                 // that stopped failover.
-                let gate = if run.attempts() >= node.max_attempts {
+                // Background and Code Interpreter requests keep their single attempt.
+                let gate = if run.attempts() >= node.max_attempts
+                    || request.background()
+                    || request.interpreter.is_some()
+                {
                     Some(FailoverResult::AttemptLimit)
                 } else if Instant::now() >= deadline {
                     Some(FailoverResult::BudgetExhausted)

@@ -54,27 +54,112 @@ impl UpstreamError {
 }
 
 /// These statuses can indicate an explicit admission rejection. The caller
-/// must also check the provider's error envelope before issuing another POST.
+/// must also classify the provider's error envelope with [`refusal`].
 pub fn declined(status: StatusCode) -> bool {
     matches!(status.as_u16(), 429 | 503 | 529)
 }
 
-pub(crate) fn confirms_rejection(endpoint: Endpoint, status: StatusCode, body: &[u8]) -> bool {
-    let Ok(value) = serde_json::from_slice::<Value>(body) else {
-        return false;
+/// The error contract of the upstream that answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorContract {
+    /// `{"type":"error","error":{"type":…}}` from Anthropic Messages.
+    Anthropic,
+    /// `{"error":{"type":…,"code":…}}` from OpenAI Responses and Chat Completions.
+    OpenAi,
+    /// The AWS service error name in `x-amzn-ErrorType`, before Nexus re-encodes the body.
+    Bedrock,
+}
+
+/// What a 429, 503 or 529 answer proves about the generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The vendor documents this error as an admission rejection: nothing was executed,
+    /// so another deployment may receive a new attempt.
+    Declined,
+    /// A 429 in the vendor's error envelope whose type is not documented. HTTP 429 refuses
+    /// the request and nothing was delivered, so the customer reservation is released. Without
+    /// a documented type it is not proof enough to send the POST again.
+    Refused,
+    /// No proof either way, for example an intermediary's 502 or OpenAI's 503 `server_error`.
+    Unknown,
+}
+
+// Anthropic: https://platform.claude.com/docs/en/api/errors documents 429 rate_limit_error
+// (rate, tier spend cap, workspace spend limit) and 529 overloaded_error. Overloaded errors are
+// also accepted with 503, as the SSE error event uses the same type.
+// OpenAI: https://developers.openai.com/api/docs/guides/error-codes and
+// https://developers.openai.com/api/docs/guides/rate-limits document the 429 codes below and
+// 503 service_unavailable_error/server_is_overloaded ("Model temporarily overloaded").
+// Bedrock: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
+// (and InvokeModel, ConverseStream) document 429 ThrottlingException and ModelNotReadyException
+// and 503 ServiceUnavailableException.
+// `rate_limit_exceeded` is the code OpenAI sends for "Rate limit reached for requests"; the guide
+// lists that row without a code string. `insufficient_quota` is documented as an error type.
+const OPENAI_429: [&str; 8] = [
+    "rate_limit_exceeded",
+    "rate_limit_error",
+    "slow_down",
+    "insufficient_quota",
+    "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
+];
+
+pub fn refusal(
+    contract: ErrorContract,
+    status: StatusCode,
+    aws_error_type: Option<&str>,
+    body: &[u8],
+) -> Refusal {
+    let status = status.as_u16();
+    let (documented, enveloped) = match contract {
+        ErrorContract::Bedrock => {
+            let Some(name) = aws_error_type.map(|v| v.split(':').next().unwrap_or(v)) else {
+                return Refusal::Unknown;
+            };
+            let documented = matches!(
+                (status, name),
+                (429, "ThrottlingException" | "ModelNotReadyException")
+                    | (503, "ServiceUnavailableException")
+            );
+            (documented, !name.is_empty())
+        }
+        ErrorContract::Anthropic => {
+            let Ok(value) = serde_json::from_slice::<Value>(body) else {
+                return Refusal::Unknown;
+            };
+            let kind = value["error"]["type"].as_str();
+            let documented = match status {
+                429 => kind == Some("rate_limit_error"),
+                503 | 529 => kind == Some("overloaded_error"),
+                _ => false,
+            };
+            (documented, value["type"] == "error" && kind.is_some())
+        }
+        ErrorContract::OpenAi => {
+            let Ok(value) = serde_json::from_slice::<Value>(body) else {
+                return Refusal::Unknown;
+            };
+            let error = &value["error"];
+            let named = |field: &str| error[field].as_str().unwrap_or_default();
+            let documented = match status {
+                429 => OPENAI_429.contains(&named("code")) || OPENAI_429.contains(&named("type")),
+                503 => {
+                    named("code") == "server_is_overloaded"
+                        && named("type") == "service_unavailable_error"
+                }
+                _ => false,
+            };
+            (documented, error.is_object())
+        }
     };
-    let error = &value["error"];
-    match (endpoint, status.as_u16()) {
-        (Endpoint::AnthropicMessages, 503 | 529) => {
-            value["type"] == "error" && error["type"] == "overloaded_error"
-        }
-        (Endpoint::AnthropicMessages, 429) => {
-            value["type"] == "error" && error["type"] == "rate_limit_error"
-        }
-        (Endpoint::OpenaiResponses, 429) => {
-            error["code"] == "rate_limit_exceeded" || error["type"] == "rate_limit_exceeded"
-        }
-        _ => false,
+    if documented {
+        Refusal::Declined
+    } else if status == 429 && enveloped {
+        Refusal::Refused
+    } else {
+        Refusal::Unknown
     }
 }
 

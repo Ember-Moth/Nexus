@@ -8,7 +8,7 @@ use nexus_relay::{
         snapshot::{Index, Selection},
     },
     protocol::{Endpoint, request::Generate, tokens::ReservationBounds},
-    upstream::{Upstream, UpstreamError, declined},
+    upstream::{ErrorContract, Refusal, Upstream, UpstreamError, declined, refusal},
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -352,6 +352,208 @@ fn only_rejections_before_execution_are_declined() {
         UpstreamError::ResponseTooLarge,
     ] {
         assert!(!error.unsent(), "{error}");
+    }
+}
+
+#[test]
+fn documented_vendor_rejections_are_declined_and_unknown_429s_are_refused() {
+    use ErrorContract::{Anthropic, Bedrock, OpenAi};
+    let status = |n| StatusCode::from_u16(n).unwrap();
+    let anthropic = |kind: &str| {
+        serde_json::to_vec(&json!({"type":"error","error":{"type":kind,"message":"x"}})).unwrap()
+    };
+    let openai = |kind: &str, code: Value| {
+        serde_json::to_vec(&json!({"error":{"type":kind,"code":code,"message":"x"}})).unwrap()
+    };
+    type Case<'a> = (ErrorContract, u16, Option<&'a str>, Vec<u8>, Refusal);
+    let cases: Vec<Case> = vec![
+        (
+            Anthropic,
+            429,
+            None,
+            anthropic("rate_limit_error"),
+            Refusal::Declined,
+        ),
+        (
+            Anthropic,
+            529,
+            None,
+            anthropic("overloaded_error"),
+            Refusal::Declined,
+        ),
+        (
+            Anthropic,
+            503,
+            None,
+            anthropic("overloaded_error"),
+            Refusal::Declined,
+        ),
+        // A new 429 type still refuses the request; it is not proof enough to resend.
+        (
+            Anthropic,
+            429,
+            None,
+            anthropic("acceleration_limit_error"),
+            Refusal::Refused,
+        ),
+        (
+            Anthropic,
+            503,
+            None,
+            anthropic("gateway_error"),
+            Refusal::Unknown,
+        ),
+        (
+            Anthropic,
+            529,
+            None,
+            b"<html>busy</html>".to_vec(),
+            Refusal::Unknown,
+        ),
+        (Anthropic, 429, None, b"too many".to_vec(), Refusal::Unknown),
+        (
+            OpenAi,
+            429,
+            None,
+            openai("requests", json!("rate_limit_exceeded")),
+            Refusal::Declined,
+        ),
+        (
+            OpenAi,
+            429,
+            None,
+            openai("insufficient_quota", json!("insufficient_quota")),
+            Refusal::Declined,
+        ),
+        (
+            OpenAi,
+            429,
+            None,
+            openai("rate_limit_error", json!("slow_down")),
+            Refusal::Declined,
+        ),
+        (
+            OpenAi,
+            429,
+            None,
+            openai("insufficient_quota", Value::Null),
+            Refusal::Declined,
+        ),
+        (
+            OpenAi,
+            429,
+            None,
+            openai("billing", json!("credit_balance_exhausted")),
+            Refusal::Declined,
+        ),
+        (
+            OpenAi,
+            429,
+            None,
+            openai("x", json!("organization_spend_limit_exceeded")),
+            Refusal::Declined,
+        ),
+        (
+            OpenAi,
+            429,
+            None,
+            openai("x", json!("project_spend_limit_exceeded")),
+            Refusal::Declined,
+        ),
+        (
+            OpenAi,
+            429,
+            None,
+            openai("x", json!("organization_usage_limit_exceeded")),
+            Refusal::Declined,
+        ),
+        (
+            OpenAi,
+            429,
+            None,
+            openai("tokens", json!("new_limit_kind")),
+            Refusal::Refused,
+        ),
+        (
+            OpenAi,
+            503,
+            None,
+            openai("service_unavailable_error", json!("server_is_overloaded")),
+            Refusal::Declined,
+        ),
+        // An OpenAI 503 server_error may follow execution and is never resent.
+        (
+            OpenAi,
+            503,
+            None,
+            openai("server_error", Value::Null),
+            Refusal::Unknown,
+        ),
+        (
+            OpenAi,
+            503,
+            None,
+            openai("server_error", json!("server_is_overloaded")),
+            Refusal::Unknown,
+        ),
+        (
+            OpenAi,
+            502,
+            None,
+            openai("rate_limit_error", json!("slow_down")),
+            Refusal::Unknown,
+        ),
+        (
+            Bedrock,
+            429,
+            Some("ThrottlingException"),
+            vec![],
+            Refusal::Declined,
+        ),
+        (
+            Bedrock,
+            429,
+            Some("ModelNotReadyException:http://internal.amazon.com/coral/com.amazon.bedrock/"),
+            vec![],
+            Refusal::Declined,
+        ),
+        (
+            Bedrock,
+            503,
+            Some("ServiceUnavailableException"),
+            vec![],
+            Refusal::Declined,
+        ),
+        (
+            Bedrock,
+            429,
+            Some("SomeNewException"),
+            vec![],
+            Refusal::Refused,
+        ),
+        (Bedrock, 429, None, vec![], Refusal::Unknown),
+        (
+            Bedrock,
+            503,
+            Some("InternalServerException"),
+            vec![],
+            Refusal::Unknown,
+        ),
+        (
+            Bedrock,
+            502,
+            Some("ThrottlingException"),
+            vec![],
+            Refusal::Unknown,
+        ),
+    ];
+    for (contract, code, header, body, expected) in cases {
+        assert_eq!(
+            refusal(contract, status(code), header, &body),
+            expected,
+            "{contract:?} {code} {header:?} {}",
+            String::from_utf8_lossy(&body)
+        );
     }
 }
 

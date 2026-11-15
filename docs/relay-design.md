@@ -155,7 +155,9 @@ HTTP POST（含 SSE）在同一请求内最多执行 `NEXUS_RELAY_MAX_ATTEMPTS` 
 | --- | --- | --- |
 | DNS、TCP 连接、TLS 握手失败，或连接建立前超时 | 请求未离开节点 | 可重试 |
 | Bedrock 请求签名失败 | 请求未发出 | 可重试 |
-| 厂商明确的限流或过载拒绝 | Messages 的 429/rate_limit_error、503 或 529/overloaded_error；Responses 的 429/rate_limit_exceeded；Bedrock 的 429/ThrottlingException、503/ServiceUnavailableException | 同时核对错误体或 AWS 服务错误头、确认无正用量后可切换。通用 502 或缺少厂商拒绝证据的网关错误按结果未知处理 |
+| 厂商文档列明的准入拒绝 | 见下方“可证明未执行的拒绝类型”表 | 同时核对错误体或 AWS 服务错误头、确认无正用量后可切换。尝试记 `failed` |
+| 厂商错误信封中的其他 429 | HTTP 429 表示请求被拒绝，且未向客户交付任何内容，但错误类型不在厂商文档内 | 不重发；尝试记 `failed`，客户零扣费并释放预留；没有用量的尝试单独进入成本核对 |
+| 502，或缺少厂商拒绝证据的 503/529 | 可能来自中间层，上游可能已执行。Responses 的 503 `server_error` 也在此列 | 不重试，结果记 `unknown`，预留保留并进入核对 |
 | 请求写出后超时或连接中断 | 可能已执行 | 不重试，记未知结果并进入核对 |
 | 其他状态，包括 500、504 和 4xx | 可能已执行，或请求本身不被接受 | 不重试，沿用单次尝试的交付与上报 |
 | 已收到 2xx，包括 SSE 尚未写出事件就空闲超时或断流 | 已开始执行 | 不重试 |
@@ -165,7 +167,17 @@ HTTP POST（含 SSE）在同一请求内最多执行 `NEXUS_RELAY_MAX_ATTEMPTS` 
 
 每次重发前先续租，再以递增序号调用 `start_attempt`，绑定新部署及其凭据版本；收到提交确认后才写出上游。被拒的尝试随后单独提交 `attempt.finished`，结果为 `failed`；错误体带计数时附原始用量，否则 `raw_usage=null`。最后一次尝试结束时提交唯一的 `request.closed`，列出全部已开始的尝试，交付尝试只能是最后一次。Worker 只按交付尝试向客户收费，各尝试按自己部署的冻结成本价独立处理；没有用量的失败尝试不补零，而是在该尝试上开 `missing_usage` 核对项，不影响客户结算和预留释放。新尝试的提交结果未知时先查请求状态：已存在就按未发送的失败尝试上报并列入关闭事件；无法确认时不提交关闭事件，留待预留到期后核对。Redis TPM 按全部尝试的已确认用量之和核销，任一尝试缺少可信用量时保留授权上界。
 
-`NEXUS_RELAY_MAX_ATTEMPTS=1` 关闭故障转移，交付与上报和单次尝试时完全一致，其中连接失败仍记 `unknown`。启用后，可证明未执行的最后一次失败记 `failed`，请求以 `upstream_failed` 关闭并释放预留。WebSocket 轮次已绑定部署，不参与故障转移；熔断不在本期范围。
+是否可证明未执行，与还能否重试无关。`NEXUS_RELAY_MAX_ATTEMPTS=1` 只关闭换部署重发，判定规则不变：连接未建立、Bedrock 签名失败、厂商文档列明的拒绝和上表中其他 429，都把这次尝试记为 `failed`，请求以 `upstream_failed` 关闭并释放预留；拒绝的错误体原样或按入口协议转换后返回，连接类失败返回 502。后台生成和 Code Interpreter 请求同样只有一次尝试，规则相同。只有 502、无厂商证据的 503/529、请求写出后的超时或断流记 `unknown`，预留保留待核对。WebSocket 轮次已绑定部署，不参与故障转移；熔断不在本期范围。
+
+**可证明未执行的拒绝类型。** 只有下表的组合会触发换部署。表外的 429 按上表第二类处理。
+
+| 上游 | 状态与错误类型 | 依据 |
+| --- | --- | --- |
+| Anthropic Messages | 429 `rate_limit_error`（含速率、档位月度消费上限、工作区消费上限）；529 `overloaded_error`；503 `overloaded_error`（与 SSE `error` 事件同型） | [Anthropic API 错误](https://platform.claude.com/docs/en/api/errors) · [流式错误事件](https://platform.claude.com/docs/en/build-with-claude/streaming) |
+| OpenAI Responses 与 Chat Completions | 429 的 `error.code` 或 `error.type` 为 `rate_limit_exceeded`、`rate_limit_error`、`slow_down`、`insufficient_quota`、`credit_balance_exhausted`、`organization_spend_limit_exceeded`、`project_spend_limit_exceeded`、`organization_usage_limit_exceeded`；503 的 `service_unavailable_error`/`server_is_overloaded` | [OpenAI 错误码](https://developers.openai.com/api/docs/guides/error-codes) · [速率限制](https://developers.openai.com/api/docs/guides/rate-limits)。`rate_limit_exceeded` 是“Rate limit reached for requests”实际返回的码，文档该行未写码值 |
+| Amazon Bedrock（Converse、ConverseStream、InvokeModel） | `x-amzn-ErrorType` 为 429 `ThrottlingException`、429 `ModelNotReadyException`、503 `ServiceUnavailableException` | [Converse 错误](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html) · [InvokeModel 错误](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html) |
+
+Responses 的 503 `server_error` 与 502 一样有意保持不重试：它可能出现在上游已开始处理之后。其他 4xx 和 500 的错误信封沿用单次尝试的交付路径，同样记 `failed` 且不重试。
 
 ## 控制平面改动与上线顺序
 

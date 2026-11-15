@@ -35,6 +35,8 @@ USAGE = {
 
 
 def marker(body):
+    if "input" in body:
+        return body["input"]
     return body["messages"][0]["content"]
 
 
@@ -139,15 +141,15 @@ async def backup(body, reader, writer):
 
 
 @asynccontextmanager
-async def failover_plane(http, admin, ports):
+async def failover_plane(http, admin, ports, family="anthropic"):
     client, root, app, _ = http
     async with provision_plane(
-        http, admin, "anthropic", base_url=f"https://127.0.0.1:{ports[0]}/v1"
+        http, admin, family, base_url=f"https://127.0.0.1:{ports[0]}/v1"
     ) as plane:
         peer, private, org, model, first, admission, token, cid = plane
         await make_budget(client, root, org, "100")
         upstream = await make_upstream(
-            client, root, "Backup", "anthropic", base_url=f"https://127.0.0.1:{ports[1]}/v1"
+            client, root, "Backup", family, base_url=f"https://127.0.0.1:{ports[1]}/v1"
         )
         credential = await client.post(
             f"/api/v1/upstreams/{upstream['id']}/credentials",
@@ -158,7 +160,7 @@ async def failover_plane(http, admin, ports):
         second = await make_deployment(client, root, model, upstream, credential.json())
         await publish_price(client, root, "cost", second, "0.2")
         profile = {
-            "endpoint": "anthropic_messages",
+            "endpoint": "anthropic_messages" if family == "anthropic" else "openai_responses",
             "transports": ["http"],
             "input_ceiling": 4,
             "output_ceiling": 6,
@@ -478,7 +480,8 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             for secret in [BACKUP_SECRET, "provider-secret-do-not-echo", token]:
                 assert secret not in logs
 
-        # One attempt keeps the previous single-attempt report for the same failure.
+        # One attempt sends no backup, but a refused connection was provably never sent:
+        # the attempt fails and the reservation is released instead of waiting for review.
         monkeypatch.setenv("NEXUS_RELAY_MAX_ATTEMPTS", "1")
         async with relay() as client:
             calls = len(second_upstream.received)
@@ -487,7 +490,8 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             rid = ledger.new()
             await settled(2)
             assert [a[2] for a in ledger.attempts(rid)] == [first]
-            assert ledger.closed(rid)["delivery_outcome"] == "unknown"
+            assert ledger.closed(rid)["delivery_outcome"] == "upstream_failed"
+            assert (await ledger.status(rid))["reservation_state"] == "released"
             assert len(second_upstream.received) == calls
         await second_upstream.stop()
 
@@ -607,6 +611,88 @@ async def test_ambiguous_gateway_errors_do_not_replay_generation(http, admin, tl
                     assert len(ledger.attempts(rid)) == 1 and ledger.debits(rid) == []
                     assert ledger.closed(rid)["delivery_outcome"] == "unknown"
                     assert (await ledger.status(rid))["reservation_state"] == "held"
+    finally:
+        await one.stop()
+        await two.stop()
+
+
+async def test_documented_quota_rejections_switch_and_unknown_429_releases(
+    http,
+    admin,
+    tls,  # noqa: F811
+    relay_binary,  # noqa: F811
+    monkeypatch,
+):
+    """OpenAI 429 insufficient_quota is declined before execution; an undocumented 429 type
+    is not resent, yet nothing was delivered, so its reservation is released instead of held."""
+
+    async def quota(body, reader, writer):
+        error = {
+            "quota": {"type": "insufficient_quota", "code": "insufficient_quota"},
+            "novel": {"type": "tokens", "code": "brand_new_limit"},
+        }[marker(body)]
+        await reply(writer, "429 Too Many Requests", {"error": error | {"message": "no"}})
+
+    async def answered(body, reader, writer):
+        await reply(
+            writer,
+            "200 OK",
+            {
+                "id": "resp_backup",
+                "object": "response",
+                "status": "completed",
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+                "usage": {
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "input_tokens_details": {"cached_tokens": 0},
+                },
+            },
+        )
+
+    one = Double("primary", tls[0], quota)
+    two = Double("backup", tls[0], answered)
+    await one.start()
+    await two.start()
+    monkeypatch.setenv("NEXUS_RELAY_MAX_ATTEMPTS", "2")
+    try:
+        async with failover_plane(http, admin, (one.port, two.port), "openai_compatible") as (
+            plane,
+            first,
+            second,
+        ):
+            peer, private, _, model, _, _, key, cid = plane
+            ledger = Ledger(admin, peer)
+            async with running_relay(
+                relay_binary, peer, private, cid, http[3], tls[1], peer.connection.info.port
+            ) as client:
+                hdr = {"Authorization": "Bearer " + key}
+                body = {"model": model["public_name"], "max_output_tokens": 6}
+                result = await client.post(
+                    "/v1/responses", headers=hdr, json=body | {"input": "quota"}
+                )
+                assert result.status_code == 200, result.text
+                await wait_events(admin, 3)
+                await http[2].state.usage.process()
+                rid = ledger.new()
+                assert [a[2] for a in ledger.attempts(rid)] == [first, second]
+                assert ledger.closed(rid)["delivered_attempt_id"] is not None
+                assert (await ledger.status(rid))["reservation_state"] == "captured"
+
+                result = await client.post(
+                    "/v1/responses", headers=hdr, json=body | {"input": "novel"}
+                )
+                assert result.status_code == 429
+                assert result.json()["error"]["code"] == "brand_new_limit"
+                await wait_events(admin, 5)
+                await http[2].state.usage.process()
+                rid = ledger.new()
+                # No second POST without vendor evidence, but no hold left behind either.
+                assert one.count("novel") == 1 and two.count("novel") == 0
+                assert [a[2] for a in ledger.attempts(rid)] == [first]
+                assert ledger.closed(rid)["delivery_outcome"] == "upstream_failed"
+                assert ledger.debits(rid) == []
+                assert (await ledger.status(rid))["reservation_state"] == "released"
     finally:
         await one.stop()
         await two.stop()

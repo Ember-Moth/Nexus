@@ -36,6 +36,12 @@ export type RoutePolicy = Schemas["RoutePolicyView"];
 export type RouteCandidate = Schemas["Candidate"];
 export type QuotaPolicy = Schemas["QuotaPolicyView"];
 
+// Upstream copies of tenant content held for API keys, and owner purge requests.
+export type UpstreamResource = Schemas["UpstreamResourceView"];
+export type UpstreamResourceKind = UpstreamResource["kind"];
+export type UpstreamResourceState = UpstreamResource["state"];
+export type PurgeRequest = Schemas["PurgeRequestView"];
+
 /** Shape shared by every cursor-paginated list response. */
 export interface Page<T> {
   items: T[];

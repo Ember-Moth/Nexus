@@ -281,6 +281,7 @@ const zhCN = {
       projects: "项目",
       serviceAccounts: "服务账号",
       keys: "调用 Key",
+      upstreamResources: "上游资源",
       models: "可用模型与价格",
       wallet: "钱包与流水",
       recharge: "充值",
@@ -385,6 +386,7 @@ const zhCN = {
     allProjects: "全部项目",
     allServiceAccounts: "全部服务账号",
     hideInactive: "隐藏已撤销和已过期",
+    upstreamResources: "上游资源",
     columns: {
       name: "名称",
       prefix: "前缀",

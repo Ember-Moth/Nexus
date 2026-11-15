@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { EllipsisIcon, KeyRoundIcon, PlusIcon, RefreshCwIcon, BanIcon } from "lucide-react";
+import { BanIcon, CloudIcon, EllipsisIcon, KeyRoundIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -128,7 +128,6 @@ export default function KeysPage() {
         meta: { className: "w-12" },
         cell: ({ row }) => {
           const status = keyStatus(row.original);
-          if (!canRevoke(status)) return null;
           return (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -137,24 +136,35 @@ export default function KeysPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-44">
+                {/* Revoked keys keep their upstream copies until the purge, so the link stays. */}
+                <DropdownMenuItem asChild>
+                  <Link href={`/o/${orgId}/upstream-resources?api_key_id=${row.original.id}`}>
+                    <CloudIcon />
+                    {t("keys.upstreamResources")}
+                  </Link>
+                </DropdownMenuItem>
                 {canRotate(status) ? (
                   <DropdownMenuItem onSelect={() => setRotating(row.original)}>
                     <RefreshCwIcon />
                     {t("keys.rotate")}
                   </DropdownMenuItem>
                 ) : null}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={() => setRevoking(row.original)}>
-                  <BanIcon />
-                  {t("keys.revoke")}
-                </DropdownMenuItem>
+                {canRevoke(status) ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" onSelect={() => setRevoking(row.original)}>
+                      <BanIcon />
+                      {t("keys.revoke")}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           );
         },
       },
     ],
-    [t, projectName, accountName],
+    [t, orgId, projectName, accountName],
   );
 
   const noAccounts = accounts.data !== undefined && accounts.data.length === 0;

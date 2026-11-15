@@ -54,7 +54,13 @@ async def plane(http, admin):
 
 @asynccontextmanager
 async def provision_plane(
-    http, admin, protocol="openai_compatible", *, balance="100", **upstream_options
+    http,
+    admin,
+    protocol="openai_compatible",
+    *,
+    balance="100",
+    auto_publish=False,
+    **upstream_options,
 ):
     client, root, app, settings = http
     org, _, _ = await setup_wallet(http, balance)
@@ -80,6 +86,8 @@ async def provision_plane(
             "organization_ids": [org["id"]],
             "deployment_ids": [dep["id"]],
             "public_key": base64.b64encode(bytes(private.public_key)).decode(),
+            # These tests release by hand; test_auto_publish covers the worker path.
+            "auto_publish": auto_publish,
         },
     )
     assert response.status_code == 201, response.text

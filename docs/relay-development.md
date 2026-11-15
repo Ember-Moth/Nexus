@@ -20,6 +20,11 @@
 | `NEXUS_RELAY_WS_SESSIONS`、`NEXUS_RELAY_WS_SESSIONS_PER_TENANT`、`NEXUS_RELAY_WS_TURNS_PER_TENANT` | 单节点默认最多 128 个会话，同一企业在该节点默认最多 16 个会话和 16 个活跃轮次。跨节点生成额度由 Redis 控制 |
 | `NEXUS_RELAY_MAX_ATTEMPTS` | HTTP/SSE 生成每个请求最多尝试的次数，默认 2，范围 1 至 4；1 表示关闭故障转移 |
 | `NEXUS_RELAY_FAILOVER_BUDGET_MS` | 首次尝试开始后仍可发起新尝试的时限，默认 10000 毫秒，范围 100 至 60000 毫秒；不截断已在执行的尝试 |
+| `NEXUS_RELAY_REQUESTS_PER_TENANT` | 同一企业在该节点同时占用的 HTTP 请求数，默认 32，覆盖生成和资源接口。超出返回 429 `tenant_concurrency_limit` |
+| `NEXUS_RELAY_STREAMS_PER_TENANT`、`NEXUS_RELAY_STREAM_LIFETIME_SECONDS` | 同一企业在该节点同时续读的已存储 response 流数，默认 8，超出返回 429 `stream_limit`；续读流最长保持 1800 秒 |
+| `NEXUS_RELAY_RESOURCES_PER_KEY`、`NEXUS_RELAY_RESOURCES_PER_ORGANIZATION` | 每个 Key、每个企业在本集群可持有的文件、会话、容器、批处理的数量，分别计数，默认 10000 和 100000。创建超限返回 429 `resource_limit_exceeded` |
+| `NEXUS_RELAY_VECTOR_STORES_PER_KEY`、`NEXUS_RELAY_VECTOR_STORES_PER_ORGANIZATION` | 向量库的同类上限，默认 100 和 1000 |
+| `NEXUS_RELAY_PURGE_GRACE_SECONDS` | Key 撤销、过期或企业、项目、服务账户停用后，删除其上游资源前的宽限期，默认 604800 秒（7 天），0 表示下一轮即删除。`NEXUS_RELAY_PURGE_INTERVAL_MS` 设置节点调度和执行清理的间隔，默认 60000 毫秒 |
 | `NEXUS_RELAY_UPSTREAM_CA` | 可选的 PEM 根证书路径，用于拥有专用 CA 的 HTTPS 部署 |
 
 在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 或 `websocket` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认使用 `store=false`，省略输出限制时使用部署上限。已存储 response、后台运行、会话、文件、向量库、批处理、代码执行、远程 MCP、Web Fetch 和 Web Search 默认关闭，须在 `provider_features` 中逐项启用。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。旧部署保留原配置，声明端点后才参与原生转发。

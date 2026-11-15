@@ -191,11 +191,7 @@ pub(super) async fn stored_response(
         let key = index.authenticate(raw)?;
         let id = Generate::handle(&handle)
             .ok_or(Failure(StatusCode::NOT_FOUND, "response_not_found"))?;
-        let permit = node
-            .capacity
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Failure::unavailable())?;
+        let permit = super::tenancy::admit(&node, &index, key).await?;
         let record = node.db.resolve_response(id, key.id, index.revision).await?;
         let dep = index
             .deployment(record.deployment)
@@ -296,8 +292,15 @@ pub(super) async fn stored_response(
             {
                 return Err(Failure::upstream());
             }
+            // A resumed stream outlives the connection cap; it holds a stream slot and
+            // ends at the stream lifetime.
+            let stream = node
+                .tenant_streams
+                .enter(key.organization_id)
+                .ok_or(Failure(StatusCode::TOO_MANY_REQUESTS, "stream_limit"))?;
             streaming.0.cancel();
             return Ok(super::background::resume(
+                stream,
                 node.clone(),
                 binding,
                 response,

@@ -125,11 +125,9 @@ async fn operation(
         .key(&parts.headers)
         .map_err(|_| Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"))?;
     let index = node.current().ok_or_else(Failure::unavailable)?;
-    let kid = index.authenticate(key)?.id;
-    let _permit = node
-        .capacity
-        .try_acquire()
-        .map_err(|_| Failure::unavailable())?;
+    let owner = index.authenticate(key)?;
+    let kid = owner.id;
+    let _admitted = super::tenancy::admit(node, &index, owner).await?;
     let suffix = parts
         .uri
         .path()
@@ -145,8 +143,9 @@ async fn operation(
     }
     let mut file_target = None;
     let payload = if write {
-        let bytes = to_bytes(body, limit)
+        let bytes = tokio::time::timeout(super::UPLOAD_DEADLINE, to_bytes(body, limit))
             .await
+            .map_err(|_| Failure(StatusCode::REQUEST_TIMEOUT, "upload_timeout"))?
             .map_err(|_| Failure(StatusCode::PAYLOAD_TOO_LARGE, "invalid_request_body"))?;
         let mut value: Value = if creation && bytes.is_empty() {
             json!({})
@@ -203,6 +202,7 @@ async fn operation(
         node.db
             .preflight(kid, index.revision, Some(model), Some(dep.id))
             .await?;
+        super::tenancy::room(node, &index, owner, "conversation").await?;
         (trace, None, model, dep)
     } else {
         let handle = ConversationId::handle(path[0]).ok_or_else(missing)?;
@@ -298,11 +298,14 @@ async fn operation(
                 node.db
                     .save_conversation(handle, kid, index.revision, model, dep.id, returned)
             };
-            if let Err(e) = save().await {
-                if !e.retryable() {
-                    return Err(e.into());
-                }
-                save().await?;
+            let saved = match save().await {
+                Err(e) if e.retryable() => save().await,
+                saved => saved,
+            };
+            if let Err(e) = saved {
+                // The provider holds a conversation no handle refers to.
+                super::purge::orphaned(node, &index, dep, kid, "conversation", EP, returned).await;
+                return Err(e.into());
             }
         }
         value["id"] = format!("conv_nx_{handle}").into();

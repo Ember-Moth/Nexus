@@ -774,6 +774,14 @@ impl Index {
                 .get(&dep)
                 .is_some_and(|d| d.model_id == model)
     }
+    /// API keys of an organization in this snapshot.
+    pub fn organization_keys(&self, organization: Uuid) -> Vec<Uuid> {
+        self.keys
+            .values()
+            .filter(|k| k.organization_id == organization)
+            .map(|k| k.id)
+            .collect()
+    }
     pub fn deployment(&self, id: Uuid) -> Option<&Deployment> {
         self.deployments.get(&id)
     }

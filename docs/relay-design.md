@@ -122,6 +122,20 @@ catalog 按端点校验这些声明，publication 随快照发布。只要快照
 
 入口在预留前校验并剥离标签，再把供应商原值发往上游。标签不属于当前 Key、未加标签的 `encrypted_content`、`item_reference`、只有 `id` 的项、带供应商 ID 的 reasoning 或 compaction 项，以及未加标签的 `approval_request_id`，都以 HTTP 400 `item_not_owned` 拒绝。其他完整内容项上未加标签的 `id` 只起命名作用，转发前删除。Nexus 转换路径自带的 `nxctx1.` 私有历史仍由原有密封校验。选择出口改写而不是逐项向上游查证，是因为无状态续接（`store=false` 回传带密文的 reasoning 项）没有可查证的父响应。升级前客户端保存的带供应商 ID 的 reasoning 项会被拒绝，需要重新开始会话。
 
+### 租户隔离与限额
+
+资源接口（文件、会话、向量库、容器、批处理、已存储 response）与生成一样占用节点并发，并额外受每企业节点并发上限约束。资源接口调用按企业现有的 Redis RPM 与并发策略准入，不占用 Token 额度。批处理在解析任何条目的资源前先完成这一准入，解析后再按逐项上界占用 TPM。请求体上传最长 60 秒，超时返回 408 `upload_timeout`。续读已存储 response 的流另占每企业流配额，并在流寿命到期时结束。创建文件、会话、向量库、容器和批处理前，节点核对该 Key 与所属企业在本集群的存量，超限时返回 429 `resource_limit_exceeded`。上限都由节点配置，见[开发计划](relay-development.md)。
+
+## 上游资源清理
+
+删除上游副本有三条路径：
+
+1. **企业主动删除。** 通过各资源的 DELETE 接口删除，功能关闭后仍可调用。
+2. **Key 失效。** Key 撤销或过期，或其企业、项目、服务账户不再处于 active，节点首次观察到时记录起点（有撤销或过期时间的以该时间为准）。超过 `NEXUS_RELAY_PURGE_GRACE_SECONDS` 宽限期后，该 Key 在本集群的已存储 response、文件、会话、向量库、容器和批处理进入 `publication.upstream_purges` 队列。宽限期内恢复可用的 Key 不会被清理。
+3. **本地保存失败。** 上游已创建文件或会话、但本地句柄保存失败时，节点立即尽力删除上游副本；删除失败则把定位信息写入同一队列，原因为 `orphan`。
+
+集群内任一节点每分钟领取到期任务（租期 10 分钟），用部署当前凭据调用供应商的删除接口。2xx 和 404 都视为已删除，所以重试幂等；随后把本地句柄标记为删除。向量库通过原有的存储观测记录删除，计费按现有路径结束。批处理仍在运行时先请求取消，下次再删除。Claude 代码执行容器没有删除接口，由供应商到期回收。失败按指数退避重试，最长每天一次，30 次后标记为 `abandoned`。每次结果都写入 `publication.audit_events`（`upstream_resource.purged`、`upstream_resource.purge_failed`、`upstream_resource.purge_abandoned`），队列行本身保留尝试次数和最后的错误代码。部署已删除或换了凭据时，任务以 `deployment_unavailable` 等待运维处理。
+
 ## 首期协议与计量细则
 
 **文本与工具。** 两种入口都从公开模型名解析模型 ID，由部署决定出站模型名。原生转发保留已启用字段，转换只覆盖可证明等价的显式文本上下文和自定义函数工具。Messages 的 `tool_use.id` 与 `tool_result.tool_use_id`、Responses 的 `function_call.call_id` 与 `function_call_output.call_id` 在同一对话中保持对应关系；Responses 的输出项 ID 单独处理。参数增量按工具索引或项 ID 归集，完整后解析 JSON。重复或失配 ID、无等价停止条件、依赖厂商私有思考签名的跨协议历史，在预留前返回参数错误。Responses 默认使用显式输入历史及 `store=false`。只有部署启用 `stored_responses` 后才接受 `store=true`；这类原生请求以企业 Key 绑定 Nexus 句柄；读取、删除和继续生成时重新核对授权及原上游绑定。后台运行和托管工具有各自的生命周期与计量要求。[OpenAI Docs：创建 Responses](https://developers.openai.com/api/reference/resources/responses/methods/create) · [工具调用与输出项](https://developers.openai.com/api/docs/guides/migrate-to-responses)

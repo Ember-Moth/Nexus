@@ -288,20 +288,23 @@ async fn replay(
 }
 
 pub(super) fn resume(
+    stream: super::tenancy::TenantPermit,
     node: Arc<Node>,
     binding: ReadBinding,
     upstream: reqwest::Response,
     cursor: Option<i64>,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    permit: super::tenancy::Admitted,
 ) -> axum::response::Response {
     let (tx, rx) = tokio::sync::mpsc::channel(2);
     let tasks = node.tasks.clone();
     tasks.spawn(async move {
-        let _permit = permit;
-        if replay(&node, &binding, upstream, cursor, &tx)
-            .await
-            .is_err()
-        {
+        let _permit = (permit, stream);
+        let replayed = tokio::time::timeout(
+            node.stream_lifetime,
+            replay(&node, &binding, upstream, cursor, &tx),
+        )
+        .await;
+        if !matches!(replayed, Ok(Ok(()))) {
             let _ = tokio::time::timeout(
                 node.stream_idle,
                 tx.send(Err(std::io::Error::other(

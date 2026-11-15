@@ -150,12 +150,10 @@ async fn handle_request(
         .map_err(|_| Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"))?;
     let headers = AnthropicHeaders::parse(&parts.headers).map_err(|_| invalid())?;
     let index = node.current().ok_or_else(Failure::unavailable)?;
-    let kid = index.authenticate(raw)?.id;
-    let permit = node
-        .capacity
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| Failure::unavailable())?;
+    let owner = index.authenticate(raw)?;
+    let kid = owner.id;
+    // Admission precedes resolving any item's resources.
+    let permit = super::tenancy::admit(&node, &index, owner).await?;
     let tail = parts.uri.path().strip_prefix(ROOT).ok_or_else(missing)?;
     if tail.is_empty() {
         if parts.method == Method::GET {
@@ -186,8 +184,10 @@ async fn handle_request(
             rows.truncate(limit as usize);
             return Ok(Json(json!({"has_more":more,"first_id":rows.first().map(|v|&v["id"]),"last_id":rows.last().map(|v|&v["id"]),"data":rows})).into_response());
         }
-        let bytes = to_bytes(body, limit)
+        super::tenancy::room(&node, &index, index.authenticate(raw)?, "batch").await?;
+        let bytes = tokio::time::timeout(super::UPLOAD_DEADLINE, to_bytes(body, limit))
             .await
+            .map_err(|_| Failure(StatusCode::REQUEST_TIMEOUT, "upload_timeout"))?
             .map_err(|_| Failure(StatusCode::PAYLOAD_TOO_LARGE, "batch_too_large"))?;
         let mut input: Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
         let object = input
@@ -388,7 +388,7 @@ fn results_response(
     kid: Uuid,
     rev: i64,
     mut reply: reqwest::Response,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    permit: super::tenancy::Admitted,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::channel(2);
     let tasks = node.tasks.clone();

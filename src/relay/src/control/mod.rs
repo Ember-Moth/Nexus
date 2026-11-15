@@ -4,6 +4,7 @@ pub mod credential;
 pub mod database;
 pub(crate) mod execution;
 pub mod limits;
+pub(crate) mod purges;
 pub(crate) mod resources;
 pub mod snapshot;
 pub(crate) mod stored;

@@ -331,10 +331,7 @@ async fn request(
         .map_err(|_| Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"))?;
     let index = node.current().ok_or_else(Failure::unavailable)?;
     let key = index.authenticate(key_text)?;
-    let _permit = node
-        .capacity
-        .try_acquire()
-        .map_err(|_| Failure::unavailable())?;
+    let _admitted = super::tenancy::admit(node, &index, key).await?;
     let messages = ep == Endpoint::AnthropicMessages;
     if file.is_none() && parts.method == Method::GET {
         let mut page = FilePage {
@@ -486,6 +483,7 @@ async fn request(
         node.db
             .preflight(key.id, index.revision, Some(model), Some(dep.id))
             .await?;
+        super::tenancy::room(node, &index, key, "file").await?;
         (Uuid::new_v4(), model, dep)
     };
     let token = credential(node, &index, dep).await?;
@@ -548,11 +546,14 @@ async fn request(
                 node.db
                     .save_native_file(id, key.id, index.revision, (model, dep.id), &value, ep)
             };
-            if let Err(e) = save().await {
-                if !e.retryable() {
-                    return Err(e.into());
-                }
-                save().await?;
+            let saved = match save().await {
+                Err(e) if e.retryable() => save().await,
+                saved => saved,
+            };
+            if let Err(e) = saved {
+                // The provider holds a file no handle refers to.
+                super::purge::orphaned(node, &index, dep, key.id, "file", ep, pid).await;
+                return Err(e.into());
             }
         } else {
             if path[0] != pid {

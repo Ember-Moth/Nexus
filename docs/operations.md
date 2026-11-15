@@ -147,6 +147,7 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 | `reason`、`error` | 固定原因码、网关契约错误码或错误类型的固定描述，不含驱动或上游返回的正文 |
 | `revision`、`elapsed_ms`、`replays`、`turns`、`in_flight`、`reused`、`reusable` | 修订号、耗时、计数和布尔值 |
 | `listen`、`version` | 监听地址与版本 |
+| `purge_id`、`resource_kind`、`provider_id` | 上游清理任务 ID、资源类型和供应商资源 ID；供应商 ID 只是定位符，只在清理日志中出现 |
 
 日志中不会出现企业调用 Key（包括摘要）、上游凭据、集群私钥、数据库或 Redis 口令、请求或响应正文和工具参数；排查时用 `request_id` 关联 billing 中的请求和尝试。
 
@@ -157,6 +158,9 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 | `control-plane refresh failed` / `control-plane refresh recovered` | warn / info | 每次刷新失败，`reason=heartbeat` 表示 Redis 心跳失败；恢复后的首次成功 |
 | `request finished` | info | 每个开始了上游尝试的请求或轮次结束，含最后一次尝试的部署、交付结果、尝试数和耗时 |
 | `upstream attempt declined` | warn | 故障转移决策点：一次尝试被证明未执行。含 `request_id`、`attempt`、原部署 `deployment_id`、`reason` 和 `outcome`（取值同指标 `result`）；选出候选时另含 `next_deployment_id` |
+| `upstream copy deleted` / `upstream copy not deleted` | info / warn | 一个清理任务的结果，含 `purge_id`、`resource_kind`，失败时含 `reason` |
+| `upstream purge claim failed`、`upstream purge not recorded` | warn | 领取或记录清理任务时控制平面不可用 |
+| `orphaned upstream resource not recorded` | warn | 本地保存失败、立即删除失败且无法入队；含 `resource_kind`、`deployment_id`、`provider_id`，需人工清理 |
 | `attempt set unresolved; request close withheld for review` | warn | 新尝试的提交结果和是否存在都无法确认，请求不提交关闭事件，留待预留到期后核对 |
 | `upstream request failed`、`upstream response rejected`、`upstream stream interrupted`、`upstream request interrupted`、`upstream websocket handshake failed`、`upstream websocket turn interrupted` | warn | 上游失败，含 `request_id`、`deployment_id` 和原因 |
 | `completion event replay scheduled` / `completion event accepted after replay` | warn / info | 完成事件第一次提交失败开始重放，以及重放后被接受 |

@@ -47,6 +47,9 @@ pub const LOG_FIELDS: &[&str] = &[
     "listen",
     "in_flight",
     "version",
+    "purge_id",
+    "resource_kind",
+    "provider_id",
 ];
 
 /// Replacement value for fields outside [`LOG_FIELDS`].

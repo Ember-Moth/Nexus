@@ -7,6 +7,8 @@ mod files;
 mod history;
 mod observe;
 mod preflight;
+mod purge;
+pub mod tenancy;
 mod vectors;
 mod websocket;
 
@@ -67,6 +69,18 @@ pub struct NodeLimits {
     pub max_attempts: usize,
     /// No further attempt starts once this much time has passed since the first one.
     pub failover_budget: Duration,
+    /// Concurrent HTTP requests one organization may hold on this node.
+    pub requests_per_tenant: usize,
+    /// Concurrent resumed response streams one organization may hold on this node.
+    pub streams_per_tenant: usize,
+    /// Longest time a resumed response stream may stay open.
+    pub stream_lifetime: Duration,
+    /// Live resources per key and organization, by kind.
+    pub resources: tenancy::ResourceLimits,
+    /// How long a key stays unusable before its upstream copies are deleted.
+    pub purge_grace: Duration,
+    /// How often the node schedules and runs upstream purges.
+    pub purge_interval: Duration,
 }
 
 /// Bounds for `NodeLimits::max_attempts`.
@@ -84,6 +98,12 @@ pub struct Node {
     pub(crate) event_bytes: usize,
     pub(crate) max_attempts: usize,
     pub(crate) failover_budget: Duration,
+    pub(crate) tenant_requests: Arc<tenancy::TenantSlots>,
+    pub(crate) tenant_streams: Arc<tenancy::TenantSlots>,
+    pub(crate) stream_lifetime: Duration,
+    pub(crate) resource_limits: tenancy::ResourceLimits,
+    pub(crate) purge_grace_seconds: i32,
+    pub(crate) purge_interval: Duration,
     cluster: Uuid,
     healthy: AtomicBool,
     index: RwLock<Option<Arc<Index>>>,
@@ -114,6 +134,12 @@ impl Node {
             turns_per_tenant,
             max_attempts,
             failover_budget,
+            requests_per_tenant,
+            streams_per_tenant,
+            stream_lifetime,
+            resources,
+            purge_grace,
+            purge_interval,
         } = limits_config;
         if stream_idle.is_zero()
             || event_bytes == 0
@@ -127,6 +153,18 @@ impl Node {
             || capacity > Semaphore::MAX_PERMITS
             || !MAX_ATTEMPTS.contains(&max_attempts)
             || !(Duration::from_millis(100)..=Duration::from_secs(60)).contains(&failover_budget)
+            || requests_per_tenant == 0
+            || streams_per_tenant == 0
+            || stream_lifetime.is_zero()
+            || [
+                resources.per_key,
+                resources.per_organization,
+                resources.vector_stores_per_key,
+                resources.vector_stores_per_organization,
+            ]
+            .contains(&0)
+            || purge_grace > Duration::from_secs(i32::MAX as u64)
+            || !(Duration::from_millis(100)..=Duration::from_secs(86400)).contains(&purge_interval)
         {
             return Err(ControlError::Invalid("node limits"));
         }
@@ -145,6 +183,12 @@ impl Node {
             event_bytes,
             max_attempts,
             failover_budget,
+            tenant_requests: tenancy::TenantSlots::new(requests_per_tenant),
+            tenant_streams: tenancy::TenantSlots::new(streams_per_tenant),
+            stream_lifetime,
+            resource_limits: resources,
+            purge_grace_seconds: purge_grace.as_secs() as i32,
+            purge_interval,
             healthy: AtomicBool::new(false),
             index: RwLock::new(None),
             capacity: Arc::new(Semaphore::new(capacity)),
@@ -312,6 +356,14 @@ async fn generate(
     let Some(index) = node.index.read().unwrap().clone() else {
         return error(id, endpoint, Failure::unavailable());
     };
+    // An unauthenticated caller is refused during selection; it holds no tenant slot.
+    let tenant = match index.authenticate(key) {
+        Ok(k) => match node.tenant_requests.enter(k.organization_id) {
+            Some(slot) => Some(slot),
+            None => return error(id, endpoint, tenancy::tenant_limited()),
+        },
+        Err(_) => None,
+    };
     let Ok(permit) = node.capacity.clone().try_acquire_owned() else {
         return error(id, endpoint, Failure::unavailable());
     };
@@ -422,7 +474,7 @@ async fn generate(
     let tracker = node.tasks.clone();
     let key = key.to_owned();
     tracker.spawn(async move {
-        let _permit = permit;
+        let _permit = (permit, tenant);
         request::run(id, node, index, key, request, tx, tally).await;
     });
     let result = match rx.await {
@@ -711,6 +763,7 @@ pub async fn serve(
     let poller = tokio::spawn(background::supervise(node.clone(), stop.clone()));
     let vector_poller = tokio::spawn(vectors::supervise(node.clone(), stop.clone()));
     let batch_poller = tokio::spawn(batches::supervise(node.clone(), stop.clone()));
+    let purger = tokio::spawn(purge::supervise(node.clone(), stop.clone()));
     let sockets = TaskTracker::new();
     loop {
         let (stream, _) =
@@ -776,6 +829,7 @@ pub async fn serve(
     let _ = timeout(Duration::from_secs(1), maintenance).await;
     let _ = poller.await;
     let _ = batch_poller.await;
+    let _ = purger.await;
     let _ = vector_poller.await;
     info!(
         elapsed_ms = drain.elapsed().as_millis() as u64,

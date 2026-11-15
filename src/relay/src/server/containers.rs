@@ -243,14 +243,12 @@ pub(super) async fn handle(
             .map_err(|_| Failure(StatusCode::UNAUTHORIZED, "invalid_api_key"))?
             .to_owned();
         let index = node.current().ok_or_else(Failure::unavailable)?;
-        let kid = index.authenticate(&raw)?.id;
-        let permit = node
-            .capacity
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Failure::unavailable())?;
-        let bytes = to_bytes(body, limit)
+        let owner = index.authenticate(&raw)?;
+        let kid = owner.id;
+        let permit = super::tenancy::admit(&node, &index, owner).await?;
+        let bytes = tokio::time::timeout(super::UPLOAD_DEADLINE, to_bytes(body, limit))
             .await
+            .map_err(|_| Failure(StatusCode::REQUEST_TIMEOUT, "upload_timeout"))?
             .map_err(|_| Failure(StatusCode::PAYLOAD_TOO_LARGE, "invalid_request_body"))?;
         let reader = Containers {
             node: node.clone(),
@@ -498,6 +496,8 @@ impl Containers {
             } else {
                 Failure(StatusCode::BAD_REQUEST, "no_container_deployment")
             })?;
+            let owner = self.index.authenticate(&self.raw)?;
+            super::tenancy::room(&self.node, &self.index, owner, "container").await?;
             (None, m, d)
         } else {
             let h = parse(path[0], "cntr_nx_")?;

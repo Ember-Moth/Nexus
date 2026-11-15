@@ -59,6 +59,7 @@ def reset_identity(admin):
         "billing.vector_storage_contracts, "
         "publication.vector_file_batches,publication.vector_stores, "
         "publication.conversations, publication.batch_items, publication.message_batches, "
+        "publication.upstream_purges, publication.inactive_keys, "
         "publication.response_jobs, publication.tenant_files, "
         "publication.stored_responses, publication.previous_keys, publication.gateway_principals, "
         "publication.gateway_clusters, publication.node_config_acks, "

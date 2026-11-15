@@ -6,7 +6,7 @@ import pytest
 from test_billing import headers
 from test_project_credentials import key as issue_key
 from test_relay import relay_binary, tls, wait_events  # noqa: F401
-from test_relay_streams import stream_plane
+from test_relay_streams import stream_plane, unsealed
 
 pytestmark = pytest.mark.integration
 
@@ -107,20 +107,27 @@ async def test_stored_response_key_ownership(http, admin, tls, relay_binary):  #
         path = "/v1/responses/" + handle
         get = await client.get(path, headers=token)
         assert get.status_code == 200 and get.json() == created.json()
-        for invalid_item in [
-            {"id": "absent"},
-            {
-                "type": "mcp_approval_response",
-                "approval_request_id": "msg_in_parent",
-                "approve": True,
-            },
+        # Item references carry the IDs this key received, bound to it by the node.
+        sealed = {unsealed(o)["id"]: o["id"] for o in created.json()["output"]}
+        assert all(v.startswith("nxo_") for v in sealed.values())
+        for invalid_item, status in [
+            ({"id": "absent"}, 400),
+            ({"type": "item_reference", "id": "msg_in_parent"}, 400),
+            (
+                {
+                    "type": "mcp_approval_response",
+                    "approval_request_id": sealed["msg_in_parent"],
+                    "approve": True,
+                },
+                404,
+            ),
         ]:
             denied = await client.post(
                 "/v1/responses",
                 headers=token,
                 json=body | {"previous_response_id": handle, "input": [invalid_item]},
             )
-            assert denied.status_code == 404
+            assert denied.status_code == status, denied.text
         assert admin.execute("SELECT count(*) FROM billing.request_runs").fetchone() == (1,)
         continuation = await client.post(
             "/v1/responses",
@@ -129,10 +136,10 @@ async def test_stored_response_key_ownership(http, admin, tls, relay_binary):  #
             | {
                 "previous_response_id": handle,
                 "input": [
-                    {"type": "item_reference", "id": "msg_in_parent"},
+                    {"type": "item_reference", "id": sealed["msg_in_parent"]},
                     {
                         "type": "mcp_approval_response",
-                        "approval_request_id": "approval_in_parent",
+                        "approval_request_id": sealed["approval_in_parent"],
                         "approve": True,
                     },
                 ],

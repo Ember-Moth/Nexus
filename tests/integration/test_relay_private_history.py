@@ -11,7 +11,7 @@ from test_catalog import make_deployment
 from test_identity_api import auth
 from test_project_credentials import key as issue_key
 from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F401
-from test_relay_streams import stream_plane
+from test_relay_streams import stream_plane, unsealed
 
 pytestmark = pytest.mark.integration
 
@@ -416,7 +416,7 @@ async def test_private_replay_and_scope(http, admin, tls, relay_binary, family):
             if claude:
                 assert [b["type"] for b in blocks] == ["reasoning", "reasoning", "message"]
                 assert blocks[0]["summary"] == [{"type": "summary_text", "text": "Visible summary"}]
-                assert blocks[0]["encrypted_content"].startswith("nxctx1.")
+                assert unsealed(blocks[0])["encrypted_content"].startswith("nxctx1.")
                 assert sent[-1]["thinking"] == {"type": "adaptive", "display": "summarized"}
             else:
                 assert [b["type"] for b in blocks] == ["thinking", "redacted_thinking", "text"]
@@ -600,13 +600,12 @@ async def test_private_replay_and_scope(http, admin, tls, relay_binary, family):
             )
             assert "nxctx1." in hidden.text
 
-        async def rejected(body, k=key):
+        async def rejected(body, k=key, code=None):
+            code = code or "invalid_private_history"
             before = len(sent)
             reserved = admin.execute("SELECT count(*) FROM billing.request_runs").fetchone()
             r = await relay.post(path, headers=h(k), json=body)
-            assert (
-                r.status_code == 400 and r.json()["error"]["message"] == "invalid_private_history"
-            ), r.text
+            assert r.status_code == 400 and r.json()["error"]["message"] == code, r.text
             assert (
                 len(sent) == before
                 and admin.execute("SELECT count(*) FROM billing.request_runs").fetchone()
@@ -681,8 +680,9 @@ async def test_private_replay_and_scope(http, admin, tls, relay_binary, family):
             else:
                 f = "encrypted_content" if claude else "signature"
                 t = b[f]
-                b[f] = t[:12] + ("B" if t[12] == "A" else "A") + t[13:]
-            await rejected(q)
+                b[f] = t[:-12] + ("B" if t[-12] == "A" else "A") + t[-11:]
+            # Responses ciphertext is also bound to the key, so that tag fails first.
+            await rejected(q, code="item_not_owned" if claude and tamper == "cipher" else None)
         other = (
             await issue_key(
                 api, root, plane[2], str(plane[5].service_account_id), name="second-active"
@@ -712,8 +712,10 @@ async def test_private_replay_and_scope(http, admin, tls, relay_binary, family):
         assert (
             await relay.get("/v1/models", headers={"Authorization": "Bearer " + other})
         ).status_code == 200
-        await rejected(follow, other)
-        await rejected(cite_follow, other)
+        # Another key cannot replay this key's history; Responses items fail their key tag.
+        foreign = "item_not_owned" if claude else None
+        await rejected(follow, other, code=foreign)
+        await rejected(cite_follow, other, code=foreign)
         dep = plane[4]
         # Prefer a second deployment for ordinary generation. Existing state
         # must still route to the source while it is authorized and reachable.

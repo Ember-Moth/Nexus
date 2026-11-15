@@ -8,7 +8,7 @@ import httpx
 import pytest
 from test_billing import account_amounts
 from test_relay import relay_binary, tls, wait_events  # noqa: F401
-from test_relay_streams import stream_plane, usage
+from test_relay_streams import stream_plane, unsealed, usage
 
 pytestmark = pytest.mark.integration
 
@@ -341,7 +341,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
             if i == cross:
                 converted = answer
             if i == native:
-                assert answer == full
+                assert unsealed(answer) == full
             elif messages:
                 assert answer["status"] == "completed" and answer["model"] == model
                 assert answer["output"][0]["content"][0]["text"] == "京都"

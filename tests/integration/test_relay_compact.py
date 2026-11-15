@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 from test_billing import account_amounts
 from test_relay import relay_binary, tls, wait_events  # noqa: F401
-from test_relay_streams import stream_plane
+from test_relay_streams import stream_plane, unsealed
 
 pytestmark = pytest.mark.integration
 
@@ -114,7 +114,9 @@ async def test_native_compact_to_ledger(http, admin, tls, relay_binary):  # noqa
             )
         reply = await client.post(path, headers=auth, json=body)
         assert reply.status_code == 200, reply.text
-        assert reply.json() == compacted
+        # Item IDs and ciphertext leave the node bound to the calling key.
+        assert reply.json()["output"][1]["id"].startswith("nxo_")
+        assert unsealed(reply.json()) == compacted
         assert len(sent) == 1 and sent[0][0] == "/v1/responses/compact"
         assert sent[0][1]["authorization"] == "Bearer provider-secret-do-not-echo"
         assert sent[0][1]["accept"] == "application/json" and "x-nexus-cache-key" not in sent[0][1]

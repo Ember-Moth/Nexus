@@ -163,6 +163,8 @@ async fn operation(
         }
         if let Some(input) = value.get_mut("items") {
             items(input)?;
+            crate::protocol::ownership::open(input, &node.ownership, kid)
+                .map_err(|_| Failure(StatusCode::BAD_REQUEST, "item_not_owned"))?;
             file_target = super::files::bind_items(node, &index, kid, input).await?;
         } else if collection {
             return Err(invalid());
@@ -315,6 +317,7 @@ async fn operation(
             .rewrite(&mut value)
             .await
             .map_err(|_| Failure::upstream())?;
+        crate::protocol::ownership::seal(&mut value, &node.ownership, kid);
     }
     Ok(super::reply(status, value, Endpoint::OpenaiResponses))
 }

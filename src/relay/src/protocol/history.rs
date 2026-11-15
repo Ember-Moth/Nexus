@@ -21,7 +21,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const PREFIX: &str = "nxctx1.";
+pub(crate) const PREFIX: &str = "nxctx1.";
 fn invalid() -> ProtocolError {
     ProtocolError::Invalid("private history")
 }
@@ -302,6 +302,14 @@ pub(crate) fn reserved(item: &Value) -> bool {
             })
         })
 }
+/// A capsule issued to a Responses client also carries its ownership tag. Other protocols
+/// do not remove that tag, so recognize the capsule inside it and refuse it as history.
+fn capsule(s: &str) -> &str {
+    s.strip_prefix(super::ownership::BLOB)
+        .and_then(|rest| rest.get(super::ownership::TAG + 1..))
+        .filter(|inner| inner.starts_with(PREFIX))
+        .unwrap_or(s)
+}
 fn anchor(item: &Value) -> Option<&str> {
     if let Some(s) = item["nexus_history"].as_str() {
         return Some(s);
@@ -319,7 +327,10 @@ fn anchor(item: &Value) -> Option<&str> {
         }
         _ => return None,
     };
-    item[field].as_str().filter(|s| s.starts_with(PREFIX))
+    item[field]
+        .as_str()
+        .map(capsule)
+        .filter(|s| s.starts_with(PREFIX))
 }
 
 fn matches_projection(expected: &Value, actual: &Value) -> bool {

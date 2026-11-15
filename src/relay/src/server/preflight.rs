@@ -351,6 +351,7 @@ pub(super) async fn stored_response(
             .rewrite(&mut value)
             .await
             .map_err(|_| Failure::upstream())?;
+            crate::protocol::ownership::seal(&mut value, &node.ownership, key.id);
         }
         Ok::<_, Failure>(super::reply(status, value, Endpoint::OpenaiResponses))
     }

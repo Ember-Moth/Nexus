@@ -8,6 +8,7 @@ pub mod features;
 pub(crate) mod history;
 pub(crate) mod hosted;
 pub(crate) mod media;
+pub mod ownership;
 pub mod request;
 pub mod response;
 pub mod sse;

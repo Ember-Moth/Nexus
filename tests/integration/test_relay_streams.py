@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from contextlib import asynccontextmanager
 
 import pytest
@@ -17,6 +18,26 @@ from websockets.exceptions import InvalidStatus
 from nexus.modules.publication.application.schemas import FEATURE_CAPABILITIES
 
 pytestmark = pytest.mark.integration
+
+
+SEALED_ID = re.compile(r"^nxo_[A-Za-z0-9_-]{22}_")
+SEALED_BLOB = re.compile(r"^nxo1\.[A-Za-z0-9_-]{22}\.")
+
+
+def unsealed(value):
+    """Responses output without the key-bound ownership tags, for content comparisons."""
+    if isinstance(value, list):
+        return [unsealed(v) for v in value]
+    if not isinstance(value, dict):
+        return value
+    out = {}
+    for k, v in value.items():
+        if isinstance(v, str) and k in ("id", "item_id", "approval_request_id"):
+            v = SEALED_ID.sub("", v)
+        elif isinstance(v, str) and k == "encrypted_content":
+            v = SEALED_BLOB.sub("", v)
+        out[k] = unsealed(v)
+    return out
 
 
 def feature_capabilities(features):
@@ -302,7 +323,7 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
             assert (await public.post(path, headers=hdr, json=body)).status_code == 429
             gate.set()
             data = [json.loads(line[6:]) async for line in lines if line.startswith("data: ")]
-        assert data == events(messages, "r1")
+        assert unsealed(data) == events(messages, "r1")
         await wait_events(admin, 2)
         assert await http[2].state.usage.process() == 1
         assert account_amounts(admin, org) == (

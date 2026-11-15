@@ -441,6 +441,7 @@ async fn session(
         let (cancel, controls) = mpsc::channel(1);
         let request_id = Uuid::new_v4();
         let mut channel = TurnChannel {
+            owner: (node.ownership.clone(), selected.key.id),
             resources: crate::control::resources::ResourceScope::new(
                 &node.db,
                 selected.key.id,
@@ -654,6 +655,8 @@ async fn handle_busy(
 }
 
 struct TurnChannel {
+    /// Seals item IDs and ciphertext in outgoing events for the turn's key.
+    owner: (Arc<crate::protocol::ownership::OwnershipKey>, Uuid),
     resources: crate::control::resources::ResourceScope,
     conversation: Option<crate::protocol::request::ConversationId>,
     out: Output,
@@ -928,6 +931,7 @@ async fn roundtrip(
             stored.rewrite(&mut event).await?;
         }
         crate::protocol::upstream_error::scrub_event(&mut event);
+        crate::protocol::ownership::seal(&mut event, &ch.owner.0, ch.owner.1);
         timeout(ch.idle, emit(&ch.out, event))
             .await
             .map_err(|_| ())??;

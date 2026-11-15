@@ -116,6 +116,12 @@ catalog 按端点校验这些声明，publication 随快照发布。只要快照
 
 启用后，客户内容按供应商的保留策略存放在该部署的上游账户中；使用同一部署的企业共用这个账户。Nexus 只在 PostgreSQL 保存定位用的句柄、上游 ID 和归属，不保存内容。企业可随时通过对应的删除接口删除。Key 撤销、企业停用或归档后，Relay 在宽限期后删除这些资源的上游副本，见[上游资源清理](#上游资源清理)。远程 MCP 和 Web Fetch 只接受公网 https 主机，拒绝回环、私网、链路本地、CGNAT 等 IP 字面量及 `localhost`、`.internal`、`.local` 等主机名。
 
+### 供应商 ID 的归属
+
+共享上游账户会按 ID 解析任何租户的已存储项，也会解密任何租户的 reasoning 或 compaction 密文。Relay 因此在出口统一给 Responses 输出中的每个输出项 `id`、`item_id`、`approval_request_id` 和 `encrypted_content` 加上 Key 绑定的标签：ID 写成 `nxo_<标签>_<供应商 ID>`，密文写成 `nxo1.<标签>.<密文>`。标签是集群私钥派生密钥对“Key ID + 原值”计算的 HMAC，同一值在 SSE 各事件中保持一致，各节点都能校验。HTTP 与 SSE 生成、WebSocket 事件、已存储 response 的读取与续读、`input_items` 和会话条目都经过同一出口处理；`response.id` 和 Nexus 资源句柄不受影响。
+
+入口在预留前校验并剥离标签，再把供应商原值发往上游。标签不属于当前 Key、未加标签的 `encrypted_content`、`item_reference`、只有 `id` 的项、带供应商 ID 的 reasoning 或 compaction 项，以及未加标签的 `approval_request_id`，都以 HTTP 400 `item_not_owned` 拒绝。其他完整内容项上未加标签的 `id` 只起命名作用，转发前删除。Nexus 转换路径自带的 `nxctx1.` 私有历史仍由原有密封校验。选择出口改写而不是逐项向上游查证，是因为无状态续接（`store=false` 回传带密文的 reasoning 项）没有可查证的父响应。升级前客户端保存的带供应商 ID 的 reasoning 项会被拒绝，需要重新开始会话。
+
 ## 首期协议与计量细则
 
 **文本与工具。** 两种入口都从公开模型名解析模型 ID，由部署决定出站模型名。原生转发保留已启用字段，转换只覆盖可证明等价的显式文本上下文和自定义函数工具。Messages 的 `tool_use.id` 与 `tool_result.tool_use_id`、Responses 的 `function_call.call_id` 与 `function_call_output.call_id` 在同一对话中保持对应关系；Responses 的输出项 ID 单独处理。参数增量按工具索引或项 ID 归集，完整后解析 JSON。重复或失配 ID、无等价停止条件、依赖厂商私有思考签名的跨协议历史，在预留前返回参数错误。Responses 默认使用显式输入历史及 `store=false`。只有部署启用 `stored_responses` 后才接受 `store=true`；这类原生请求以企业 Key 绑定 Nexus 句柄；读取、删除和继续生成时重新核对授权及原上游绑定。后台运行和托管工具有各自的生命周期与计量要求。[OpenAI Docs：创建 Responses](https://developers.openai.com/api/reference/resources/responses/methods/create) · [工具调用与输出项](https://developers.openai.com/api/docs/guides/migrate-to-responses)

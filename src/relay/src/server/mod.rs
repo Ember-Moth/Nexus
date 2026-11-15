@@ -77,6 +77,7 @@ pub struct Node {
     pub(crate) limits: Limits,
     pub(crate) private: SecretKey,
     pub(crate) history: Arc<crate::protocol::history::HistoryKey>,
+    pub(crate) ownership: Arc<crate::protocol::ownership::OwnershipKey>,
     pub(crate) upstream: Upstream,
     pub(crate) lease_ms: u32,
     pub(crate) stream_idle: Duration,
@@ -133,6 +134,9 @@ impl Node {
             db,
             limits,
             history: Arc::new(crate::protocol::history::HistoryKey::new(&private, cluster)),
+            ownership: Arc::new(crate::protocol::ownership::OwnershipKey::new(
+                &private, cluster,
+            )),
             private,
             upstream,
             lease_ms,
@@ -405,6 +409,15 @@ async fn generate(
             );
         }
     }
+    // Responses output carries item IDs and ciphertext bound to the calling key.
+    let owner = (endpoint == Endpoint::OpenaiResponses && route != Route::Chat)
+        .then(|| {
+            index
+                .authenticate(key)
+                .ok()
+                .map(|k| (node.ownership.clone(), k.id))
+        })
+        .flatten();
     let (tx, rx) = oneshot::channel();
     let tracker = node.tasks.clone();
     let key = key.to_owned();
@@ -431,6 +444,11 @@ async fn generate(
                     crate::protocol::upstream_error::scrub_bytes(status, &body, endpoint);
                 status = scrubbed;
                 body = value.to_string().into_bytes();
+            } else if let Some((owner, kid)) = &owner
+                && let Ok(mut value) = serde_json::from_slice::<Value>(&body)
+            {
+                crate::protocol::ownership::seal(&mut value, owner, *kid);
+                body = value.to_string().into_bytes();
             }
             let length = body.len();
             wire.track(length, receipt);
@@ -448,8 +466,16 @@ async fn generate(
             applied,
         } => {
             wire.track_stream(receipt);
-            let stream = futures_util::stream::unfold(body, |mut rx| async move {
-                rx.recv().await.map(|item| (item, rx))
+            let stream = futures_util::stream::unfold(body, move |mut rx| {
+                let owner = owner.clone();
+                async move {
+                    let item = rx.recv().await?;
+                    let item = match (item, owner) {
+                        (Ok(frame), Some((owner, kid))) => Ok(seal_frames(&frame, &owner, kid)),
+                        (item, _) => item,
+                    };
+                    Some((item, rx))
+                }
             });
             applied
                 .headers(Response::builder())
@@ -460,6 +486,44 @@ async fn generate(
                 .expect("SSE response metadata")
         }
     }
+}
+
+/// Seal the JSON data of whole SSE frames. The stream writer emits one complete frame per chunk.
+fn seal_frames(
+    frames: &axum::body::Bytes,
+    owner: &crate::protocol::ownership::OwnershipKey,
+    kid: Uuid,
+) -> axum::body::Bytes {
+    let Ok(text) = std::str::from_utf8(frames) else {
+        return frames.clone();
+    };
+    let mut out = String::with_capacity(text.len() + 64);
+    for frame in text.split_inclusive("\n\n") {
+        let mut name = None;
+        let mut data = Vec::new();
+        for line in frame.lines() {
+            if let Some(v) = line.strip_prefix("event: ") {
+                name = Some(v);
+            } else if let Some(v) = line.strip_prefix("data: ") {
+                data.push(v);
+            }
+        }
+        match serde_json::from_str::<Value>(&data.join("\n")) {
+            Ok(mut value) if frame.ends_with("\n\n") => {
+                crate::protocol::ownership::seal(&mut value, owner, kid);
+                if let Some(name) = name {
+                    out.push_str("event: ");
+                    out.push_str(name);
+                    out.push('\n');
+                }
+                out.push_str("data: ");
+                out.push_str(&value.to_string());
+                out.push_str("\n\n");
+            }
+            _ => out.push_str(frame),
+        }
+    }
+    out.into()
 }
 
 async fn ready(State(node): State<Arc<Node>>) -> StatusCode {
@@ -476,6 +540,12 @@ async fn bind_input(
     key: &str,
     request: &mut Generate,
 ) -> Result<(), Failure> {
+    if request.endpoint == Endpoint::OpenaiResponses {
+        let kid = index.authenticate(key)?.id;
+        request
+            .open_items(&node.ownership, kid)
+            .map_err(|_| Failure(StatusCode::BAD_REQUEST, "item_not_owned"))?;
+    }
     history::bind(node, index, key, request).await?;
     files::bind(node, index, key, request).await
 }

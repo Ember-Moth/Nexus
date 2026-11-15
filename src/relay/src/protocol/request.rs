@@ -1006,6 +1006,19 @@ impl Generate {
     pub(crate) fn has_private_history(&self) -> bool {
         self.has_private_history
     }
+    /// Verify and remove the key-bound tags on Responses input items.
+    pub(crate) fn open_items(
+        &mut self,
+        owner: &super::ownership::OwnershipKey,
+        key: uuid::Uuid,
+    ) -> Result<(), ProtocolError> {
+        if let Some(items) = self.body.get_mut("input") {
+            super::ownership::open(items, owner, key)?;
+        }
+        self.has_private_history = private_entries(self.endpoint, &self.body)
+            .any(|(item, _)| super::history::reserved(item));
+        Ok(())
+    }
     pub(crate) fn bind_history(
         &mut self,
         codec: &super::history::HistoryKey,

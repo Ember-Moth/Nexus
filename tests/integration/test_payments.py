@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from policies import put_policy
 from test_billing import account_amounts, balance, finance_role, headers
 from test_identity_api import PASSWORD, auth, create_org, login
 
@@ -14,6 +15,7 @@ from nexus.shared.storage import SCHEMA_REVISION
 from scripts.mock_payment_provider import MockPaymentProvider
 
 pytestmark = pytest.mark.integration
+RATE_OF_ONE = {"requests_per_merchant_per_minute": 1}
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_KEY = "mock-api-key-for-local-tests-0000000001"
 SIGNING_KEY = "mock-signing-key-for-local-tests-000001"
@@ -927,7 +929,12 @@ async def test_ignored_notices_body_limits_and_rate_limits_are_explicit(payments
     assert response.status_code == 400
     response = await p.client.post("/webhooks/payments/" + chan["id"], content=b"x" * (1048576 + 1))
     assert response.status_code == 413
-    p.app.state.payment_service._limits._ip_limit = 1
+    await put_policy(
+        p.client,
+        p.root,
+        "/api/v1/settings/billing",
+        {"payments": {"notifications_per_ip_per_minute": 1}},
+    )
     response = await notify(p, chan, {**irrelevant, "event_id": "rate-limited"})
     assert response.status_code == 429
     assert admin.execute("SELECT count(*) FROM billing.payment_events").fetchone()[0] == 1
@@ -1186,10 +1193,9 @@ async def test_worker_rate_limit_is_shared_by_channels_and_workers(payments, adm
     await order(p, org, first)
     await order(p, org, second)
     primary = p.app.state.payment_processor
-    primary._requests_per_minute = 1
-    other = PaymentProcessor(
-        primary._transactions, primary._cipher, primary._registry, requests_per_minute=1
-    )
+    # Both workers read the limit from billing.settings in their own transactions.
+    await put_policy(p.client, p.root, "/api/v1/settings/billing", {"payments": RATE_OF_ONE})
+    other = PaymentProcessor(primary._transactions, primary._cipher, primary._registry)
     await asyncio.gather(primary.process(1), other.process(1))
     assert p.provider.create_calls + p.provider.query_calls == 1
     assert admin.execute(
@@ -1235,7 +1241,7 @@ async def test_rate_limited_recovery_reuses_a_verified_query_before_safe_retry(p
     )
     await processor.process(1)
     processor._registry._definitions["mock"] = original_transport
-    processor._requests_per_minute = 1
+    await put_policy(p.client, p.root, "/api/v1/settings/billing", {"payments": RATE_OF_ONE})
     admin.execute(
         "UPDATE billing.payment_rate_buckets "
         "SET window_start=clock_timestamp()-interval '61 seconds'"

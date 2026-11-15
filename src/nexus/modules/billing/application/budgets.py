@@ -2,11 +2,12 @@ from nexus.shared.errors import ServiceError
 
 from .common import found, versioned, view
 from .schemas import BudgetPeriodView, BudgetView, Page
+from .settings import stored_currency
 
 
 class BudgetService:
-    def __init__(self, transactions, access, currency):
-        self._transactions, self._access, self.currency = transactions, access, currency
+    def __init__(self, transactions, access):
+        self._transactions, self._access = transactions, access
 
     async def create(self, token, org_id, body):
         scope = await self._access.authorize(
@@ -17,7 +18,7 @@ class BudgetService:
             scope_id=body.scope_id,
             layer=body.layer,
         )
-        if body.currency != self.currency:
+        if body.currency != await stored_currency(self._transactions):
             raise ServiceError("currency_mismatch", "Currency must match the account currency", 422)
         async with self._transactions() as repo:
             await repo.account(org_id)

@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-from nexus.shared.views import ByteSeconds, DecimalString, Timestamp, View
+from nexus.shared.views import ByteSeconds, DecimalString, ManagedSource, Timestamp, View
 
 from ..domain.money import DIMENSIONS, Factor, Money, valid_quantity
 
@@ -400,3 +400,36 @@ class Settlement(Schema):
     quantities: Quantities | None = None
     evidence_reference: str = Field(min_length=1, max_length=255)
     normalization_version: str = Field(min_length=1, max_length=80)
+
+
+class VectorStoragePolicy(Schema):
+    prepaid_days: int = Field(
+        ge=1, le=31, description="Days of storage held ahead and renewed by the worker"
+    )
+    lapse_policy: Literal["delete", "suspend"] = Field(
+        description="What happens to a store once renewal failed and its prepaid days ran out"
+    )
+
+
+class PaymentLimits(Schema):
+    requests_per_merchant_per_minute: int = Field(
+        ge=1, le=10000, description="Worker calls to one merchant account per minute"
+    )
+    notifications_per_channel_per_minute: int = Field(ge=1, le=100000)
+    notifications_per_ip_per_minute: int = Field(ge=1, le=10000)
+
+
+class BillingPolicy(Schema):
+    currency: Currency = Field(
+        description="Every account, price, budget and channel uses it; it cannot change once "
+        "any of them exists (currency_locked)"
+    )
+    vector_storage: VectorStoragePolicy
+    payments: PaymentLimits
+
+
+class BillingPolicyView(BillingPolicy):
+    managed: ManagedSource | None = Field(
+        description="The policy file that locked this policy; writes are refused while set"
+    )
+    version: int

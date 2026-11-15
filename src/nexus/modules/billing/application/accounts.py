@@ -15,6 +15,7 @@ from .schemas import (
     ReceivingView,
     RequestView,
 )
+from .settings import stored_currency
 
 VIEWS = {
     "receiving": ReceivingView,
@@ -27,18 +28,14 @@ VIEWS = {
 
 
 class BillingService:
-    def __init__(self, transactions: Transactions, access: Access, currency: str):
-        self._transactions, self._access, self.currency = transactions, access, currency
+    def __init__(self, transactions: Transactions, access: Access):
+        self._transactions, self._access = transactions, access
 
-    def check_currency(self, currency):
-        if currency != self.currency:
+    async def check_currency(self, currency):
+        if currency != await stored_currency(self._transactions):
             raise ServiceError(
                 "currency_mismatch", "Currency must match the deployment billing currency", 422
             )
-
-    async def check(self):
-        async with self._transactions():
-            pass
 
     async def provision_account(self, event):
         if event.schema_version != 1:
@@ -46,7 +43,7 @@ class BillingService:
                 "unsupported_event_version", "Unsupported organization event version", 422
             )
         async with self._transactions() as repo:
-            return await repo.provision(event, self.currency)
+            return await repo.provision(event, repo.policy.currency)
 
     async def pending_accounts(self, limit=100):
         async with self._transactions() as repo:
@@ -88,7 +85,7 @@ class BillingService:
 
     async def create_receiving(self, token, body, key):
         actor = await self._access.authorize(token, operation="finance")
-        self.check_currency(body.currency)
+        await self.check_currency(body.currency)
         async with self._transactions() as repo:
             scope = "receiving:create"
             old, kd, rd = await replay(repo, actor, scope, key, body.model_dump(mode="json"))
@@ -117,7 +114,7 @@ class BillingService:
 
     async def create_funding(self, token, org_id, body, key):
         scope = await self._access.authorize(token, org_id, operation="finance")
-        self.check_currency(body.currency)
+        await self.check_currency(body.currency)
         async with self._transactions() as repo:
             action = f"{org_id}:funding:create"
             old, kd, rd = await replay(
@@ -165,7 +162,7 @@ class BillingService:
 
     async def update_funding(self, token, org_id, resource_id, body, version):
         scope = await self._access.authorize(token, org_id, operation="finance")
-        self.check_currency(body.currency)
+        await self.check_currency(body.currency)
         async with self._transactions() as repo:
             await repo.account(org_id)
             row = found(await repo.get("funding", resource_id, org_id, lock=True))
@@ -243,7 +240,7 @@ class BillingService:
 
     async def create_adjustment(self, token, org_id, body, key):
         scope = await self._access.authorize(token, org_id, operation="finance")
-        self.check_currency(body.currency)
+        await self.check_currency(body.currency)
         async with self._transactions() as repo:
             action = f"{org_id}:adjustment:create"
             old, kd, rd = await replay(

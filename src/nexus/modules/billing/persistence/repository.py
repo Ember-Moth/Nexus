@@ -22,6 +22,8 @@ from ..domain.events import (
 )
 from . import models as m
 
+# Sentinel: an administrator's write leaves the policy lock as it is (it is refused while set).
+KEEP = object()
 TABLES = {
     "account": m.Account,
     "receiving": m.ReceivingAccount,
@@ -291,21 +293,54 @@ class BillingRepository:
         )
         await self._session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": number})
 
-    async def currency(self, expected):
-        value = await self._session.get(m.Settings, 1)
-        if value is None:
-            await self.lock("currency")
-            value = await self._session.get(m.Settings, 1)
-            if value is None:
-                value = m.Settings(id=1, currency=expected)
-                self._session.add(value)
-                await self._session.flush()
-        if value.currency != expected:
-            raise ServiceError(
-                "currency_config_mismatch",
-                "Configured currency differs from the persisted billing currency",
-                503,
+    async def settings(self):
+        """The billing policy row; every billing transaction reads it first."""
+        self.policy = (
+            await self._session.execute(
+                select(m.Settings)
+                .where(m.Settings.id == 1)
+                .execution_options(populate_existing=True)
             )
+        ).scalar_one()
+        return self.policy
+
+    async def set_policy(self, values, version, *, managed=KEEP):
+        """Replace the policy columns if the row is still at ``version``.
+
+        ``managed`` is the SHA-256 of the policy file that locks the row, or None to unlock it.
+        """
+        assignments = [f"{name}=:{name}" for name in values]
+        params = {**values, "version": version}
+        if managed is not KEEP:
+            assignments.append(
+                "managed_sha256=:managed,managed_at=CASE WHEN CAST(:managed AS text) IS NULL "
+                "THEN NULL ELSE clock_timestamp() END"
+            )
+            params["managed"] = managed
+        result = await self._session.execute(
+            text(
+                f"UPDATE billing.settings SET {','.join(assignments)},version=version+1 "
+                "WHERE id=1 AND version=:version RETURNING version"
+            ),
+            params,
+        )
+        updated = result.scalar_one_or_none()
+        if updated is not None:
+            await self._session.refresh(self.policy)
+        return updated
+
+    async def has_money_facts(self):
+        """Whether anything already carries the billing currency."""
+        return (
+            await self._session.execute(
+                text(
+                    "SELECT EXISTS(SELECT FROM billing.accounts) "
+                    "OR EXISTS(SELECT FROM billing.price_versions) "
+                    "OR EXISTS(SELECT FROM billing.receiving_accounts) "
+                    "OR EXISTS(SELECT FROM billing.payment_channels)"
+                )
+            )
+        ).scalar_one()
 
     async def get(self, kind, resource_id, org_id=None, *, lock=False):
         model = TABLES[kind]
@@ -833,11 +868,11 @@ class BillingRepository:
 
 
 @asynccontextmanager
-async def transaction(database, currency, repository_type=BillingRepository):
+async def transaction(database, repository_type=BillingRepository):
     try:
         async with database.transaction() as session:
             repo = repository_type(session)
-            await repo.currency(currency)
+            await repo.settings()
             yield repo
     except IntegrityError:
         raise ServiceError(

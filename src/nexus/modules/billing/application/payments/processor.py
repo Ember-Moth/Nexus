@@ -16,9 +16,8 @@ from .support import expectation, open_gateway
 
 
 class PaymentProcessor:
-    def __init__(self, transactions, cipher, registry, *, requests_per_minute=120):
+    def __init__(self, transactions, cipher, registry):
         self._transactions, self._cipher, self._registry = transactions, cipher, registry
-        self._requests_per_minute = requests_per_minute
 
     async def process(self, limit=8):
         count = 0
@@ -90,7 +89,9 @@ class PaymentProcessor:
             delay = (
                 0
                 if operation.retry_observation_id
-                else await repo.take_rate_slot(order.receipt_namespace, self._requests_per_minute)
+                else await repo.take_rate_slot(
+                    order.receipt_namespace, repo.policy.payment_requests_per_merchant_per_minute
+                )
             )
             if delay:
                 operation.attempts -= 1
@@ -183,7 +184,9 @@ class PaymentProcessor:
                 await repo.edit(order, {"checkout_state": "unknown"})
                 await repo.finish(operation, review=True, error="unconfirmed")
                 return None
-            delay = await repo.take_rate_slot(order.receipt_namespace, self._requests_per_minute)
+            delay = await repo.take_rate_slot(
+                order.receipt_namespace, repo.policy.payment_requests_per_merchant_per_minute
+            )
             if delay:
                 operation.retry_observation_id = observation_id
                 if execution.retry_observation_id is not None:

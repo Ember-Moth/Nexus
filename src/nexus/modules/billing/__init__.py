@@ -14,6 +14,7 @@ from .application.ports import DeploymentInfo, ModelInfo, Scope
 from .application.pricing import PricingService
 from .application.reservations import ReservationService
 from .application.schemas import Admission, Settlement
+from .application.settings import BillingSettings
 from .application.usage import UsageProcessor
 from .domain.events import (
     ACCOUNT_READY,
@@ -56,6 +57,8 @@ __all__ = [
     "Settlement",
     "create_usage_processor",
     "create_services",
+    "create_settings",
+    "BillingSettings",
     "api",
 ]
 
@@ -73,16 +76,21 @@ def __getattr__(name):
     raise AttributeError(name)
 
 
-def create_services(database: ModuleDatabase, access, catalog, currency):
+def create_settings(database: ModuleDatabase, access):
+    database.require_module(ModuleName.BILLING)
+    return BillingSettings(lambda: transaction(database), access)
+
+
+def create_services(database: ModuleDatabase, access, catalog):
     database.require_module(ModuleName.BILLING)
 
     def transactions():
-        return transaction(database, currency, PaymentRepository)
+        return transaction(database, PaymentRepository)
 
     return (
-        BillingService(transactions, access, currency),
-        PricingService(transactions, access, catalog, currency),
-        BudgetService(transactions, access, currency),
+        BillingService(transactions, access),
+        PricingService(transactions, access, catalog),
+        BudgetService(transactions, access),
         ReservationService(transactions, catalog),
     )
 
@@ -94,12 +102,11 @@ def create_payment_services(
     transport,
     limits,
     *,
-    currency,
+    policy,
     environment,
     provider_transport,
     public_base_url,
     return_url,
-    requests_per_minute=120,
 ):
     database.require_module(ModuleName.BILLING)
     registry = GatewayRegistry(production=environment == "production")
@@ -117,7 +124,7 @@ def create_payment_services(
         registry.register("mock", mock_definition(transport))
 
     def transactions():
-        return transaction(database, currency, PaymentRepository)
+        return transaction(database, PaymentRepository)
 
     service = PaymentService(
         transactions,
@@ -125,39 +132,28 @@ def create_payment_services(
         cipher,
         registry,
         limits,
-        currency=currency,
+        policy=policy,
         public_base_url=public_base_url,
         return_url=return_url,
     )
-    processor = PaymentProcessor(
-        transactions, cipher, registry, requests_per_minute=requests_per_minute
-    )
+    processor = PaymentProcessor(transactions, cipher, registry)
     return service, processor
 
 
-def create_usage_processor(
-    database, currency, reservations, *, storage_days=7, storage_policy="delete"
-):
+def create_usage_processor(database, reservations):
     database.require_module(ModuleName.BILLING)
-    return UsageProcessor(
-        lambda: transaction(database, currency),
-        reservations,
-        storage_days=storage_days,
-        storage_policy=storage_policy,
-    )
+    return UsageProcessor(lambda: transaction(database), reservations)
 
 
 def create_audit_reader(database):
     return audit_reader(database, ModuleName.BILLING)
 
 
-def create_reports(database, currency):
+def create_reports(database):
     database.require_module(ModuleName.BILLING)
-    return BillingReports(database, currency)
+    return BillingReports(database)
 
 
-def create_operations(database, currency, access, reservations):
+def create_operations(database, access, reservations):
     database.require_module(ModuleName.BILLING)
-    return Operations(
-        lambda: transaction(database, currency, OperationsRepository), access, reservations
-    )
+    return Operations(lambda: transaction(database, OperationsRepository), access, reservations)

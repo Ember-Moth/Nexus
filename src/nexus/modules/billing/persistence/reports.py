@@ -18,9 +18,14 @@ def public_request(payload):
 
 
 class BillingReports:
-    def __init__(self, database, currency):
-        self.currency = currency
+    def __init__(self, database):
         self.database = database
+
+    async def currency(self):
+        async with self.database.transaction() as session:
+            return (
+                await session.execute(text("SELECT currency FROM billing.settings WHERE id=1"))
+            ).scalar_one()
 
     async def fetch_changes(self, limit=128):
         async with self.database.transaction() as session:

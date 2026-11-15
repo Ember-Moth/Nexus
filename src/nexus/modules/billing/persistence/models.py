@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Numeric, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, FetchedValue, Numeric, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -21,10 +21,22 @@ class Versioned:
 
 
 class Settings(Base):
+    """The singleton billing policy row, created by migration 0039."""
+
     __tablename__ = "settings"
     __table_args__ = {"schema": "billing"}
     id: Mapped[int] = mapped_column(primary_key=True)
     currency: Mapped[str] = mapped_column(String(3))
+    vector_storage_prepaid_days: Mapped[int] = mapped_column(server_default=FetchedValue())
+    vector_storage_lapse_policy: Mapped[str] = mapped_column(server_default=FetchedValue())
+    payment_requests_per_merchant_per_minute: Mapped[int] = mapped_column(
+        server_default=FetchedValue()
+    )
+    payment_notification_per_channel: Mapped[int] = mapped_column(server_default=FetchedValue())
+    payment_notification_per_ip: Mapped[int] = mapped_column(server_default=FetchedValue())
+    version: Mapped[int] = mapped_column(server_default=FetchedValue())
+    managed_sha256: Mapped[str | None]
+    managed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Account(Record, Versioned, Base):

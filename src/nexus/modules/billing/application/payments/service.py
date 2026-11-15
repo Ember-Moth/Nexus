@@ -9,6 +9,7 @@ from nexus.shared.errors import ServiceError
 
 from ..common import digest, found, replay, versioned, view
 from ..schemas import Page
+from ..settings import stored_currency
 from .registry import GatewayFailure, public_values, storage_values, validate_amount
 from .schemas import (
     ChannelVersionView,
@@ -32,7 +33,7 @@ class PaymentService:
         registry,
         limits,
         *,
-        currency,
+        policy,
         public_base_url,
         return_url,
     ):
@@ -43,11 +44,8 @@ class PaymentService:
             registry,
             limits,
         )
-        self._currency, self._public_base_url, self._return_url = (
-            currency,
-            public_base_url,
-            return_url,
-        )
+        self._public_base_url, self._return_url = public_base_url, return_url
+        self._policy = policy
 
     async def gateway_types(self, token):
         await self._access.authorize(token, operation="payment_admin")
@@ -77,8 +75,8 @@ class PaymentService:
                 items=[view(ChannelVersionView, row) for row in rows], next_cursor=cursor
             )
 
-    def _validate_channel(self, body, gateway):
-        if body.currency != self._currency:
+    async def _validate_channel(self, body, gateway):
+        if body.currency != await stored_currency(self._transactions):
             raise ServiceError("currency_mismatch", "Channel must use the billing currency", 422)
         self._registry.validate_environment(body.adapter_type, body.environment)
         for amount in (body.min_amount, body.max_amount):
@@ -88,7 +86,7 @@ class PaymentService:
     async def create_channel(self, token, body, key):
         actor = await self._access.authorize(token, operation="payment_admin")
         config, gateway = self._registry.normalize(body.adapter_type, body.configuration)
-        self._validate_channel(body, gateway)
+        await self._validate_channel(body, gateway)
         self._registry.validate_channel(gateway, body.stable_merchant_id, body.environment)
         values = body.model_dump(mode="json")
         values["configuration"] = storage_values(config)
@@ -404,7 +402,14 @@ class PaymentService:
     async def receive_notification(self, channel_id, envelope, peer):
         gateway = None
         try:
-            allowed = await self._limits.allow("payment:" + str(channel_id), "payment:" + peer)
+            limits = (await self._policy.get()).payments
+            allowed = await self._limits.allow(
+                "payment:" + str(channel_id),
+                "payment:" + peer,
+                account_limit=limits.notifications_per_channel_per_minute,
+                ip_limit=limits.notifications_per_ip_per_minute,
+                window=60,
+            )
             async with self._transactions() as repo:
                 channel, versions = await repo.verification_versions(channel_id)
             if not versions:

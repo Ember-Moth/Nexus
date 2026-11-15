@@ -4,7 +4,7 @@
 
 ## 账户准备
 
-`NEXUS_BILLING_CURRENCY` 默认 `USD`。第一次账务事务（包括账务就绪检查）将币种写入 billing.settings。以后 API 与 Worker 配置必须与持久化币种一致，否则账务操作拒绝、`billing_currency` 就绪检查失败；修改配置不执行换汇。
+账务币种是账务策略（`billing.settings`）的 `currency`，默认 `USD`，由平台管理员通过 `GET/PUT /api/v1/settings/billing` 或策略文件的 `billing.policy` 组设置。出现第一个账户、价格、收款账户或支付渠道之后，修改币种返回 409 `currency_locked`；系统不执行换汇。同一资源还包含向量存储预付和支付限额，见[运行指南](development.md#数据库中的策略)。
 
 Worker 每 500 ms 检查一次开户事件和到期预留，有待处理数据时连续消费。组织创建仍先返回 provisioning；billing 幂等开户并发出 account_ready，identity 消费后进入 active。两侧事件均携带显式 schema_version；消费者只接受已支持版本，未知版本保留待处理且不确认、不开户或激活。中途停机可重放，暂停组织只更新恢复目标，归档组织不会被重新激活。到期预留只进入 review，金额仍保持 held。
 

@@ -4,19 +4,15 @@ from nexus.shared.errors import ServiceError
 
 from .common import found, replay, versioned, view
 from .schemas import DiscountView, Page, PriceView
+from .settings import stored_currency
 
 
 class PricingService:
-    def __init__(self, transactions, access, catalog, currency):
-        self._transactions, self._access, self._catalog, self.currency = (
-            transactions,
-            access,
-            catalog,
-            currency,
-        )
+    def __init__(self, transactions, access, catalog):
+        self._transactions, self._access, self._catalog = transactions, access, catalog
 
-    def _currency(self, currency):
-        if currency != self.currency:
+    async def _currency(self, currency):
+        if currency != await stored_currency(self._transactions):
             raise ServiceError(
                 "currency_mismatch", "Currency must match the deployment billing currency", 422
             )
@@ -67,7 +63,7 @@ class PricingService:
 
     async def create_price(self, token, kind, body, key):
         actor = await self._access.authorize(token, operation="pricing")
-        self._currency(body.currency)
+        await self._currency(body.currency)
         scope_id = body.model_id if kind == "sale" else body.deployment_id
         target = await self._load_target(kind, scope_id)
         async with self._transactions() as repo:
@@ -98,7 +94,7 @@ class PricingService:
 
     async def edit_price(self, token, kind, resource_id, body, version):
         actor = await self._access.authorize(token, operation="pricing")
-        self._currency(body.currency)
+        await self._currency(body.currency)
         async with self._transactions() as repo:
             scope_id = found(await repo.get("price", resource_id)).scope_id
         target = await self._load_target(kind, scope_id)

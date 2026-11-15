@@ -15,9 +15,14 @@ API 与 Worker 使用相同的以下配置：
 | `NEXUS_PAYMENT_PUBLIC_BASE_URL` | 固定通知站点，例如 `https://control.example.com`；生成渠道通知地址，Antom 另带订单路径 |
 | `NEXUS_PAYMENT_RETURN_URL` | 固定前端返回地址，只用于订单展示和查询；客户端不能覆盖 |
 | `NEXUS_MOCK_PAYMENT_URL` | 仅 development/test 可用的模拟器地址，只接受 `http://127.0.0.1:{port}` |
-| `NEXUS_PAYMENT_NOTIFICATION_PER_CHANNEL` | 每个渠道每分钟通知上限，默认 1000 |
-| `NEXUS_PAYMENT_NOTIFICATION_PER_IP` | 每个来源每分钟通知上限，默认 120 |
-| `NEXUS_PAYMENT_REQUESTS_PER_MERCHANT_PER_MINUTE` | 每商户环境固定 60 秒窗口的远端请求上限，默认 120 |
+
+限额保存在账务策略（`billing.settings`）中，平台管理员通过 `GET/PUT /api/v1/settings/billing` 的 `payments` 分组或管理后台“平台 → 设置 → 计费”修改，所有进程约 2 秒内生效：
+
+| 字段 | 用途 |
+| --- | --- |
+| `notifications_per_channel_per_minute` | 每个渠道每分钟通知上限，默认 1000，范围 1–100000 |
+| `notifications_per_ip_per_minute` | 每个来源每分钟通知上限，默认 120，范围 1–10000 |
+| `requests_per_merchant_per_minute` | 每商户环境固定 60 秒窗口的远端请求上限，默认 120，范围 1–10000；Worker 在每个处理事务中读取 |
 
 生产进程要求通知与返回地址为 HTTPS，拒绝 mock 传输和 test 渠道。支付配置沿用已有根密钥配置，但使用独立于上游模型凭据的密钥派生和记录绑定；仍在查询或验签窗口内使用的旧根密钥必须保留。
 

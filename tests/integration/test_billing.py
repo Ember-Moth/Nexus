@@ -6,13 +6,13 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from policies import body_of
 from test_catalog import make_credential, make_deployment, make_model, make_policy, make_upstream
 from test_identity_api import auth, create_org, create_user, login
 from test_project_credentials import account as service_account
 from test_project_credentials import key as api_key
 from test_project_credentials import project
 
-from nexus.bootstrap import Application
 from nexus.modules.billing import Admission, Settlement
 from nexus.modules.billing.persistence.repository import BillingRepository
 from nexus.shared.errors import ServiceError
@@ -227,11 +227,15 @@ async def test_account_provisioning_is_replayable_and_keeps_suspension(http, adm
         ).fetchone()[0]
         == 1
     )
-    changed_currency = Application(settings.model_copy(update={"billing_currency": "CNY"}))
-    try:
-        assert (await changed_currency.readiness())["billing_currency"] == "unavailable"
-    finally:
-        await changed_currency.close()
+    # The account carries the billing currency, so the currency can no longer change.
+    policy = (await client.get("/api/v1/settings/billing", headers=auth(root))).json()
+    assert policy["currency"] == "USD"
+    locked = await client.put(
+        "/api/v1/settings/billing",
+        headers=auth(root, policy["version"]),
+        json={**body_of(policy), "currency": "CNY"},
+    )
+    assert locked.status_code == 409 and locked.json()["error"]["code"] == "currency_locked"
 
 
 async def test_finance_permissions_and_role_updates(http):

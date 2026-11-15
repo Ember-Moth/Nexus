@@ -26,6 +26,11 @@
 | `NEXUS_RELAY_STREAMS_PER_TENANT` | 单节点：同一企业在该节点同时续读的已存储 response 流数，默认 8，超出返回 429 `stream_limit` |
 | `NEXUS_RELAY_PURGE_INTERVAL_MS` | 节点调度和执行上游清理的间隔，默认 60000 毫秒 |
 | `NEXUS_RELAY_UPSTREAM_CA` | 可选的 PEM 根证书路径，用于拥有专用 CA 的 HTTPS 部署 |
+| `NEXUS_RELAY_DRAIN_SECONDS` | 收到 SIGTERM 后，已打开的客户端连接（SSE 流、WebSocket 当前轮次）最多继续运行的秒数，默认 15，范围 1 至 3600。到时关闭连接，之后完成上报还有最多 90 秒。容器的终止宽限期应大于 preStop 等待、本值与 90 秒之和，见[部署手册](deployment.md#relay-排空) |
+
+每个 TCP 连接只处理一个请求，除 101 外的响应都带 `Connection: close`。WebSocket 升级的 101 响应只带 `Connection: upgrade`：Go 实现的代理（Traefik、Caddy）会删除含 `close` 的 Connection 头，连带丢掉 `upgrade`，从而拒绝升级。
+
+`NEXUS_RELAY_DATABASE_URL`、`NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_PRIVATE_KEY` 和 `NEXUS_RELAY_CLUSTER_ID` 也可以改用 `<变量名>_FILE` 指向一个文件，节点读取文件内容并去掉结尾换行，适合挂载的 Secret。两者同时设置时以环境变量为准。
 
 ### 集群策略
 

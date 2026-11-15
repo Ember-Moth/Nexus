@@ -320,6 +320,8 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             assert (
                 rejected.status_code == 401 and rejected.headers["x-request-id"] != "caller-value"
             )
+            # One response per connection (each response has its own write receipt).
+            assert rejected.headers["connection"] == "close"
             assert (
                 await client.post(path, headers=keyhdr, json={**body, "model": "forbidden"})
             ).status_code == 403

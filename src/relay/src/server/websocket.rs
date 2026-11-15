@@ -558,7 +558,7 @@ async fn session(
                 tokio::select! {
                     result = &mut turn => result,
                     _ = &mut io => { disconnected.cancel(); turn.await; false },
-                    _ = tokio::time::sleep(Duration::from_secs(15)) => { disconnected.cancel(); turn.await; false },
+                    _ = tokio::time::sleep(node.drain) => { disconnected.cancel(); turn.await; false },
                 }
             }
         };

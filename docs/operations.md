@@ -182,7 +182,7 @@ Worker 日志事件：`publication.auto_published`，outcome 为 published 或 u
 | `GET /ready` | 主监听 | 最近一次快照刷新和心跳成功且仍有并发余量时返回 200，否则 503。用作负载均衡摘流，不应据此重启 |
 | `GET /metrics` | 指标监听 | Prometheus 文本格式指标 |
 
-收到 SIGTERM 后节点开始排空：主监听停止接受连接，`/ready` 和主监听上的 `/live` 不再应答；指标监听继续提供 `/live` 和 `/metrics`，直到在途请求和完成上报结束、进程退出。存活探针指向指标监听时，排空期间不会被误判为失效。
+收到 SIGTERM 后节点开始排空：主监听停止接受连接，`/ready` 和主监听上的 `/live` 不再应答；指标监听继续提供 `/live` 和 `/metrics`，直到在途请求和完成上报结束、进程退出。已打开的 SSE 流和 WebSocket 当前轮次最多再运行 `NEXUS_RELAY_DRAIN_SECONDS`（默认 15 秒），到时连接被关闭，结果按客户端断开或未知上报并进入核对；完成上报另有最多 90 秒。存活探针指向指标监听时，排空期间不会被误判为失效。
 
 ### 指标
 

@@ -72,7 +72,14 @@ pub struct NodeLimits {
     pub streams_per_tenant: usize,
     /// How often the node schedules and runs upstream purges.
     pub purge_interval: Duration,
+    /// After SIGTERM, how long open client connections (SSE streams, WebSocket turns) may run
+    /// before they are closed. Completion reports then get up to 90 more seconds.
+    pub drain: Duration,
 }
+
+/// Bounds for `NodeLimits::drain`.
+pub const DRAIN: std::ops::RangeInclusive<Duration> =
+    Duration::from_secs(1)..=Duration::from_secs(3600);
 
 pub struct Node {
     pub(crate) db: Gateway,
@@ -87,6 +94,7 @@ pub struct Node {
     pub(crate) tenant_requests: Arc<tenancy::TenantSlots>,
     pub(crate) tenant_streams: Arc<tenancy::TenantSlots>,
     pub(crate) purge_interval: Duration,
+    pub(crate) drain: Duration,
     cluster: Uuid,
     healthy: AtomicBool,
     index: RwLock<Option<Arc<Index>>>,
@@ -118,6 +126,7 @@ impl Node {
             requests_per_tenant,
             streams_per_tenant,
             purge_interval,
+            drain,
         } = limits_config;
         if stream_idle.is_zero()
             || event_bytes == 0
@@ -132,6 +141,7 @@ impl Node {
             || requests_per_tenant == 0
             || streams_per_tenant == 0
             || !(Duration::from_millis(100)..=Duration::from_secs(86400)).contains(&purge_interval)
+            || !DRAIN.contains(&drain)
         {
             return Err(ControlError::Invalid("node limits"));
         }
@@ -151,6 +161,7 @@ impl Node {
             tenant_requests: tenancy::TenantSlots::new(requests_per_tenant),
             tenant_streams: tenancy::TenantSlots::new(streams_per_tenant),
             purge_interval,
+            drain,
             healthy: AtomicBool::new(false),
             index: RwLock::new(None),
             capacity: Arc::new(Semaphore::new(capacity)),
@@ -244,6 +255,20 @@ fn rejected(snapshot: &crate::control::database::Snapshot, reason: &'static str)
         reason,
         "configuration snapshot rejected"
     );
+}
+
+// One response per connection: each buffered response has one final write receipt on its socket.
+// hyper's own keep_alive(false) would also append `close` to a 101 response, and Go-based proxies
+// (Traefik, Caddy) drop a Connection header that contains `close`, losing the `upgrade` token and
+// refusing the WebSocket. So keep-alive stays on in hyper and every other response ends its
+// connection with an explicit `Connection: close`.
+async fn one_response_per_connection(mut response: Response) -> Response {
+    if response.status() != StatusCode::SWITCHING_PROTOCOLS {
+        response
+            .headers_mut()
+            .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+    }
+    response
 }
 
 async fn correlate(mut req: Request, next: axum::middleware::Next) -> Response {
@@ -688,6 +713,7 @@ pub async fn serve(
         .route("/live", get(metrics::live))
         .layer(Extension(BodyLimit(max_body)))
         .layer(Extension(stop.clone()))
+        .layer(axum::middleware::map_response(one_response_per_connection))
         .with_state(node.clone());
     let refresh = node.clone();
     let refresh_stop = stop.clone();
@@ -745,9 +771,8 @@ pub async fn serve(
         let abort = node.draining_deadline.clone();
         sockets.spawn(async move {
             let mut builder = hyper::server::conn::http1::Builder::new();
-            // Each buffered response has one final write receipt on its connection.
+            // `one_response_per_connection` closes every connection after its response.
             builder
-                .keep_alive(false)
                 .timer(TokioTimer::new())
                 .header_read_timeout(Duration::from_secs(10));
             let connection = builder.serve_connection(io, service).with_upgrades();
@@ -769,10 +794,7 @@ pub async fn serve(
     sockets.close();
     node.capacity.close();
     node.healthy.store(false, Ordering::Release);
-    if timeout(Duration::from_secs(15), sockets.wait())
-        .await
-        .is_err()
-    {
+    if timeout(node.drain, sockets.wait()).await.is_err() {
         warn!("drain deadline reached; closing open connections");
         node.draining_deadline.cancel();
         sockets.wait().await;

@@ -22,8 +22,18 @@ fn setting<T: std::str::FromStr>(name: &str, default: T) -> Result<T, String> {
 }
 
 // Startup errors are logged, so they name the variable and never echo its value.
+// `<name>_FILE` may name a file holding the value instead, such as a mounted secret.
 fn required(name: &str) -> Result<String, String> {
-    env::var(name).map_err(|_| format!("missing or invalid {name}"))
+    match env::var(name) {
+        Ok(value) => Ok(value),
+        Err(env::VarError::NotPresent) => match env::var_os(format!("{name}_FILE")) {
+            Some(path) => std::fs::read_to_string(path)
+                .map(|value| value.trim_end_matches(['\r', '\n']).to_owned())
+                .map_err(|_| format!("unreadable {name}_FILE")),
+            None => Err(format!("missing or invalid {name}")),
+        },
+        Err(_) => Err(format!("missing or invalid {name}")),
+    }
 }
 
 #[tokio::main]
@@ -94,6 +104,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 "NEXUS_RELAY_PURGE_INTERVAL_MS",
                 60_000,
             )?),
+            drain: Duration::from_secs(setting("NEXUS_RELAY_DRAIN_SECONDS", 15)?),
         },
     )?;
     let listener = TcpListener::bind(
@@ -135,4 +146,38 @@ async fn run() -> Result<(), Box<dyn Error>> {
         stop,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::required;
+
+    #[test]
+    fn secrets_can_come_from_files() {
+        let dir = std::env::temp_dir().join(format!("nexus-relay-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("database-url");
+        std::fs::write(&path, "postgres://node@db/nexus\n").unwrap();
+        // SAFETY: this test is the only one in the binary that touches these variables.
+        unsafe {
+            std::env::set_var("NEXUS_RELAY_TEST_SECRET_FILE", &path);
+            std::env::set_var("NEXUS_RELAY_TEST_DIRECT", "direct");
+            std::env::set_var("NEXUS_RELAY_TEST_MISSING_FILE", dir.join("absent"));
+        }
+        assert_eq!(
+            required("NEXUS_RELAY_TEST_SECRET").unwrap(),
+            "postgres://node@db/nexus"
+        );
+        assert_eq!(required("NEXUS_RELAY_TEST_DIRECT").unwrap(), "direct");
+        // Neither message echoes the path or the value.
+        assert_eq!(
+            required("NEXUS_RELAY_TEST_MISSING").unwrap_err(),
+            "unreadable NEXUS_RELAY_TEST_MISSING_FILE"
+        );
+        assert_eq!(
+            required("NEXUS_RELAY_TEST_UNSET").unwrap_err(),
+            "missing or invalid NEXUS_RELAY_TEST_UNSET"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

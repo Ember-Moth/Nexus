@@ -508,6 +508,9 @@ async def test_responses_ws(http, admin, tls, relay_binary):  # noqa: F811
         create = {"type": "response.create", "model": model, "input": "hi", "max_output_tokens": 6}
         async with connect(uri, additional_headers=hdr, proxy=None) as ws:
             assert ws.response.status_code == 101
+            # Go-based proxies such as Traefik drop a Connection header that contains "close",
+            # and the upgrade token with it.
+            assert ws.response.headers["Connection"].lower() == "upgrade"
             await (await ws.ping())
             assert not connections and admin.execute(
                 "SELECT count(*) FROM billing.request_runs"

@@ -733,3 +733,209 @@ async def test_vector_create_recovers_known_locator(http, admin, tls, relay_bina
             "review",
             "unknown_outcome",
         )
+
+
+async def test_storage_is_prepaid_renewed_and_lapses(
+    http,
+    admin,
+    tls,  # noqa: F811
+    relay_binary,  # noqa: F811
+):
+    """Storage is reserved days ahead of use. A store the wallet cannot keep prepaid stops
+    taking writes, and once its prepaid window runs out the lapse policy applies."""
+    from datetime import UTC, datetime, timedelta
+
+    import psycopg
+
+    async with stream_plane(http, admin, relay_binary, tls[1], 1, "openai_compatible") as (
+        _,
+        _,
+        _,
+        _,
+        plane,
+    ):
+        await configure(http, admin, plane)
+        peer, _, org, model, dep, admission, _, cluster = plane
+        rev = admin.execute(
+            "SELECT desired_revision FROM publication.gateway_clusters WHERE id=%s", (cluster,)
+        ).fetchone()[0]
+        usage = http[2].state.usage
+
+        async def store():
+            handle = uuid4()
+            await peer.connection.execute(
+                "SELECT gateway_v1.vector_prepare(%s,%s,%s,%s,%s)",
+                (handle, admission.api_key_id, rev, model["id"], dep["id"]),
+            )
+            return handle
+
+        def held():
+            return admin.execute(
+                "SELECT held_amount FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+            ).fetchone()[0]
+
+        def contract(handle):
+            return admin.execute(
+                "SELECT hold_id,prepaid_until,prepaid_bytes,renewal_failed_at,lapse_action "
+                "FROM billing.vector_storage_contracts WHERE id=%s",
+                (handle,),
+            ).fetchone()
+
+        def sample(handle, at, size, closing=False):
+            admin.execute(
+                "SELECT billing.v1_storage_sample(%s,%s,%s,NULL,%s,false)",
+                (handle, at, size, closing),
+            )
+
+        # A store of 100 bytes holds seven days at 125 bytes before any day is settled.
+        small = await store()
+        midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        sample(small, midnight - timedelta(seconds=2), 100)
+        assert await usage.renew_storage() == 1 and await usage.renew_storage() == 0
+        hold, until, prepaid, failed, lapse = contract(small)
+        now = datetime.now(UTC)
+        assert (prepaid, failed, lapse) == (125, None, None)
+        assert timedelta(days=7) - timedelta(minutes=1) < until - now <= timedelta(days=7)
+        seconds, reserved = admin.execute(
+            "SELECT storage_byte_seconds,reserved_amount FROM billing.request_runs WHERE id=%s",
+            (hold,),
+        ).fetchone()
+        assert 125 * (7 * 86400 - 60) <= seconds <= 125 * 7 * 86400
+        assert held() == reserved > 0
+        # Settling yesterday draws from the prepaid hold: what remains is held again.
+        sample(small, midnight + timedelta(seconds=3), 100)
+        assert await usage.stage_storage() == 1
+        restored, left, *_ = contract(small)
+        assert restored != hold and left == until
+        day = admin.execute(
+            "SELECT reserved_amount FROM billing.request_runs WHERE id=("
+            "SELECT id FROM billing.vector_storage_days WHERE store_id=%s AND state='staged')",
+            (small,),
+        ).fetchone()[0]
+        remainder = admin.execute(
+            "SELECT reserved_amount FROM billing.request_runs WHERE id=%s", (restored,)
+        ).fetchone()[0]
+        assert held() == day + remainder and remainder <= reserved
+        admin.execute("SELECT billing.v1_storage_write(%s)", (small,))
+
+        # A terabyte cannot be prepaid: the hold stays, writes stop, and its funds cover the
+        # observed size only briefly, after which the store lapses under the delete policy.
+        large = await store()
+        sample(large, datetime.now(UTC) - timedelta(seconds=1), 100)
+        assert await usage.renew_storage() == 1
+        before = held()
+        sample(large, datetime.now(UTC), 2**40)
+        admin.execute(
+            "UPDATE billing.vector_storage_contracts SET renew_after=clock_timestamp() WHERE id=%s",
+            (large,),
+        )
+        assert await usage.renew_storage() == 1
+        _, until, prepaid, failed, _ = contract(large)
+        assert prepaid == 125 and failed is not None and held() == before
+        assert until - datetime.now(UTC) < timedelta(seconds=1)
+        with pytest.raises(psycopg.errors.RaiseException, match="insufficient_funds"):
+            admin.execute("SELECT billing.v1_storage_write(%s)", (large,))
+        admin.execute(
+            "UPDATE billing.vector_storage_contracts SET renew_after=clock_timestamp() WHERE id=%s",
+            (large,),
+        )
+        await usage.renew_storage()
+        assert contract(large)[4] == "delete"
+        admin.execute(
+            "UPDATE publication.vector_stores SET next_poll=clock_timestamp()+interval '1 hour'"
+        )
+        admin.execute(
+            "UPDATE publication.vector_stores SET next_poll=clock_timestamp() WHERE id=%s",
+            (large,),
+        )
+        claim = (
+            await (await peer.connection.execute("SELECT gateway_v1.vector_claim()")).fetchone()
+        )[0]
+        assert claim["id"] == str(large) and claim["retire"] is True
+        # Deletion ends the store and releases what is left of its hold.
+        sample(large, datetime.now(UTC), 0, closing=True)
+        assert contract(large)[0] is not None
+        assert admin.execute(
+            "SELECT r.reservation_state FROM billing.vector_storage_contracts c "
+            "JOIN billing.request_runs r ON r.id=c.hold_id WHERE c.id=%s",
+            (large,),
+        ).fetchone() == ("released",)
+
+
+async def test_lapsed_store_is_deleted_by_the_poller(
+    http,
+    admin,
+    tls,  # noqa: F811
+    relay_binary,  # noqa: F811
+):
+    calls = []
+    deleted = asyncio.Event()
+
+    async def provider(reader, writer):
+        try:
+            head = (await reader.readuntil(b"\r\n\r\n")).decode().split("\r\n")
+            method, path, _ = head[0].split()
+            hdr = {
+                k.lower(): v.strip() for line in head[1:] if line for k, v in [line.split(":", 1)]
+            }
+            await reader.readexactly(int(hdr.get("content-length", 0)))
+            calls.append((method, path))
+            value = {
+                "object": "vector_store",
+                "id": "vs_unfunded",
+                "created_at": 1700000000,
+                "status": "completed",
+                "usage_bytes": 2**40,
+                "file_counts": {"total": 0},
+            }
+            if method == "DELETE":
+                value = {"object": "vector_store.deleted", "id": "vs_unfunded", "deleted": True}
+                deleted.set()
+            payload = json.dumps(value).encode()
+            writer.write(
+                (
+                    f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                    f"Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n"
+                ).encode()
+                + payload
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(provider, "127.0.0.1", 0, ssl=tls[0])
+    async with (
+        server,
+        stream_plane(
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            "openai_compatible",
+        ) as (relay, _, key, _, plane),
+    ):
+        await configure(http, admin, plane)
+        h = {"Authorization": "Bearer " + key}
+        created = await relay.post(ROOT, headers=h, json={"name": "unfunded"})
+        assert created.status_code == 200, created.text
+        handle = created.json()["id"]
+        store = handle.removeprefix("vs_nx_")
+        # A terabyte for seven days exceeds the wallet: the store lapses at once.
+        await http[2].state.usage.renew_storage()
+        assert admin.execute(
+            "SELECT lapse_action FROM billing.vector_storage_contracts WHERE id=%s", (store,)
+        ).fetchone() == ("delete",)
+        blocked = await relay.get(f"{ROOT}/{handle}", headers=h)
+        assert blocked.status_code == 402, blocked.text
+        admin.execute(
+            "UPDATE publication.vector_stores SET next_poll=clock_timestamp() WHERE id=%s", (store,)
+        )
+        async with asyncio.timeout(10):
+            await deleted.wait()
+            while admin.execute(  # noqa: ASYNC110 - waiting for the poller's observation
+                "SELECT closed FROM billing.vector_storage_contracts WHERE id=%s", (store,)
+            ).fetchone() != (True,):
+                await asyncio.sleep(0.05)
+        assert ("DELETE", f"{ROOT}/vs_unfunded") in calls
+        assert (await relay.get(f"{ROOT}/{handle}", headers=h)).status_code == 404

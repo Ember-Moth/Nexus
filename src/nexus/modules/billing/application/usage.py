@@ -9,9 +9,19 @@ from .schemas import Settlement
 
 
 class UsageProcessor:
-    def __init__(self, transactions, reservations):
+    def __init__(self, transactions, reservations, *, storage_days=7, storage_policy="delete"):
         self._transactions = transactions
         self._reservations = reservations
+        self._storage_days, self._storage_policy = storage_days, storage_policy
+
+    async def renew_storage(self, limit=16):
+        count = 0
+        for _ in range(limit):
+            async with self._transactions() as repo:
+                if not await repo.renew_storage(self._storage_days, self._storage_policy):
+                    break
+            count += 1
+        return count
 
     async def stage_storage(self, limit=16):
         count = 0

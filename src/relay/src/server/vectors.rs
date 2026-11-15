@@ -726,12 +726,20 @@ async fn sample(node: &Node, store: &crate::control::vectors::Store) -> Result<b
                 && dep.upstream_version == store.upstream_version
         })
         .ok_or_else(Failure::unavailable)?;
-    let reply = call(node, &index, dep, Method::GET, &[pid.to_owned()])
+    // Billing retires a store whose prepaid storage lapsed under the delete policy.
+    let method = if store.retire {
+        Method::DELETE
+    } else {
+        Method::GET
+    };
+    let reply = call(node, &index, dep, method, &[pid.to_owned()])
         .await?
         .send()
         .await
         .map_err(|_| Failure::upstream())?;
-    let (meta, state, uncertain) = if reply.status() == StatusCode::NOT_FOUND {
+    let (meta, state, uncertain) = if store.retire && reply.status().is_success() {
+        (None, "deleted", false)
+    } else if reply.status() == StatusCode::NOT_FOUND {
         (None, "deleted", true)
     } else {
         if !reply.status().is_success() {

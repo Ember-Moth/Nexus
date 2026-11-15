@@ -86,6 +86,14 @@ class BillingRepository:
             await self._session.execute(text("SELECT billing.v1_review_container()"))
         ).scalar_one()
 
+    async def renew_storage(self, days, policy):
+        return (
+            await self._session.execute(
+                text("SELECT billing.v1_renew_storage(:days,:policy)"),
+                {"days": days, "policy": policy},
+            )
+        ).scalar_one()
+
     async def stage_storage(self):
         return (await self._session.execute(text("SELECT billing.v1_stage_storage()"))).scalar_one()
 

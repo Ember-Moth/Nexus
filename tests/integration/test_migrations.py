@@ -19,7 +19,7 @@ def test_migration_round_trip_and_repeat_upgrade(migration_settings, admin):
         command.upgrade(config, "head")
     command.upgrade(config, "head")
     assert admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchall() == [
-        ("0032_container_coverage",)
+        ("0033_storage_prepayment",)
     ]
 
 

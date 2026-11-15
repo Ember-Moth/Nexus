@@ -126,6 +126,7 @@ async def serve_worker(settings: RuntimeSettings) -> None:
                 "account_reconciliation": application.operations.check_next,
                 "settlement": application.usage.process,
                 "vector_storage": application.usage.stage_storage,
+                "storage_prepayment": application.usage.renew_storage,
                 "container_usage": application.usage.review_containers,
                 "publication_outbox": application.publication.distribute,
             },

@@ -168,7 +168,11 @@ class Application:
             self.cache,
         )
         self.usage = billing.create_usage_processor(
-            self._storage["billing"], settings.billing_currency, self.reservations
+            self._storage["billing"],
+            settings.billing_currency,
+            self.reservations,
+            storage_days=settings.vector_storage_prepaid_days,
+            storage_policy=settings.vector_storage_lapse_policy,
         )
         self.payment_http = (
             PaymentHttp(settings.mock_payment_url) if settings.mock_payment_url else None

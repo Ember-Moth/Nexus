@@ -17,6 +17,9 @@ pub(crate) struct Store {
     pub state: String,
     pub provider_id: Option<String>,
     pub stamp: DateTime<Utc>,
+    /// Delete the supplier store: its prepaid storage lapsed.
+    #[serde(default)]
+    pub retire: bool,
 }
 pub(crate) struct Observation<'a> {
     pub handle: Uuid,

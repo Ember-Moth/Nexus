@@ -135,9 +135,16 @@ def create_payment_services(
     return service, processor
 
 
-def create_usage_processor(database, currency, reservations):
+def create_usage_processor(
+    database, currency, reservations, *, storage_days=7, storage_policy="delete"
+):
     database.require_module(ModuleName.BILLING)
-    return UsageProcessor(lambda: transaction(database, currency), reservations)
+    return UsageProcessor(
+        lambda: transaction(database, currency),
+        reservations,
+        storage_days=storage_days,
+        storage_policy=storage_policy,
+    )
 
 
 def create_audit_reader(database):

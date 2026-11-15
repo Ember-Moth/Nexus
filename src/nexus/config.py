@@ -58,6 +58,10 @@ class RuntimeSettings(BaseSettings):
     export_ttl_seconds: int = Field(default=86400, ge=60, le=2592000)
     export_max_rows: int = Field(default=10000, ge=1, le=100000)
     billing_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+    # Vector storage is prepaid this many days ahead and renewed by the worker.
+    vector_storage_prepaid_days: int = Field(default=7, ge=1, le=31)
+    # What happens to a store once renewal failed and its prepaid days ran out.
+    vector_storage_lapse_policy: Literal["delete", "suspend"] = "delete"
     payment_public_base_url: str | None = None
     payment_return_url: str | None = None
     mock_payment_url: str | None = None

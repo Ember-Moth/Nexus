@@ -77,6 +77,16 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 
 网关新增预留时检查全库 ready 结算任务数。达到 `billing.settings.settlement_backlog_limit` 时返回 `settlement_backlog`。默认阈值为 1024，部署方可在该单行配置中按实测容量设置正整数。已有请求可继续上报、重放或结算，积压下降后自动恢复新预留。该阈值按准入事务可见的已提交事实判断，已授权请求继续产生事件时，队列可以超过阈值。Worker 的 Redis 心跳包含进程累计的数据库连接取得次数与耗时。
 
+### 预留覆盖与核对要点
+
+迁移 `0031_model_call_bounds`、`0032_container_coverage`、`0033_storage_prepayment` 须先于新版 Worker 与 Relay 部署。Worker 读取 `NEXUS_VECTOR_STORAGE_PREPAID_DAYS`（默认 7，范围 1–31）和 `NEXUS_VECTOR_STORAGE_LAPSE_POLICY`（`delete` 或 `suspend`，默认 `delete`），新增消费者 `storage_prepayment` 负责续期与失效。
+
+- **冻结范围收窄。** 只有费用超过已持有预留时账户冻结。工具或计量单位超出授权值但费用在预留内时，请求以 `authorized_bound_exceeded` 进入核对、不冻结；token 数超出预留依据时照常结算并写入 `request.token_bound_exceeded`，该事件持续出现说明某个部署的上界规则过窄。
+- **工具循环的预留更高。** 带服务端工具或压缩的请求按可能的模型调用次数预留输入，资金与 TPM 占用随之上升，规则见[多次模型调用](relay-design.md#首期协议与计量细则)。批任务中含代码执行等无次数参数工具的项目被拒绝。
+- **容器扩展预留。** 长时间使用的容器会出现多条 `openai_container_v1` 请求：首个预留和 `billing.container_extensions` 中的扩展预留。会话复核时各自生成核对事项，按时间顺序分配供应商分钟数，每段使用独立的证据引用。`container.coverage_unreserved` 审计事件表示执行后无法补足预留，账户已冻结；`container.coverage_deferred` 表示因结算积压暂缓补足，该会话的下一次操作会先补足预留。
+- **向量存储预付。** 每个存储有一条随续期替换的预付预留（被取消的旧预留原因为 `storage_hold_replaced` 或 `storage_hold_applied`）。`vector_storage.renewal_failed` 后存储停止写入，`vector_storage.lapsed` 后按策略删除或停用。
+- **故障转移判定。** 厂商错误信封中的 429 一律记 `failed` 并释放客户预留；只有文档列明的类型会换部署。连接未建立的尝试在 `NEXUS_RELAY_MAX_ATTEMPTS=1` 时也记 `failed`。没有用量的失败尝试只开成本核对项。
+
 ## Relay 可观测性
 
 ### 存活与就绪

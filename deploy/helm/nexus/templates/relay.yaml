@@ -1,0 +1,240 @@
+{{- if .Values.relay.clusterId }}
+{{- $slots := int .Values.relay.nodeSlots }}
+{{- if gt (int .Values.relay.replicas) $slots }}
+{{- fail (printf "relay.replicas (%v) exceeds relay.nodeSlots (%v)" .Values.relay.replicas $slots) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nexus.fullname" . }}-relay-scripts
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay
+data:
+  node_identity.py: |
+    {{- .Files.Get "files/node_identity.py" | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "nexus.fullname" . }}-relay
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay
+spec:
+  # Each ordinal is one gateway node: its own PostgreSQL login (Secret "<prefix>-<ordinal>") and
+  # its own registered node_id. Scale with `helm upgrade --set relay.replicas=N`; the relay-node
+  # Job creates and registers the new logins first. See docs/deployment.md#扩容-relay-节点.
+  replicas: {{ .Values.relay.replicas }}
+  serviceName: {{ include "nexus.fullname" . }}-relay-nodes
+  podManagementPolicy: Parallel
+  revisionHistoryLimit: 5
+  minReadySeconds: 10
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 1}
+  persistentVolumeClaimRetentionPolicy: {whenDeleted: Delete, whenScaled: Delete}
+  selector:
+    matchLabels:
+      {{- include "nexus.selector" (list . "relay") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.selector" (list . "relay") | nindent 8 }}
+        app.kubernetes.io/part-of: nexus
+        nexus.io/postgres-client: "true"
+        nexus.io/redis-client: "true"
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-relay.yaml") . | sha256sum }}
+        checksum/scripts: {{ .Files.Get "files/node_identity.py" | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # preStop + drain window + up to 90 s of completion reports + margin.
+      terminationGracePeriodSeconds: {{ include "nexus.relayGrace" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- include "nexus.pullSecrets" . | nindent 6 }}
+      initContainers:
+        - name: node-identity
+          image: {{ include "nexus.image" (list . .Values.images.controlPlane) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: [python, /etc/nexus/scripts/node_identity.py]
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - {name: NODE_SLOTS, value: /var/run/nexus/node-slots}
+            - {name: NODE_RUNTIME, value: /run/nexus/node}
+            - {name: NODE_SECRET_PREFIX, value: {{ .Values.secrets.relayNodePrefix | quote }}}
+            - {name: DATABASE_HOST, value: {{ include "nexus.postgresHost" . | quote }}}
+            - {name: DATABASE_PORT, value: {{ .Values.postgresql.port | quote }}}
+            - {name: DATABASE_NAME, value: {{ .Values.postgresql.database | quote }}}
+            - {name: DATABASE_QUERY, value: {{ include "nexus.postgresQuery" . | quote }}}
+            - {name: EXTRA_CA_FILES, value: {{ ternary "/etc/nexus/redis-ca/ca.crt" "" .Values.redis.tls | quote }}}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - {name: node-slots, mountPath: /var/run/nexus/node-slots, readOnly: true}
+            - {name: node-runtime, mountPath: /run/nexus/node}
+            - {name: scripts, mountPath: /etc/nexus/scripts, readOnly: true}
+            {{- include "nexus.caMounts" . | nindent 12 }}
+      containers:
+        - name: relay
+          image: {{ include "nexus.image" (list . .Values.images.relay) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - {name: http, containerPort: 8081}
+            - {name: metrics, containerPort: 9464}
+          envFrom:
+            - configMapRef:
+                name: {{ include "nexus.fullname" . }}-relay
+          env:
+            - {name: NEXUS_RELAY_DATABASE_URL_FILE, value: /run/nexus/node/database-url}
+            # rustls reads its trust store from here: public roots plus the Redis CA.
+            - {name: SSL_CERT_FILE, value: /run/nexus/node/ca-bundle.crt}
+            {{- include "nexus.redisEnv" (list . "NEXUS_RELAY_REDIS_URL" "relay") | nindent 12 }}
+            - name: NEXUS_RELAY_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.secrets.relayCluster }}, key: private-key}
+          startupProbe:
+            httpGet: {path: /live, port: metrics}
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            # The metrics listener keeps answering while the node drains, so a draining node is
+            # not restarted.
+            httpGet: {path: /live, port: metrics}
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            # Snapshot refresh and heartbeat succeeded and there is spare capacity. Removing the
+            # pod from the Service is the right reaction; restarting it is not.
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 2
+          lifecycle:
+            preStop:
+              # Keep serving while Traefik drops the endpoint; SIGTERM then starts the drain.
+              sleep: {seconds: {{ .Values.relay.preStopSeconds }}}
+          resources:
+            {{- toYaml .Values.relay.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - {name: node-runtime, mountPath: /run/nexus/node, readOnly: true}
+            - name: postgres-ca
+              mountPath: /etc/nexus/postgres-ca
+              readOnly: true
+            {{- if .Values.relay.upstreamCA.configMap }}
+            - {name: upstream-ca, mountPath: /etc/nexus/upstream-ca, readOnly: true}
+            {{- end }}
+      volumes:
+        - name: node-runtime
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
+        - name: scripts
+          configMap:
+            name: {{ include "nexus.fullname" . }}-relay-scripts
+        - name: node-slots
+          projected:
+            # Group-readable: the pod runs as a non-root user that owns the volume via fsGroup.
+            defaultMode: 0440
+            sources:
+              {{- range $i := until $slots }}
+              - secret:
+                  name: {{ printf "%s-%d" $.Values.secrets.relayNodePrefix $i }}
+                  optional: true
+                  items:
+                    - {key: username, path: {{ $i }}/username}
+                    - {key: password, path: {{ $i }}/password}
+                    - {key: node-id, path: {{ $i }}/node-id}
+              {{- end }}
+        {{- include "nexus.caVolumes" . | nindent 8 }}
+        {{- if .Values.relay.upstreamCA.configMap }}
+        - name: upstream-ca
+          configMap:
+            name: {{ .Values.relay.upstreamCA.configMap }}
+            items: [{key: {{ .Values.relay.upstreamCA.key }}, path: {{ .Values.relay.upstreamCA.key }}}]
+        {{- end }}
+      {{- with .Values.relay.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.relay.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.relay.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.relay.topologySpread }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "nexus.selector" (list . "relay") | nindent 14 }}
+      {{- end }}
+---
+# Client traffic, through Traefik only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus.fullname" . }}-relay
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay
+spec:
+  selector:
+    {{- include "nexus.selector" (list . "relay") | nindent 4 }}
+  ports:
+    - {name: http, port: 8081, targetPort: http}
+---
+# Stable per-node DNS for the StatefulSet and the metrics port for Prometheus.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus.fullname" . }}-relay-nodes
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay
+    nexus.io/metrics: relay
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "nexus.selector" (list . "relay") | nindent 4 }}
+  ports:
+    - {name: metrics, port: 9464, targetPort: metrics}
+{{- if gt (int .Values.relay.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "nexus.fullname" . }}-relay
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "nexus.selector" (list . "relay") | nindent 6 }}
+{{- end }}
+{{- if .Values.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "nexus.fullname" . }}-relay
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      nexus.io/metrics: relay
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}
+{{- end }}

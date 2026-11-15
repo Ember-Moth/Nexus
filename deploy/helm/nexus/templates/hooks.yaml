@@ -1,0 +1,264 @@
+{{- /*
+Release hooks, in order:
+  pre-install / pre-upgrade
+    -20  hook ConfigMaps, relay-node ServiceAccount and RBAC
+    -10  provision-database   roles and grants (idempotent; reuses nexus.infrastructure.provisioning)
+     -5  relay-nodes --phase pre   node logins and Secrets; registers them while the old API serves
+      0  migrate              `nexus migrate` with the migration role, before any pod rolls
+  post-install / post-upgrade
+      0  policy-import        `nexus settings import --file` (templates/policy.yaml)
+      5  relay-nodes --phase post  registers every node (waits for the API)
+*/}}
+{{- $fullname := include "nexus.fullname" . }}
+{{- $relay := and .Values.relay.clusterId (gt (int .Values.relay.replicas) 0) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-migrate
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  {{- range $key, $value := .Values.config.migrate }}
+  {{ $key }}: {{ $value | toString | quote }}
+  {{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-provision-database
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: provision-database
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ .Values.hooks.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.hooks.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.hooks.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.selector" (list . "provision-database") | nindent 8 }}
+        nexus.io/postgres-client: "true"
+    spec:
+      {{- include "nexus.hookPod" . | nindent 6 }}
+      containers:
+        - name: provision
+          image: {{ include "nexus.image" (list . .Values.images.controlPlane) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          # CloudNativePG creates the managed roles shortly after the cluster starts; wait for them.
+          command:
+            - sh
+            - -c
+            - |
+              for attempt in $(seq 1 30); do
+                nexus provision-database && exit 0
+                echo "attempt $attempt failed; retrying in 10 s"; sleep 10
+              done
+              exit 1
+          env:
+            {{- include "nexus.adminEnv" (list . "NEXUS_PROVISION_DATABASE_URL") | nindent 12 }}
+            - {name: NEXUS_PROVISION_DATABASE, value: {{ .Values.postgresql.database | quote }}}
+            {{- if eq .Values.postgresql.mode "external" }}
+            {{- /* Without CloudNativePG the Job creates the logins and keeps their passwords. */}}
+            {{- range $role := list "api" "worker" "migrator" }}
+            - name: NEXUS_PROVISION_{{ upper $role }}_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ (index $.Values.secrets.database $role).name }}, key: password}
+            {{- end }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.hooks.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            {{- include "nexus.caMounts" . | nindent 12 }}
+      volumes:
+        {{- include "nexus.caVolumes" . | nindent 8 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-migrate
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  # A failed migration fails the upgrade before any pod rolls. Rerunning `helm upgrade` resumes
+  # at the revision that failed (each revision commits on its own).
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.hooks.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.hooks.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.selector" (list . "migrate") | nindent 8 }}
+        nexus.io/postgres-client: "true"
+    spec:
+      {{- include "nexus.hookPod" . | nindent 6 }}
+      containers:
+        - name: migrate
+          image: {{ include "nexus.image" (list . .Values.images.controlPlane) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: [migrate]
+          envFrom:
+            - configMapRef:
+                name: {{ $fullname }}-migrate
+          env:
+            {{- include "nexus.databaseEnv" (list . "migrator" "NEXUS_MIGRATION_DATABASE_URL") | nindent 12 }}
+          resources:
+            {{- toYaml .Values.hooks.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            {{- include "nexus.caMounts" . | nindent 12 }}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- include "nexus.caVolumes" . | nindent 8 }}
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 64Mi}
+{{- if $relay }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-relay-nodes
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay-nodes
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade,post-install,post-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  relay_nodes.py: |
+    {{- .Files.Get "files/relay_nodes.py" | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-relay-nodes
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade,post-install,post-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-relay-nodes
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade,post-install,post-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation
+rules:
+  # Read only the node-slot Secrets; create cannot be narrowed by name in RBAC.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+    resourceNames:
+      {{- range $i := until (int .Values.relay.nodeSlots) }}
+      - {{ printf "%s-%d" $.Values.secrets.relayNodePrefix $i }}
+      {{- end }}
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-relay-nodes
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade,post-install,post-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-relay-nodes
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}-relay-nodes
+    namespace: {{ .Release.Namespace }}
+{{- range $phase := list "pre" "post" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-relay-nodes-{{ $phase }}
+  labels:
+    {{- include "nexus.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: relay-nodes
+  annotations:
+    helm.sh/hook: {{ ternary "pre-install,pre-upgrade" "post-install,post-upgrade" (eq $phase "pre") }}
+    helm.sh/hook-weight: {{ ternary "-5" "5" (eq $phase "pre") | quote }}
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ $.Values.hooks.backoffLimit }}
+  activeDeadlineSeconds: {{ $.Values.hooks.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ $.Values.hooks.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.selector" (list $ "relay-nodes") | nindent 8 }}
+        nexus.io/postgres-client: "true"
+        nexus.io/api-client: "true"
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $fullname }}-relay-nodes
+      # The only pod of the release that talks to the Kubernetes API, so the only one with a token.
+      automountServiceAccountToken: true
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- include "nexus.pullSecrets" $ | nindent 6 }}
+      containers:
+        - name: relay-nodes
+          image: {{ include "nexus.image" (list $ $.Values.images.controlPlane) }}
+          imagePullPolicy: {{ $.Values.images.pullPolicy }}
+          command: [python, /etc/nexus/scripts/relay_nodes.py, --phase, {{ $phase }}]
+          env:
+            {{- include "nexus.adminEnv" (list $ "ADMIN_DATABASE_URL") | nindent 12 }}
+            - {name: API_URL, value: {{ printf "http://%s-api:8000" $fullname | quote }}}
+            - {name: RELAY_CLUSTER_ID, value: {{ $.Values.relay.clusterId | quote }}}
+            - {name: RELAY_REPLICAS, value: {{ $.Values.relay.replicas | quote }}}
+            - {name: RELAY_SECRET_PREFIX, value: {{ $.Values.secrets.relayNodePrefix | quote }}}
+            - {name: RELAY_ROLE_PREFIX, value: {{ $.Values.relay.rolePrefix | quote }}}
+            - {name: RELAY_CAPABILITIES, value: {{ $.Values.relay.capabilities | toJson | quote }}}
+            - name: DEPLOYER_LOGIN
+              valueFrom:
+                secretKeyRef: {name: {{ $.Values.secrets.deployer }}, key: login}
+            - name: DEPLOYER_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ $.Values.secrets.deployer }}, key: password}
+          resources:
+            {{- toYaml $.Values.hooks.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - {name: scripts, mountPath: /etc/nexus/scripts, readOnly: true}
+            {{- include "nexus.caMounts" $ | nindent 12 }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ $fullname }}-relay-nodes
+        {{- include "nexus.caVolumes" $ | nindent 8 }}
+{{- end }}
+{{- end }}

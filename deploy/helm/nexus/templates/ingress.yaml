@@ -1,0 +1,93 @@
+{{- if .Values.ingress.enabled }}
+{{- $fullname := include "nexus.fullname" . }}
+{{- $ns := .Release.Namespace }}
+{{- $tls := printf "%s-tls" $fullname }}
+# One certificate for the three public hosts, issued by cert-manager.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $tls }}
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $tls }}
+  dnsNames:
+    - {{ .Values.hosts.console }}
+    - {{ .Values.hosts.api }}
+    - {{ .Values.hosts.relay }}
+  privateKey: {algorithm: ECDSA, size: 256, rotationPolicy: Always}
+  issuerRef:
+    kind: ClusterIssuer
+    name: {{ .Values.ingress.clusterIssuer }}
+---
+{{- if .Values.ingress.hstsSeconds }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-hsts
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+spec:
+  headers:
+    stsSeconds: {{ .Values.ingress.hstsSeconds }}
+    stsIncludeSubdomains: false
+---
+{{- end }}
+# The API trusts signed client addresses only from the BFF. Clients reach the API through
+# Traefik, whose pods share the BFF's pod network, so strip the headers at the edge as well.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-strip-client-ip
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+spec:
+  headers:
+    customRequestHeaders:
+      X-Nexus-Client-IP: ""
+      X-Nexus-Client-IP-Signature: ""
+{{- $hsts := ternary (printf "%s-%s-hsts@kubernetescrd" $ns $fullname) "" (gt (int .Values.ingress.hstsSeconds) 0) }}
+{{- $routes := list
+  (dict "name" "web" "host" .Values.hosts.console "path" "/" "port" 3000 "middlewares" (list $hsts))
+  (dict "name" "api" "host" .Values.hosts.api "path" "/api/" "port" 8000 "middlewares" (list $hsts (printf "%s-%s-strip-client-ip@kubernetescrd" $ns $fullname)))
+}}
+{{- if .Values.relay.clusterId }}
+{{- /* Only /v1/ reaches the relay: /live, /ready and the metrics port stay private. */}}
+{{- $routes = append $routes (dict "name" "relay" "host" .Values.hosts.relay "path" "/v1/" "port" 8081 "middlewares" (list $hsts)) }}
+{{- end }}
+{{- range $route := $routes }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}-{{ $route.name }}
+  labels:
+    {{- include "nexus.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $route.name }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- $middlewares := compact $route.middlewares }}
+    {{- if $middlewares }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ join "," $middlewares }}
+    {{- end }}
+    {{- with $.Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $.Values.ingress.className }}
+  tls:
+    - hosts: [{{ $route.host }}]
+      secretName: {{ $tls }}
+  rules:
+    - host: {{ $route.host }}
+      http:
+        paths:
+          - path: {{ $route.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-{{ $route.name }}
+                port: {number: {{ $route.port }}}
+{{- end }}
+{{- end }}

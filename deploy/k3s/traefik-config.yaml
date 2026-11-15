@@ -1,0 +1,51 @@
+# Traefik settings for Nexus on k3s's bundled Traefik. Apply with:
+#   kubectl apply -f deploy/k3s/traefik-config.yaml
+# (or copy it to /var/lib/rancher/k3s/server/manifests/ on a server node).
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        # Keep the client's source address: ServiceLB forwards only to Traefik pods on the node
+        # that received the connection, without SNAT. Traefik then sets X-Real-Ip from it.
+        externalTrafficPolicy: Local
+    deployment:
+      # One Traefik per node that receives traffic once there are several nodes.
+      kind: DaemonSet
+    ports:
+      web:
+        # Traefik chart v40 (k3s 1.36) key; older charts used ports.web.redirectTo.
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true
+      websecure:
+        transport:
+          respondingTimeouts:
+            # 0 = no limit. Go's http server applies readTimeout to the whole connection, which
+            # would cut SSE streams and WebSocket sessions after a minute (Traefik's default).
+            readTimeout: 0
+            writeTimeout: 0
+            idleTimeout: 180s
+        # Behind an L4 load balancer that sends the PROXY protocol header, trust it here
+        # instead of relying on externalTrafficPolicy:
+        # proxyProtocol:
+        #   trustedIPs: ["10.0.0.0/24"]
+        forwardedHeaders:
+          # Never trust X-Forwarded-* or X-Real-Ip sent by clients.
+          insecure: false
+    logs:
+      access:
+        enabled: true
+        fields:
+          headers:
+            defaultmode: drop
+    providers:
+      kubernetesCRD:
+        allowCrossNamespace: false

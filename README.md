@@ -21,6 +21,7 @@ Nexus 是企业 AI API 的控制平面。平台管理员配置模型、上游和
 | 配置节点、发布快照、调用 SQL 函数、上报用量 | [两平面通信协议](docs/plane-protocol.md) |
 | 运行 Rust Relay、配置部署与验证结算 | [Relay 设计](docs/relay-design.md) · [开发计划](docs/relay-development.md) |
 | 查询费用、导出 CSV、处理异常和查看指标 | [查询与运营](docs/operations.md) |
+| 在 k3s 上部署、扩容、升级、备份恢复 | [部署手册](docs/deployment.md) |
 
 ## 维护与验证
 

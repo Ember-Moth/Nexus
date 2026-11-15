@@ -1,0 +1,35 @@
+# Example production values for the nexus chart (single k3s node to start).
+images:
+  controlPlane: {repository: ghcr.io/herta-network/nexus-control-plane, digest: "sha256:..."}
+  relay: {repository: ghcr.io/herta-network/nexus-relay, digest: "sha256:..."}
+  web: {repository: ghcr.io/herta-network/nexus-web, digest: "sha256:..."}
+hosts:
+  api: api.nexus.example.com
+  console: console.nexus.example.com
+  relay: relay.nexus.example.com
+ingress:
+  clusterIssuer: letsencrypt
+config:
+  controlPlane:
+    NEXUS_MAIL_PROVIDER: smtp
+    NEXUS_MAIL_FROM: nexus@example.com
+    NEXUS_SMTP_HOST: smtp.example.com
+    NEXUS_SMTP_PORT: "587"
+    NEXUS_SMTP_USERNAME: nexus
+    NEXUS_TURNSTILE_SITE_KEY: 0x4AAAAAAA...
+    NEXUS_TURNSTILE_HOSTNAME: console.nexus.example.com
+    NEXUS_PAYMENT_PUBLIC_BASE_URL: https://api.nexus.example.com
+    NEXUS_PAYMENT_RETURN_URL: https://console.nexus.example.com/payments
+relay:
+  # Set after POST /api/v1/gateway-clusters; then raise replicas (docs/deployment.md).
+  clusterId: ""
+  replicas: 0
+policy:
+  groups:
+    authentication:
+      mode: fill-missing
+      values: {}
+networkPolicy:
+  monitoring:
+    namespaceLabels: {kubernetes.io/metadata.name: monitoring}
+    podLabels: {app.kubernetes.io/name: prometheus}

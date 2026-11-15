@@ -1,0 +1,12 @@
+{{- $data := mustMergeOverwrite (deepCopy .Values.config.controlPlane) (deepCopy .Values.config.worker) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nexus.fullname" . }}-worker
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+data:
+  {{- range $key, $value := $data }}
+  {{ $key }}: {{ $value | toString | quote }}
+  {{- end }}

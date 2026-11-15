@@ -1,0 +1,62 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $monitoring := $np.monitoring }}
+{{- if .Values.postgresql.enabled }}
+# Only the API, the Worker, the relay nodes and the release Jobs (pods labelled
+# nexus.io/postgres-client=true in this namespace) reach PostgreSQL. The admin console cannot.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.postgresql.clusterName }}
+  labels:
+    {{- include "nexus-data.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ .Values.postgresql.clusterName }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{ printf "{%s: \"true\"}" $np.postgresClientLabel }}
+      ports:
+        - {port: 5432, protocol: TCP}
+    # Replication between instances, and the operator's status and management connections.
+    - from:
+        - podSelector:
+            matchLabels: {cnpg.io/cluster: {{ .Values.postgresql.clusterName }}}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ $np.operatorNamespace }}}
+      ports:
+        - {port: 5432, protocol: TCP}
+        - {port: 8000, protocol: TCP}
+    {{- if or $monitoring.namespaceLabels $monitoring.podLabels }}
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $monitoring.namespaceLabels | nindent 14 }}
+          podSelector:
+            matchLabels: {{- toYaml $monitoring.podLabels | nindent 14 }}
+      ports:
+        - {port: 9187, protocol: TCP}
+    {{- end }}
+{{- end }}
+{{- if .Values.redis.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nexus-redis
+  labels:
+    {{- include "nexus-data.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: nexus-redis}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{ printf "{%s: \"true\"}" $np.redisClientLabel }}
+      ports:
+        - {port: 6379, protocol: TCP}
+{{- end }}
+{{- end }}

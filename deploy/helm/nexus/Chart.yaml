@@ -1,0 +1,12 @@
+apiVersion: v2
+name: nexus
+description: >-
+  Nexus management API, Worker, admin console (BFF) and nexus-relay data plane for k3s.
+  Stateful dependencies (PostgreSQL, Redis) come from the nexus-data chart or from managed
+  services; this chart never owns data.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.30.0-0"
+home: https://github.com/herta-network/Nexus
+keywords: [nexus, k3s, relay]

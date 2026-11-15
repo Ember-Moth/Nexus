@@ -1,0 +1,12 @@
+apiVersion: v2
+name: nexus-data
+description: >-
+  Stateful dependencies for Nexus on k3s: a CloudNativePG PostgreSQL cluster with managed roles,
+  WAL archiving and scheduled backups to S3-compatible storage, and an authenticated TLS Redis
+  with eviction disabled. Installed as its own release so that upgrading or uninstalling the
+  application never touches data.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.30.0-0"
+home: https://github.com/herta-network/Nexus

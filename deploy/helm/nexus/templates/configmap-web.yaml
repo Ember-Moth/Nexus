@@ -1,0 +1,13 @@
+{{- $derived := dict "NEXUS_API_URL" (printf "http://%s-api:8000" (include "nexus.fullname" .)) "NEXUS_WEB_ORIGIN" (printf "https://%s" .Values.hosts.console) }}
+{{- $data := mustMergeOverwrite (deepCopy .Values.config.web) $derived }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nexus.fullname" . }}-web
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+data:
+  {{- range $key, $value := $data }}
+  {{ $key }}: {{ $value | toString | quote }}
+  {{- end }}

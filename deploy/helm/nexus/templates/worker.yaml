@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus.fullname" . }}-worker
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  # Safe to run several: each task claims its rows with FOR UPDATE SKIP LOCKED or a lease
+  # (settlement, outboxes, mail, exports, reconciliation, publication, auto-publish).
+  replicas: {{ .Values.worker.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels:
+      {{- include "nexus.selector" (list . "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.selector" (list . "worker") | nindent 8 }}
+        app.kubernetes.io/part-of: nexus
+        nexus.io/postgres-client: "true"
+        nexus.io/redis-client: "true"
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-worker.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- include "nexus.pullSecrets" . | nindent 6 }}
+      containers:
+        - name: worker
+          image: {{ include "nexus.image" (list . .Values.images.controlPlane) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: [worker]
+          envFrom:
+            - configMapRef:
+                name: {{ include "nexus.fullname" . }}-worker
+          env:
+            # Unique per pod; the heartbeat and worker-health use it.
+            - name: NEXUS_WORKER_ID
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+            {{- include "nexus.databaseEnv" (list . "worker" "NEXUS_DATABASE_URL") | nindent 12 }}
+            {{- include "nexus.redisEnv" (list . "NEXUS_REDIS_URL" "python") | nindent 12 }}
+            {{- include "nexus.controlPlaneSecretEnv" (list . "worker") | nindent 12 }}
+          startupProbe:
+            exec: {command: [nexus, worker-health]}
+            periodSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 24
+          livenessProbe:
+            # The heartbeat is live and every consumer reports ok.
+            exec: {command: [nexus, worker-health]}
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            {{- include "nexus.caMounts" . | nindent 12 }}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- include "nexus.caVolumes" . | nindent 8 }}
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 64Mi}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

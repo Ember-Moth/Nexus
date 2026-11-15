@@ -1,0 +1,22 @@
+# Disposable VM for the k3s smoke test (docs/deployment.md#本机冒烟).
+#   limactl create --name nexus-k3s deploy/smoke/lima-k3s.yaml && limactl start nexus-k3s
+# k3s itself is installed by deploy/smoke/smoke.py with the same flags as production,
+# so this file only provides an Ubuntu host, a host-reachable address and a rootless
+# BuildKit for building the three images.
+minimumLimaVersion: "2.0.0"
+base:
+  - template://ubuntu-24.04
+vmType: vz
+cpus: 6
+memory: 10GiB
+disk: 60GiB
+networks:
+  # Host-reachable address (192.168.105.0/24), used to reach Traefik from macOS.
+  - vzNAT: true
+containerd:
+  system: false
+  user: true
+mounts:
+  # The repository is read-only inside the VM; builds write only to BuildKit's cache.
+  - location: "~"
+    writable: false

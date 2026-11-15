@@ -1,0 +1,14 @@
+Nexus {{ .Chart.AppVersion }} in namespace {{ .Release.Namespace }}.
+
+  Console  https://{{ .Values.hosts.console }}
+  API      https://{{ .Values.hosts.api }}/api/v1
+{{- if .Values.relay.clusterId }}
+  Relay    https://{{ .Values.hosts.relay }}/v1  ({{ .Values.relay.replicas }} node(s) of cluster {{ .Values.relay.clusterId }})
+{{- else }}
+
+Relay: not deployed yet. Create a gateway cluster (POST /api/v1/gateway-clusters), then
+  helm upgrade {{ .Release.Name }} ... --set relay.clusterId=<id> --set relay.replicas=2
+{{- end }}
+
+Hook logs: kubectl -n {{ .Release.Namespace }} logs job/{{ include "nexus.fullname" . }}-migrate
+Runbook:   docs/deployment.md

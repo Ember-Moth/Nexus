@@ -1,0 +1,329 @@
+# Nexus application chart. Configuration is split into three layers (docs/deployment.md#三层配置):
+#   1. secrets.*  names of Kubernetes Secrets. The chart only references them; it never renders
+#                 a secret value. Create them with External Secrets, SOPS or by hand.
+#   2. config.*   non-secret startup parameters and per-node resource limits, rendered into one
+#                 ConfigMap per component and injected with envFrom. A change rolls the
+#                 component's pods (checksum annotation).
+#   3. policy.*   business policy, imported into the database policy tables by a post-install /
+#                 post-upgrade Job. The database is authoritative; see policy.groups.
+
+nameOverride: ""
+fullnameOverride: ""
+
+images:
+  # tag defaults to the chart appVersion; a digest, when set, wins over the tag.
+  controlPlane:
+    repository: ghcr.io/herta-network/nexus-control-plane
+    tag: ""
+    digest: ""
+  relay:
+    repository: ghcr.io/herta-network/nexus-relay
+    tag: ""
+    digest: ""
+  web:
+    repository: ghcr.io/herta-network/nexus-web
+    tag: ""
+    digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Public host names. TLS terminates at Traefik with a cert-manager certificate.
+hosts:
+  api: api.example.com
+  console: console.example.com
+  relay: relay.example.com
+
+ingress:
+  enabled: true
+  className: traefik
+  # cert-manager ClusterIssuer that signs the certificate for all three hosts.
+  clusterIssuer: letsencrypt
+  # Strict-Transport-Security on every response; set 0 to disable.
+  hstsSeconds: 31536000
+  annotations: {}
+
+# ---------------------------------------------------------------------------------------------
+# Layer 1: Secrets (names and keys only)
+# ---------------------------------------------------------------------------------------------
+secrets:
+  # Application encryption key ring. Keys:
+  #   encryption-key            URL-safe base64 of 32 random bytes (current key)
+  #   encryption-key-version    integer version of the current key
+  #   previous-encryption-keys  optional JSON {"<version>": "<key>"} of keys still needed to read
+  #                             older ciphertexts
+  encryption: nexus-encryption
+  # Key "secret": at least 32 random characters, shared by the BFF and the API.
+  authProxy: nexus-auth-proxy
+  # Key "password": Redis AUTH password (URL-safe characters only).
+  redis: nexus-redis
+  # Key "private-key": base64 of the gateway cluster's 32-byte Curve25519 private key.
+  relayCluster: nexus-relay-cluster
+  # Optional keys: smtp-password, resend-api-key, cloudflare-email-api-token, turnstile-secret-key.
+  integrations: nexus-integrations
+  # Platform administrator the relay-node Job signs in as to register principals.
+  # Keys: login, password. Not needed while relay.replicas is 0.
+  deployer: nexus-deployer
+  # PostgreSQL logins, one basic-auth Secret per role (keys username, password; the same Secrets
+  # are the CloudNativePG managed-role password secrets). Passwords must be URL-safe
+  # (for example `openssl rand -hex 32`). Set urlKey to read a complete connection URL instead.
+  database:
+    api: {name: nexus-db-api, urlKey: ""}
+    worker: {name: nexus-db-worker, urlKey: ""}
+    migrator: {name: nexus-db-migrator, urlKey: ""}
+    # Administrator (superuser, or CREATEROLE + CREATEDB) used only by the provisioning and
+    # relay-node Jobs. Empty means "<clusterName>-superuser" from CloudNativePG.
+    admin: {name: "", urlKey: ""}
+  # Relay node logins are created by the relay-node Job as "<prefix>-<ordinal>" with keys
+  # username, password, node-id, unless they already exist (for example from External Secrets).
+  relayNodePrefix: nexus-relay-node
+
+# ---------------------------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------------------------
+postgresql:
+  # cloudnative-pg: the nexus-data chart's cluster in this namespace. external: a managed service.
+  mode: cloudnative-pg
+  clusterName: nexus-pg
+  # Defaults to "<clusterName>-rw.<namespace>.svc" in cloudnative-pg mode.
+  host: ""
+  port: 5432
+  database: nexus
+  # Database name the administrator connects to for provisioning.
+  maintenanceDatabase: postgres
+  # Production requires verify-full (RuntimeSettings rejects anything else).
+  sslmode: verify-full
+  # CA that signs the server certificate, mounted at /etc/nexus/postgres-ca/ca.crt. In
+  # cloudnative-pg mode it defaults to the Secret "<clusterName>-ca". For a managed service set
+  # configMap (for example the provider's CA bundle).
+  ca:
+    secret: ""
+    configMap: ""
+    key: ca.crt
+
+redis:
+  # Defaults to "nexus-redis.<namespace>.svc" (the nexus-data chart).
+  host: ""
+  port: 6379
+  db: 0
+  # TLS is required in production. The CA comes from this Secret's ca.crt (the nexus-data
+  # chart's cert-manager certificate) or from caConfigMap for a managed Redis.
+  tls: true
+  caSecret: nexus-redis-tls
+  caConfigMap: ""
+
+# ---------------------------------------------------------------------------------------------
+# Layer 2: ConfigMaps. Non-secret startup parameters and per-node resource limits, one ConfigMap
+# per component. The chart adds the derived keys listed in docs/deployment.md (URLs, listen
+# addresses, CA paths). Business policy does not belong here; see policy.
+# ---------------------------------------------------------------------------------------------
+config:
+  # Shared by the API, the Worker and the migration/policy Jobs.
+  controlPlane:
+    NEXUS_ENVIRONMENT: production
+    NEXUS_LOG_LEVEL: info
+    NEXUS_REDIS_NAMESPACE: "nexus:v1"
+    NEXUS_BILLING_CURRENCY: USD
+    NEXUS_DEPENDENCY_TIMEOUT: "3"
+    NEXUS_SHUTDOWN_TIMEOUT: "10"
+    # Identity mail transport (credentials are in secrets.integrations).
+    # NEXUS_MAIL_PROVIDER: smtp
+    # NEXUS_MAIL_FROM: nexus@example.com
+    # NEXUS_SMTP_HOST: smtp.example.com
+    # NEXUS_SMTP_PORT: "587"
+    # NEXUS_SMTP_SECURITY: starttls
+    # NEXUS_SMTP_USERNAME: nexus
+    # NEXUS_CLOUDFLARE_EMAIL_ACCOUNT_ID: ""
+    # NEXUS_TURNSTILE_SITE_KEY: ""
+    # NEXUS_TURNSTILE_HOSTNAME: console.example.com
+    # Fixed payment endpoints (HTTPS in production).
+    # NEXUS_PAYMENT_PUBLIC_BASE_URL: https://api.example.com
+    # NEXUS_PAYMENT_RETURN_URL: https://console.example.com/payments
+  api:
+    NEXUS_DB_POOL_SIZE: "5"
+    NEXUS_DB_MAX_OVERFLOW: "0"
+    NEXUS_LOGIN_HASH_CONCURRENCY: "2"
+    NEXUS_ACCOUNT_HASH_CONCURRENCY: "1"
+    NEXUS_HASH_QUEUE_TIMEOUT_SECONDS: "5"
+    # BFF pods have no fixed address, so the API trusts the pod network; every forwarded client
+    # address must still carry the BFF's signature. k3s default pod CIDR:
+    NEXUS_AUTH_PROXY_PEERS: '["10.42.0.0/16"]'
+  worker:
+    NEXUS_DB_POOL_SIZE: "5"
+    NEXUS_DB_MAX_OVERFLOW: "0"
+    NEXUS_WORKER_INTERVAL: "5"
+    NEXUS_WORKER_HEARTBEAT_TTL: "30"
+    NEXUS_AUTO_PUBLISH_QUIET_SECONDS: "3"
+    NEXUS_AUTO_PUBLISH_MAX_DELAY_SECONDS: "30"
+    NEXUS_AUTO_PUBLISH_POLL_SECONDS: "30"
+  migrate:
+    # Fail on a busy table instead of queueing traffic behind the lock (docs/operations.md).
+    NEXUS_MIGRATION_LOCK_TIMEOUT_MS: "5000"
+    NEXUS_MIGRATION_STATEMENT_TIMEOUT_MS: "0"
+  web:
+    # Traefik overwrites X-Real-Ip with the client address it accepted the connection from.
+    NEXUS_WEB_CLIENT_IP_HEADER: x-real-ip
+    NEXUS_COOKIE_SECURE: "true"
+  relay:
+    NEXUS_RELAY_LOG: info
+    NEXUS_RELAY_POOL_SIZE: "8"
+    NEXUS_RELAY_CONCURRENCY: "128"
+    NEXUS_RELAY_LEASE_MS: "15000"
+    NEXUS_RELAY_REQUEST_BYTES: "2097152"
+    NEXUS_RELAY_RESPONSE_BYTES: "8388608"
+    NEXUS_RELAY_EVENT_BYTES: "1048576"
+    NEXUS_RELAY_STREAM_IDLE_MS: "30000"
+    NEXUS_RELAY_WS_SESSIONS: "128"
+    NEXUS_RELAY_PURGE_INTERVAL_MS: "60000"
+
+# ---------------------------------------------------------------------------------------------
+# Layer 3: business policy (database policy tables, imported with `nexus settings import`)
+# ---------------------------------------------------------------------------------------------
+policy:
+  enabled: true
+  # Validate and report without writing.
+  dryRun: false
+  # Fail the release when the image has no `nexus settings import` (before the settings-to-db
+  # change ships). false: the Job reports that it skipped the import and succeeds.
+  requireImporter: true
+  # Each group is applied in one of two modes:
+  #   fill-missing  write only values that were never set; afterwards the console is
+  #                 authoritative and a later deploy does not overwrite console edits (default)
+  #   managed       GitOps owns the group: every deploy applies these values and the console
+  #                 shows the group read-only
+  groups:
+    authentication:
+      mode: fill-missing
+      values: {}
+    billing:
+      mode: fill-missing
+      values: {}
+    reporting:
+      mode: fill-missing
+      values: {}
+    resource-quotas:
+      mode: fill-missing
+      values: {}
+  # Per gateway cluster: "<cluster-uuid>": {mode: ..., values: {...}}
+  clusters: {}
+
+# ---------------------------------------------------------------------------------------------
+# Workloads
+# ---------------------------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+api:
+  replicas: 2
+  resources:
+    requests: {cpu: 250m, memory: 384Mi}
+    limits: {memory: 1Gi}
+  terminationGracePeriodSeconds: 30
+  # Lets Traefik stop routing to the pod before uvicorn closes its listener.
+  preStopSeconds: 5
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+worker:
+  # Every Worker task claims rows with FOR UPDATE SKIP LOCKED or a database lease, so several
+  # replicas are safe; each uses its pod name as NEXUS_WORKER_ID. 2 gives failover once the
+  # cluster has more than one node.
+  replicas: 1
+  resources:
+    requests: {cpu: 250m, memory: 384Mi}
+    limits: {memory: 1Gi}
+  terminationGracePeriodSeconds: 60
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+web:
+  replicas: 2
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {memory: 512Mi}
+  terminationGracePeriodSeconds: 30
+  preStopSeconds: 5
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+relay:
+  # UUID returned by POST /api/v1/gateway-clusters. Leave replicas at 0 until it exists.
+  clusterId: ""
+  replicas: 0
+  # Highest number of nodes this release may ever run. Every pod lists this many optional
+  # credential slots, so scaling below it never changes the pod template (no rolling restart).
+  nodeSlots: 16
+  # PostgreSQL login of node N is "<rolePrefix><N>"; unique per relay cluster sharing a database.
+  rolePrefix: nexus_relay_node_
+  # Registered with each principal; must cover what the published snapshots require.
+  capabilities:
+    - reservation.v1
+    - usage-events.v1
+    - relay.native.v1
+    - relay.provider-features.v1
+    - relay.sse.v1
+    - relay.responses-ws.v1
+  # Optional ConfigMap with an extra PEM CA for upstreams behind a private CA; mounted as a file
+  # and passed as NEXUS_RELAY_UPSTREAM_CA. It is added to, not substituted for, public roots.
+  upstreamCA:
+    configMap: ""
+    key: ca.crt
+  # Rolling update and scale-in: Traefik stops routing to the pod during preStop, then SIGTERM
+  # starts the drain. Open SSE streams and WebSocket turns may run for drainSeconds, completion
+  # reports for up to 90 s more. The grace period is derived from these unless set.
+  preStopSeconds: 15
+  drainSeconds: 120
+  terminationGracePeriodSeconds: null
+  resources:
+    requests: {cpu: 500m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Spread nodes over k3s hosts once there is more than one.
+  topologySpread: true
+
+hooks:
+  # Jobs: provision-database and migrate (pre-install/pre-upgrade), relay nodes (pre and post),
+  # policy import (post-install/post-upgrade).
+  backoffLimit: 3
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 768Mi}
+
+# ---------------------------------------------------------------------------------------------
+# Network policy (k3s enforces NetworkPolicy with its embedded kube-router controller)
+# ---------------------------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  # Where Traefik runs.
+  ingressController:
+    namespace: kube-system
+    podLabels:
+      app.kubernetes.io/name: traefik
+  # Prometheus may scrape the relay metrics port (9464) and the API. Empty: nobody can.
+  monitoring:
+    namespaceLabels: {}
+    podLabels: {}
+  # Restrict the BFF's egress to the API and DNS.
+  restrictWebEgress: true
+
+serviceMonitor:
+  # Render a Prometheus Operator ServiceMonitor for the relay metrics port.
+  enabled: false
+  interval: 30s

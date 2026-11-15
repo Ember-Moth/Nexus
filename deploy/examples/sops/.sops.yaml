@@ -1,0 +1,6 @@
+# SOPS rules for deploy/examples/sops. Replace the age recipient with your own public key(s);
+# keep the private key outside the repository (for example in the CI or Flux decryption Secret).
+creation_rules:
+  - path_regex: .*\.enc\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1examplepublickeyreplacewithyourownrecipientxxxxxxxxxxxxxxxxxxxxxxxxx

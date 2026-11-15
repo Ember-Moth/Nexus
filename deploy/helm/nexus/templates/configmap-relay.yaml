@@ -1,0 +1,28 @@
+{{- /* The relay gets only NEXUS_RELAY_* keys: its own limits plus the derived listeners, cluster
+     and the Redis namespace it shares with the control plane. */}}
+{{- $derived := dict
+  "NEXUS_RELAY_LISTEN" "0.0.0.0:8081"
+  "NEXUS_RELAY_METRICS_LISTEN" "0.0.0.0:9464"
+  "NEXUS_RELAY_NAMESPACE" (index .Values.config.controlPlane "NEXUS_REDIS_NAMESPACE" | default "nexus:v1")
+  "NEXUS_RELAY_CLUSTER_ID" .Values.relay.clusterId
+  "NEXUS_RELAY_DRAIN_SECONDS" (toString .Values.relay.drainSeconds) }}
+{{- if .Values.relay.upstreamCA.configMap }}
+{{- $_ := set $derived "NEXUS_RELAY_UPSTREAM_CA" (printf "/etc/nexus/upstream-ca/%s" .Values.relay.upstreamCA.key) }}
+{{- end }}
+{{- $data := mustMergeOverwrite (deepCopy .Values.config.relay) $derived }}
+{{- range $key, $_ := $data }}
+{{- if not (hasPrefix "NEXUS_RELAY_" $key) }}
+{{- fail (printf "config.relay.%s: the relay only reads NEXUS_RELAY_* settings" $key) }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nexus.fullname" . }}-relay
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay
+data:
+  {{- range $key, $value := $data }}
+  {{ $key }}: {{ $value | toString | quote }}
+  {{- end }}

@@ -1,0 +1,54 @@
+# nexus overrides for the smoke VM. Images were built in the VM and imported into k3s.
+images:
+  controlPlane: {repository: docker.io/nexus/control-plane, tag: smoke}
+  relay: {repository: docker.io/nexus/relay, tag: smoke}
+  web: {repository: docker.io/nexus/web, tag: smoke}
+  pullPolicy: Never
+hosts:
+  api: api.nexus.test
+  console: console.nexus.test
+  relay: relay.nexus.test
+ingress:
+  clusterIssuer: smoke-ca
+config:
+  controlPlane:
+    NEXUS_ENVIRONMENT: production
+    NEXUS_LOG_LEVEL: info
+policy:
+  # main has no `nexus settings import` yet (settings-to-db); the Job reports the skip.
+  requireImporter: false
+  groups:
+    authentication:
+      mode: fill-missing
+      values: {login_per_ip: 60}
+    reporting:
+      mode: managed
+      values: {export_max_rows: 10000}
+api:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 768Mi}
+worker:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 768Mi}
+web:
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+relay:
+  nodeSlots: 4
+  # Short enough for the drill, long enough for a 20 s stream to finish during a roll.
+  preStopSeconds: 5
+  drainSeconds: 45
+  upstreamCA: {configMap: smoke-upstream-ca, key: ca.crt}
+  resources:
+    requests: {cpu: 100m, memory: 64Mi}
+    limits: {memory: 512Mi}
+hooks:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}

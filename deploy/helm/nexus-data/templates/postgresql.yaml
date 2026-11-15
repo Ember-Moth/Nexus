@@ -1,0 +1,134 @@
+{{- if .Values.postgresql.enabled }}
+{{- $pg := .Values.postgresql }}
+{{- $modules := list "nexus_identity" "nexus_catalog" "nexus_billing" "nexus_publication" "nexus_reporting" }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $pg.clusterName }}
+  labels:
+    {{- include "nexus-data.labels" . | nindent 4 }}
+  annotations:
+    # Never delete the database together with a release.
+    helm.sh/resource-policy: keep
+spec:
+  instances: {{ $pg.instances }}
+  imageName: {{ $pg.imageName }}
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: {{ $pg.enableSuperuserAccess }}
+  bootstrap:
+    initdb:
+      database: {{ $pg.database }}
+      # Owner of the empty database only; the application never logs in as it. Schemas are
+      # created by nexus_migrator (CREATE on the database) and owned by the module roles.
+      owner: nexus_owner
+      encoding: UTF8
+      localeCollate: C
+      localeCType: C
+      dataChecksums: true
+  postgresql:
+    parameters:
+      {{- range $key, $value := $pg.parameters }}
+      {{ $key }}: {{ $value | quote }}
+      {{- end }}
+  storage:
+    size: {{ $pg.storage.size }}
+    {{- with $pg.storage.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
+  walStorage:
+    size: {{ $pg.walStorage.size }}
+    {{- with $pg.walStorage.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
+  resources:
+    {{- toYaml $pg.resources | nindent 4 }}
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+  managed:
+    # Group roles own schemas and gateway functions (NOLOGIN). Process logins switch into the
+    # module roles per transaction, so they do not inherit them. Relay node logins are created by
+    # the nexus chart's relay-node Job (one per node, member of nexus_gateway only).
+    roles:
+      {{- range $role := concat $modules (list "nexus_bridge" "nexus_gateway") }}
+      - name: {{ $role }}
+        ensure: present
+        login: false
+        inherit: true
+      {{- end }}
+      - name: nexus_api
+        ensure: present
+        login: true
+        inherit: false
+        passwordSecret: {name: {{ $pg.roleSecrets.api }}}
+        inRoles: {{ toJson $modules }}
+      - name: nexus_worker
+        ensure: present
+        login: true
+        inherit: false
+        passwordSecret: {name: {{ $pg.roleSecrets.worker }}}
+        inRoles: {{ toJson $modules }}
+      - name: nexus_migrator
+        ensure: present
+        login: true
+        inherit: false
+        passwordSecret: {name: {{ $pg.roleSecrets.migrator }}}
+        inRoles: {{ toJson (append $modules "nexus_bridge") }}
+  {{- if $pg.backup.enabled }}
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ $pg.clusterName }}-backups
+  {{- end }}
+  {{- if $pg.monitoring.podMonitor }}
+  monitoring:
+    enablePodMonitor: true
+  {{- end }}
+{{- if $pg.backup.enabled }}
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ $pg.clusterName }}-backups
+  labels:
+    {{- include "nexus-data.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  retentionPolicy: {{ $pg.backup.retentionPolicy | quote }}
+  configuration:
+    destinationPath: {{ $pg.backup.destinationPath }}
+    {{- with $pg.backup.endpointURL }}
+    endpointURL: {{ . }}
+    {{- end }}
+    s3Credentials:
+      accessKeyId: {name: {{ $pg.backup.s3CredentialsSecret }}, key: ACCESS_KEY_ID}
+      secretAccessKey: {name: {{ $pg.backup.s3CredentialsSecret }}, key: ACCESS_SECRET_KEY}
+      {{- with $pg.backup.region }}
+      region: {name: {{ $pg.backup.s3CredentialsSecret }}, key: ACCESS_REGION}
+      {{- end }}
+    wal:
+      compression: {{ $pg.backup.walCompression }}
+      maxParallel: 2
+    data:
+      compression: {{ $pg.backup.dataCompression }}
+      jobs: 2
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ $pg.clusterName }}-daily
+  labels:
+    {{- include "nexus-data.labels" . | nindent 4 }}
+spec:
+  schedule: {{ $pg.backup.schedule | quote }}
+  backupOwnerReference: self
+  immediate: true
+  cluster:
+    name: {{ $pg.clusterName }}
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+{{- end }}
+{{- end }}

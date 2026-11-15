@@ -1,0 +1,35 @@
+# /etc/rancher/k3s/config.yaml for the first (and initially only) server.
+# See docs/deployment.md#单节点安装. Copy it, fill in the S3 settings, then run the installer.
+#
+# Embedded etcd from day one: a single server can later be joined by two more servers for
+# control-plane HA, and by any number of agents for capacity, without a datastore migration.
+cluster-init: true
+# Encrypt Secrets at rest in etcd (aescbc by default; `k3s secrets-encrypt` rotates the key).
+secrets-encryption: true
+write-kubeconfig-mode: "0600"
+# Address clients and future servers use to reach this API server.
+# tls-san:
+#   - k3s.example.internal
+# node-ip: 10.0.0.10
+
+# Scheduled etcd snapshots, kept locally and uploaded to S3-compatible storage. A snapshot
+# contains every Secret; the bucket must be private and encrypted (SSE-KMS or equivalent).
+etcd-snapshot-schedule-cron: "0 */6 * * *"
+etcd-snapshot-retention: 28
+etcd-snapshot-compress: true
+etcd-s3: true
+etcd-s3-endpoint: s3.example.com
+etcd-s3-region: us-east-1
+etcd-s3-bucket: nexus-etcd-snapshots
+etcd-s3-folder: production
+# Credentials: either here (keep this file 0600), or in the Secret named by
+# etcd-s3-config-secret in kube-system. Keep an offline copy as well: a restore onto a new
+# host happens before the cluster (and its Secrets) exists.
+# etcd-s3-access-key: ...
+# etcd-s3-secret-key: ...
+
+# Kubelet: reserve room for the OS and k3s itself on a node that also runs PostgreSQL.
+kubelet-arg:
+  - "system-reserved=cpu=500m,memory=1Gi"
+  - "kube-reserved=cpu=500m,memory=1Gi"
+  - "eviction-hard=memory.available<500Mi,nodefs.available<10%"

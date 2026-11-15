@@ -1,0 +1,25 @@
+# Build context for deploy/images/*.Dockerfile. Each image copies only what it needs; this list
+# keeps local state, secrets and build output out of the context.
+**/.git
+.github
+.venv
+.local
+.cache
+.env
+.env.*
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+dist
+htmlcov
+docs
+tests
+deploy
+!deploy/images
+src/relay/target
+src/web/node_modules
+src/web/.next
+src/web/.env*
+**/*.tsbuildinfo
+**/.DS_Store

@@ -1,0 +1,22 @@
+# nexus-data overrides for the smoke VM: small resources, backups to the local S3 stand-in.
+# smoke.py passes --set postgresql.backup.endpointURL=http://<vm-ip>:7070.
+postgresql:
+  storage: {size: 4Gi}
+  walStorage: {size: 2Gi}
+  resources:
+    requests: {cpu: 250m, memory: 768Mi}
+    limits: {memory: 768Mi}
+  parameters:
+    max_connections: "100"
+    shared_buffers: 128MB
+    effective_cache_size: 384MB
+    track_commit_timestamp: "on"
+  backup:
+    destinationPath: s3://nexus-pg-backups/smoke
+    s3CredentialsSecret: nexus-backup-s3
+    region: ""
+redis:
+  maxmemory: 128mb
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {memory: 192Mi}

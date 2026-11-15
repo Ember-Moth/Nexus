@@ -1,0 +1,88 @@
+# Stateful dependencies of Nexus. Install into the same namespace as the nexus chart, before it.
+# Prerequisites (cluster-wide): cert-manager, the CloudNativePG operator and the Barman Cloud
+# plugin; see docs/deployment.md#集群组件.
+
+postgresql:
+  # false when PostgreSQL is a managed service (set postgresql.mode=external in the nexus chart).
+  enabled: true
+  clusterName: nexus-pg
+  # Start with one instance; raise to 3 once there are three k3s nodes (synchronous replicas
+  # and failover are then handled by the operator).
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.12-standard-trixie@sha256:2a2fe731f3b421d1a1c1f84e70e95ef0658bf198b6c8dbbfe53d51f24c3275b8
+  database: nexus
+  storage:
+    size: 50Gi
+    # local-path (k3s default) binds the volume to one node. Use a replicated or network
+    # storage class before relying on more than one node; see docs/deployment.md#存储迁移.
+    storageClass: ""
+  walStorage:
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {memory: 2Gi}
+  parameters:
+    max_connections: "200"
+    shared_buffers: 512MB
+    effective_cache_size: 1536MB
+    track_commit_timestamp: "on"
+    log_min_duration_statement: "1000"
+    # Statement and lock timeouts are set per role by the application; keep server defaults.
+  # Login roles are CloudNativePG managed roles. Their passwords live in basic-auth Secrets
+  # (keys username, password) labelled cnpg.io/reload=true, so a password change is applied
+  # without restarting PostgreSQL. The nexus chart reads the same Secrets.
+  roleSecrets:
+    api: nexus-db-api
+    worker: nexus-db-worker
+    migrator: nexus-db-migrator
+  # The provisioning and relay-node Jobs connect as the superuser ("<clusterName>-superuser").
+  enableSuperuserAccess: true
+  backup:
+    enabled: true
+    # S3-compatible destination for WAL archiving and base backups (Barman Cloud plugin).
+    destinationPath: s3://nexus-pg-backups/production
+    endpointURL: ""
+    # Secret with keys ACCESS_KEY_ID and ACCESS_SECRET_KEY (and optionally ACCESS_SESSION_TOKEN).
+    s3CredentialsSecret: nexus-backup-s3
+    region: ""
+    retentionPolicy: 30d
+    # Six-field cron (seconds first): daily base backup at 03:00.
+    schedule: "0 0 3 * * *"
+    walCompression: gzip
+    dataCompression: gzip
+  monitoring:
+    podMonitor: false
+
+redis:
+  enabled: true
+  image: docker.io/library/redis:8.10.3-alpine
+  # Upper bound for Redis data; writes fail (never evict) once it is reached.
+  maxmemory: 512mb
+  resources:
+    requests: {cpu: 100m, memory: 640Mi}
+    limits: {memory: 640Mi}
+  # Secret with key "password" (URL-safe characters).
+  passwordSecret: nexus-redis
+  tls:
+    # Server certificate from the internal CA below; clients trust the Secret's ca.crt.
+    secretName: nexus-redis-tls
+    duration: 8760h
+    renewBefore: 720h
+
+# Namespaced CA used for in-cluster TLS (Redis). cert-manager must be installed.
+internalCA:
+  enabled: true
+  name: nexus-internal-ca
+
+networkPolicy:
+  enabled: true
+  # Only pods with these labels (set by the nexus chart on the API, Worker, relay and Jobs) may
+  # connect. The admin console has neither.
+  postgresClientLabel: nexus.io/postgres-client
+  redisClientLabel: nexus.io/redis-client
+  # The CloudNativePG operator talks to the instances (status port 8000 and 5432).
+  operatorNamespace: cnpg-system
+  monitoring:
+    namespaceLabels: {}
+    podLabels: {}

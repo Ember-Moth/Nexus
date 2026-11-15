@@ -1,0 +1,91 @@
+{{- /*
+Layer 3: business policy. The file below is imported into the module policy tables by
+`nexus settings import`, which applies each group in its mode:
+  fill-missing  only values never set before (the console stays authoritative afterwards)
+  managed       the whole group, every deploy; the console shows it read-only
+The application never reads or writes Kubernetes objects; the database is the source of truth.
+*/}}
+{{- if .Values.policy.enabled }}
+{{- range $name, $group := .Values.policy.groups }}
+{{- if not (has $group.mode (list "fill-missing" "managed")) }}
+{{- fail (printf "policy.groups.%s.mode must be fill-missing or managed" $name) }}
+{{- end }}
+{{- end }}
+{{- $document := dict "version" 1 "groups" .Values.policy.groups "clusters" .Values.policy.clusters }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nexus.fullname" . }}-policy
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: policy
+data:
+  policy.yaml: |
+    {{- toYaml $document | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nexus.fullname" . }}-policy-import
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: policy
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+    checksum/policy: {{ toYaml $document | sha256sum }}
+spec:
+  backoffLimit: {{ .Values.hooks.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.hooks.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.hooks.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.selector" (list . "policy") | nindent 8 }}
+        nexus.io/postgres-client: "true"
+        nexus.io/redis-client: "true"
+    spec:
+      {{- include "nexus.hookPod" . | nindent 6 }}
+      containers:
+        - name: import
+          image: {{ include "nexus.image" (list . .Values.images.controlPlane) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              if ! nexus settings import --help >/dev/null 2>&1; then
+                if [ "$REQUIRE_IMPORTER" = "true" ]; then
+                  echo "this image has no 'nexus settings import'; set policy.requireImporter=false to skip" >&2
+                  exit 1
+                fi
+                echo "skipped: this image has no 'nexus settings import' (policy file left unapplied)"
+                exit 0
+              fi
+              exec nexus settings import --file /etc/nexus/policy/policy.yaml $DRY_RUN
+          envFrom:
+            - configMapRef:
+                name: {{ include "nexus.fullname" . }}-api
+          env:
+            - {name: REQUIRE_IMPORTER, value: {{ .Values.policy.requireImporter | toString | quote }}}
+            - {name: DRY_RUN, value: {{ ternary "--dry-run" "" .Values.policy.dryRun | quote }}}
+            {{- include "nexus.databaseEnv" (list . "api" "NEXUS_DATABASE_URL") | nindent 12 }}
+            {{- include "nexus.redisEnv" (list . "NEXUS_REDIS_URL" "python") | nindent 12 }}
+            {{- include "nexus.controlPlaneSecretEnv" (list . "api") | nindent 12 }}
+          resources:
+            {{- toYaml .Values.hooks.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - {name: policy, mountPath: /etc/nexus/policy, readOnly: true}
+            {{- include "nexus.caMounts" . | nindent 12 }}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: policy
+          configMap:
+            name: {{ include "nexus.fullname" . }}-policy
+        {{- include "nexus.caVolumes" . | nindent 8 }}
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 64Mi}
+{{- end }}

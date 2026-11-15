@@ -57,6 +57,8 @@ uv run nexus --env-file .env.worker worker-health
 
 ## 生产配置
 
+k3s 上的镜像、Helm chart、三层配置和运维流程见[部署手册](deployment.md)。
+
 - API、Worker 和迁移进程分别注入各自的凭据。运行时设置 `NEXUS_ENVIRONMENT=production`，PostgreSQL 连接使用 `sslmode=verify-full`，Redis 使用带认证的 `rediss://`。给每个网关节点登记独立的数据库身份。[网关权限与接入](plane-protocol.md)
 - API 与 Worker 使用相同的 Redis 命名空间和应用加密密钥版本。先将新旧密钥分发到相关进程，再轮换当前版本，并保留历史密文所需的旧密钥。[凭据轮换](catalog-api.md#凭据加密与轮换)
 - 账务币种是账务策略的 `currency`，默认 USD。在出现第一个账户、价格、收款账户或支付渠道之前选定，之后修改返回 409 `currency_locked`。

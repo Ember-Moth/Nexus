@@ -51,17 +51,25 @@ export async function POST(request: NextRequest) {
   } catch {
     return bffError(422, "validation_error", "Request body must be JSON");
   }
-  const { login, password } = (body ?? {}) as { login?: unknown; password?: unknown };
+  const { login, password, turnstile_token: turnstileToken } = (body ?? {}) as {
+    login?: unknown;
+    password?: unknown;
+    turnstile_token?: unknown;
+  };
   if (typeof login !== "string" || typeof password !== "string") {
     return bffError(422, "validation_error", "login and password are required");
   }
+  const credentials =
+    typeof turnstileToken === "string" && turnstileToken
+      ? { login, password, turnstile_token: turnstileToken }
+      : { login, password };
 
   let upstream: Response;
   try {
     upstream = await fetch(`${nexusApiUrl()}/api/v1/auth/sessions`, {
       method: "POST",
       headers: authRequestHeaders(request.headers),
-      body: JSON.stringify({ login, password }),
+      body: JSON.stringify(credentials),
       cache: "no-store",
     });
   } catch {

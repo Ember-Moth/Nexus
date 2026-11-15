@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { sessionCookieName } from "@/lib/server/config";
 
-const PUBLIC_PATHS = ["/login", "/setup-password"];
+const PUBLIC_PATHS = ["/login", "/setup-password", "/register", "/forgot-password", "/reset-password"];
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

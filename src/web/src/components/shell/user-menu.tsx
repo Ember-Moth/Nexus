@@ -1,7 +1,8 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { EllipsisIcon, LanguagesIcon, LogOutIcon } from "lucide-react";
+import { EllipsisIcon, LanguagesIcon, LogOutIcon, UserRoundIcon } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -81,6 +82,12 @@ export function UserMenu() {
           <span className="block font-mono text-xs text-muted-foreground">{me.user.id}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/account">
+            <UserRoundIcon />
+            {t("id.account.title")}
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => setLocale(locale === "en" ? "zh-CN" : "en")}>
           <LanguagesIcon />
           {t("user.language")}

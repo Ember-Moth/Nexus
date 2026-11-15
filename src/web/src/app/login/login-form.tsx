@@ -9,7 +9,9 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { useAuthOptions } from "@/components/auth-layout";
 import { Spinner, TraceId } from "@/components/feedback";
+import { Turnstile, useTurnstile } from "@/components/turnstile";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,20 +42,29 @@ export function LoginForm() {
   const [failure, setFailure] = useState<ApiError | null>(null);
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { login: "", password: "" } });
   const expired = params.get("expired") === "1";
+  const options = useAuthOptions();
+  const turnstile = useTurnstile();
+  const needsTurnstile = options.data?.turnstile ?? false;
 
   const onSubmit = form.handleSubmit(async (values) => {
     setFailure(null);
+    if (needsTurnstile && !turnstile.token) {
+      form.setError("root", { message: "turnstile" });
+      return;
+    }
     let response: Response;
     try {
       response = await fetch("/api/session", {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify({ ...values, turnstile_token: turnstile.token ?? undefined }),
       });
     } catch (error) {
       setFailure(ApiError.network(error));
       return;
+    } finally {
+      turnstile.reset();
     }
     const body = await response.json().catch(() => null);
     if (response.status !== 201) {
@@ -144,7 +155,12 @@ export function LoginForm() {
             />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="password">{t("login.password")}</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="password">{t("login.password")}</Label>
+              <Link href="/forgot-password" className="text-[13px] text-muted-foreground underline-offset-3 hover:underline">
+                {t("id.login.forgot")}
+              </Link>
+            </div>
             <div className="relative">
               <Input
                 id="password"
@@ -167,12 +183,22 @@ export function LoginForm() {
             </div>
           </div>
           {invalid ? <p className="-mt-2 text-sm text-destructive">{t("login.required")}</p> : null}
+          {needsTurnstile && options.data?.turnstile_site_key ? (
+            <Turnstile siteKey={options.data.turnstile_site_key} action="login" onToken={turnstile.setToken} widgetRef={turnstile.widget} />
+          ) : null}
+          {form.formState.errors.root?.message === "turnstile" ? (
+            <p className="-mt-2 text-sm text-destructive">{t("id.shared.turnstileRequired")}</p>
+          ) : null}
           <Button type="submit" size="lg" disabled={submitting}>
             {submitting ? <Spinner /> : null}
             {submitting ? t("login.submitting") : t("login.submit")}
           </Button>
           <div className="h-px bg-border" />
           <p className="text-[13px] leading-relaxed text-muted-foreground">
+            <Link href="/register" className="font-medium text-foreground underline underline-offset-3">
+              {t("id.login.register")}
+            </Link>
+            {" · "}
             {t("login.setupHint")}{" "}
             <Link href="/setup-password" className="font-medium text-foreground underline underline-offset-3">
               {t("login.setupLink")}

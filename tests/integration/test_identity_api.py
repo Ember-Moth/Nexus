@@ -496,11 +496,17 @@ async def test_concurrent_password_redemption_and_live_platform_role(http, admin
 async def test_auth_limits_use_only_ingress_verified_ips_from_the_configured_bff(http):
     from ipaddress import ip_address
 
+    from pydantic import SecretStr
+
+    from nexus.http import client_ip_signature
+
     _, _, _, settings = http
+    secret = "bff-shared-secret-with-enough-entropy"
     app = create_app(
         settings.model_copy(
             update={
                 "auth_proxy_peers": [ip_address("127.0.0.2")],
+                "auth_proxy_secret": SecretStr(secret),
                 "redis_namespace": "nexus:proxy-test:" + uuid4().hex,
                 "login_per_account": 2,
                 "login_per_ip": 2,
@@ -508,25 +514,34 @@ async def test_auth_limits_use_only_ingress_verified_ips_from_the_configured_bff
         )
     )
 
-    async def attempt(client, name, address):
+    def signed(address, key=secret):
+        return {
+            "X-Nexus-Client-IP": address,
+            "X-Nexus-Client-IP-Signature": client_ip_signature(key, address),
+        }
+
+    async def attempt(client, name, address, headers=None):
         return (
             await client.post(
                 "/api/v1/auth/sessions",
-                headers={"X-Nexus-Client-IP": address},
+                headers=signed(address) if headers is None else headers,
                 json={"login": name, "password": "bad"},
             )
         ).status_code
 
+    def connect(address):
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=(address, 1234)),
+            base_url="http://test",
+        )
+
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app, client=("127.0.0.2", 1234)),
-            base_url="http://test",
-        ) as bff,
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app, client=("127.0.0.3", 1234)),
-            base_url="http://test",
-        ) as direct,
+        connect("127.0.0.2") as bff,
+        connect("127.0.0.3") as direct,
+        connect("127.0.0.2") as relay,
+        connect("2001:db8:5:5::1") as v6_first,
+        connect("2001:db8:5:5:ffff::2") as v6_second,
     ):
         # Two clients share the BFF connection address. Only the first exhausts its IP quota.
         assert await attempt(bff, "user-a", "10.2.0.1") == 401
@@ -545,14 +560,26 @@ async def test_auth_limits_use_only_ingress_verified_ips_from_the_configured_bff
         assert (
             await direct.post(
                 "/api/v1/auth/password",
-                headers={"X-Nexus-Client-IP": "10.2.0.9"},
+                headers=signed("10.2.0.9"),
                 json={"token": "nxp_" + "a" * 43, "password": PASSWORD},
             )
         ).status_code == 429
         assert (
             await bff.post(
                 "/api/v1/auth/password",
-                headers={"X-Nexus-Client-IP": "10.2.0.9"},
+                headers=signed("10.2.0.9"),
                 json={"token": "nxp_" + "a" * 43, "password": PASSWORD},
             )
         ).status_code == 401
+        # A reverse proxy on the BFF host that relays a client-chosen header (unsigned, or signed
+        # with the wrong key) lands in the peer's already exhausted fallback bucket.
+        for headers in [
+            {"X-Nexus-Client-IP": "10.3.0.1"},
+            signed("10.3.0.2", "attacker-guess-at-the-shared-secret"),
+            {**signed("10.3.0.3"), "X-Nexus-Client-IP": "10.3.0.4"},
+        ]:
+            assert await attempt(relay, "user-i", "", headers) == 429
+        # Rotating addresses inside one IPv6 /64 does not reset the per-IP limit.
+        assert await attempt(v6_first, "user-j", "", {}) == 401
+        assert await attempt(v6_second, "user-k", "", {}) == 401
+        assert await attempt(v6_first, "user-l", "", {}) == 429

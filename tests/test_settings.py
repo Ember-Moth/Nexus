@@ -27,6 +27,16 @@ def test_unsafe_configuration_is_rejected(settings_factory, overrides):
         settings_factory(**overrides)
 
 
+def test_proxy_peers_require_a_strong_shared_secret(settings_factory):
+    peers = {"auth_proxy_peers": ["127.0.0.1"]}
+    with pytest.raises(ValidationError, match="auth proxy secret"):
+        settings_factory(**peers)
+    with pytest.raises(ValidationError, match="32 characters"):
+        settings_factory(**peers, auth_proxy_secret="short")
+    settings = settings_factory(**peers, auth_proxy_secret="s" * 32)
+    assert "s" * 32 not in repr(settings)
+
+
 def test_migration_timeouts_are_configurable():
     from nexus.config import MigrationSettings
 

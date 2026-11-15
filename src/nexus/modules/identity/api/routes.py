@@ -53,8 +53,14 @@ from ..application.service import IdentityService
 CONFLICT = error_responses(409)
 
 
-def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
+def create_router(
+    get_service, *, auth_proxy_peers=frozenset(), auth_proxy_secret=None
+) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["identity"])
+
+    def peer(request: Request) -> str:
+        return auth_limit_peer(request, auth_proxy_peers, auth_proxy_secret)
+
     Service = Annotated[IdentityService, Depends(get_service)]
     Token = Annotated[str, Depends(credentials)]
     Version = Annotated[int, Depends(expected_version)]
@@ -79,7 +85,7 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         },
     )
     async def register(body: Registration, request: Request, service: Service):
-        result = await service.register(body, auth_limit_peer(request, auth_proxy_peers))
+        result = await service.register(body, peer(request))
         if isinstance(result, VerificationPending):
             return JSONResponse(status_code=202, content=result.model_dump())
         return result
@@ -94,7 +100,7 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         return await service.login(
             body.login,
             body.password.get_secret_value(),
-            auth_limit_peer(request, auth_proxy_peers),
+            peer(request),
             body.turnstile_token,
         )
 
@@ -111,7 +117,7 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         await service.set_password(
             body.token.get_secret_value(),
             body.password.get_secret_value(),
-            auth_limit_peer(request, auth_proxy_peers),
+            peer(request),
             body.turnstile_token,
         )
 
@@ -159,7 +165,7 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         ),
     )
     async def verify_registration(body: PasswordSetup, service: Service, request: Request):
-        return await service.confirm_registration(body, auth_limit_peer(request, auth_proxy_peers))
+        return await service.confirm_registration(body, peer(request))
 
     @router.post(
         "/me/email",
@@ -170,7 +176,7 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         ),
     )
     async def bind_email(body: EmailBinding, token: Token, service: Service, request: Request):
-        await service.request_binding(token, body, auth_limit_peer(request, auth_proxy_peers))
+        await service.request_binding(token, body, peer(request))
         return RequestAccepted()
 
     @router.post(
@@ -179,7 +185,7 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         responses=business_errors("unauthorized", "email_in_use", "conflict", challenge=True),
     )
     async def verify_email(body: EmailProof, token: Token, service: Service, request: Request):
-        await service.confirm_binding(token, body, auth_limit_peer(request, auth_proxy_peers))
+        await service.confirm_binding(token, body, peer(request))
         return Response(status_code=204)
 
     @router.post(
@@ -189,7 +195,7 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         responses=business_errors("invalid_email", "mail_unavailable", challenge=True),
     )
     async def forgot(body: EmailRequest, service: Service, request: Request):
-        await service.forgot(body, auth_limit_peer(request, auth_proxy_peers))
+        await service.forgot(body, peer(request))
         return RequestAccepted()
 
     @router.post(
@@ -198,7 +204,7 @@ def create_router(get_service, *, auth_proxy_peers=frozenset()) -> APIRouter:
         responses=business_errors("unauthorized", "invalid_password", challenge=True),
     )
     async def reset(body: PasswordSetup, service: Service, request: Request):
-        await service.reset(body, auth_limit_peer(request, auth_proxy_peers))
+        await service.reset(body, peer(request))
         return Response(status_code=204)
 
     @router.get("/me", response_model=CurrentUser)

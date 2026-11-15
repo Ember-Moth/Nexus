@@ -53,6 +53,8 @@ class RuntimeSettings(BaseSettings):
     login_per_account: int = Field(default=10, ge=1, le=1000)
     # Exact TCP peers allowed to assert a single ingress-verified client address for auth limits.
     auth_proxy_peers: list[IPv4Address | IPv6Address] = Field(default_factory=list)
+    # Shared with the BFF, which signs each asserted client address with it (HMAC-SHA256).
+    auth_proxy_secret: SecretStr | None = None
     login_per_ip: int = Field(default=60, ge=1, le=10000)
     export_per_org_minute: int = Field(default=10, ge=1, le=1000)
     export_ttl_seconds: int = Field(default=86400, ge=60, le=2592000)
@@ -160,6 +162,13 @@ class RuntimeSettings(BaseSettings):
             cls.validate_key(secret)
         return values
 
+    @field_validator("auth_proxy_secret")
+    @classmethod
+    def validate_proxy_secret(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and len(value.get_secret_value()) < 32:
+            raise ValueError("auth proxy secret must contain at least 32 characters")
+        return value
+
     @field_validator("worker_id", "redis_namespace")
     @classmethod
     def validate_identifier(cls, value: str) -> str:
@@ -176,6 +185,10 @@ class RuntimeSettings(BaseSettings):
             raise ValueError("database role must match the process role")
         if self.worker_heartbeat_ttl <= self.worker_interval + self.dependency_timeout:
             raise ValueError("heartbeat TTL must exceed the polling interval plus probe timeout")
+        if self.auth_proxy_peers and self.auth_proxy_secret is None:
+            # A peer address alone cannot tell the BFF from a co-located proxy that relays
+            # client-supplied headers.
+            raise ValueError("auth proxy peers require an auth proxy secret")
         if self.environment == "production":
             if self.mock_payment_url:
                 raise ValueError("mock payment gateway is not permitted in production")

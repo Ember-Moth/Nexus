@@ -50,8 +50,15 @@ NEXUS_API_URL=http://127.0.0.1:8000 NEXUS_ADMIN_PASSWORD_FILE=<存放管理员�
 | `NEXUS_COOKIE_SECURE` | 默认 Secure Cookie（浏览器在 `http://localhost` 上也接受）。仅在非 localhost 的明文 HTTP 主机上设为 `false` |
 | `NEXUS_WEB_ORIGIN` | 部署在会改写 Host 的反向代理后时，填写对外 Origin，供 CSRF 的 Origin 校验使用 |
 | `NEXUS_WEB_CLIENT_IP_HEADER` | 登录与设置密码的客户端 IP 来源。仅在入口代理覆盖该头、且客户端无法绕过代理直连 BFF 时设置，例如 `x-real-ip` |
+| `NEXUS_AUTH_PROXY_SECRET` | 与 API 共享的密钥（API 侧同名变量），至少 32 个字符。BFF 用它对转发的客户端 IP 签名；未设置时不转发客户端 IP |
 
-配置按客户端 IP 限流时，让入口代理把已验证的单个 IP 写入上述头，在 API 上将 BFF 的确切 TCP 来源 IP 加入 `NEXUS_AUTH_PROXY_PEERS`，例如本机部署为 `["127.0.0.1"]`。BFF 将单个合法地址放进 `X-Nexus-Client-IP`，API 仅在登录及设置密码时从白名单内的 BFF 读取它。账户维度的 Redis 限额继续生效。任一侧未配置或地址无效时沿用直连 peer；默认配置下经过同一 BFF 的登录共享该 peer 的限额。
+配置按客户端 IP 限流时：
+
+1. 入口代理把已验证的单个客户端 IP 写入 `NEXUS_WEB_CLIENT_IP_HEADER` 指定的头。
+2. 生成一个随机密钥（例如 `openssl rand -base64 33`），在 BFF 和 API 上都设为 `NEXUS_AUTH_PROXY_SECRET`。
+3. 在 API 上将 BFF 的确切 TCP 来源 IP 加入 `NEXUS_AUTH_PROXY_PEERS`，例如本机部署为 `["127.0.0.1"]`。API 设置了 `NEXUS_AUTH_PROXY_PEERS` 却没有密钥时拒绝启动。
+
+BFF 把地址放进 `X-Nexus-Client-IP`，并附上 `X-Nexus-Client-IP-Signature`：以共享密钥对 `nexus-client-ip:v1:<地址>` 计算的 HMAC-SHA256（base64url，无填充）。API 只在来源 IP 属于白名单、且签名用常量时间比较一致时采信该地址；仅凭来源 IP 不够，因为与 BFF 同机的反向代理（例如透传自定义请求头的 nginx）会让客户端伪造的头以白名单地址到达 API。签名缺失、错误或地址无效时沿用直连 peer。限流按 IPv4 地址或 IPv6 的 /64 网段计数。账户维度的 Redis 限额继续生效；默认配置下经过同一 BFF 的登录共享该 peer 的限额。
 
 ## 会话与安全
 

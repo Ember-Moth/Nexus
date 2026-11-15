@@ -252,7 +252,9 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     app.include_router(routing_api.create_router(get_routing))
     app.include_router(
         identity_api.create_router(
-            get_identity, auth_proxy_peers=frozenset(settings.auth_proxy_peers)
+            get_identity,
+            auth_proxy_peers=frozenset(settings.auth_proxy_peers),
+            auth_proxy_secret=settings.auth_proxy_secret,
         )
     )
     app.include_router(identity_api.create_project_router(get_projects))

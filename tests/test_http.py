@@ -139,3 +139,68 @@ async def test_route_errors_and_request_events_are_correlated_without_raw_inputs
         assert row["request_id"] == r.headers["x-request-id"] and row["status"] == r.status_code
         assert row["elapsed_ms"] >= 0
     assert json.loads(logs[0])["route"] == "/api/v1/probe/{name}"
+
+
+def fake_request(peer, headers=()):
+    from starlette.requests import Request
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [(k.lower().encode(), v.encode()) for k, v in headers],
+            "client": (peer, 1234),
+        }
+    )
+
+
+def test_forwarded_client_addresses_need_the_bff_signature():
+    from ipaddress import ip_address
+
+    from pydantic import SecretStr
+
+    from nexus.http import auth_limit_peer, client_ip_signature
+
+    secret = SecretStr("b" * 32)
+    trusted = frozenset({ip_address("127.0.0.1")})
+
+    def peer(source, *headers):
+        return auth_limit_peer(fake_request(source, headers), trusted, secret)
+
+    signed = ("X-Nexus-Client-IP-Signature", client_ip_signature("b" * 32, "203.0.113.7"))
+    # A same-host proxy relaying a client-chosen header no longer creates a fresh bucket.
+    assert peer("127.0.0.1", ("X-Nexus-Client-IP", "203.0.113.7")) == "127.0.0.1"
+    assert peer("127.0.0.1", ("X-Nexus-Client-IP", "203.0.113.7"), signed) == "203.0.113.7"
+    assert peer("127.0.0.1", ("X-Nexus-Client-IP", "203.0.113.8"), signed) == "127.0.0.1"
+    forged = ("X-Nexus-Client-IP-Signature", client_ip_signature("c" * 32, "203.0.113.7"))
+    assert peer("127.0.0.1", ("X-Nexus-Client-IP", "203.0.113.7"), forged) == "127.0.0.1"
+    assert peer("127.0.0.1", ("X-Nexus-Client-IP", "203.0.113.7"), signed, signed) == "127.0.0.1"
+    assert peer("10.0.0.9", ("X-Nexus-Client-IP", "203.0.113.7"), signed) == "10.0.0.9"
+    assert (
+        auth_limit_peer(
+            fake_request("127.0.0.1", [("X-Nexus-Client-IP", "203.0.113.7"), signed]), trusted
+        )
+        == "127.0.0.1"
+    )
+
+
+def test_ipv6_clients_are_limited_per_64():
+    from nexus.http import auth_limit_peer, limit_bucket
+
+    assert limit_bucket("2001:db8:1:2:aaaa::1") == limit_bucket("2001:db8:1:2:ffff:1:2:3")
+    assert limit_bucket("2001:db8:1:2::9") == "2001:db8:1:2::/64"
+    assert limit_bucket("2001:db8:1:3::9") != limit_bucket("2001:db8:1:2::9")
+    assert limit_bucket("::ffff:192.0.2.1") == "192.0.2.1"
+    assert limit_bucket("192.0.2.1") == "192.0.2.1"
+    assert auth_limit_peer(fake_request("2001:db8::1"), frozenset()) == "2001:db8::/64"
+
+
+def test_client_ip_signature_matches_the_bff():
+    from nexus.http import client_ip_signature
+
+    # Same vector as clientIpSignature() in src/web/src/lib/server/auth-headers.ts.
+    assert (
+        client_ip_signature("b" * 32, "203.0.113.7")
+        == "Sb_Xt0ss0yLjAefla7Bec6e6uqvKbhdHjeLA4a1nQY0"
+    )

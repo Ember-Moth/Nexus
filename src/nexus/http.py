@@ -2,16 +2,18 @@
 
 import base64
 import binascii
+import hashlib
+import hmac
 import json
 import re
 from datetime import datetime
-from ipaddress import IPv4Address, IPv6Address, ip_address
+from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from nexus.shared.error_catalog import CATALOG, error_catalog
 from nexus.shared.errors import ServiceError
@@ -249,25 +251,61 @@ def optional_version(
     return expected_version(if_match) if if_match is not None else None
 
 
-def auth_limit_peer(request: Request, trusted: frozenset[IPv4Address | IPv6Address]) -> str:
+CLIENT_IP_HEADER = "X-Nexus-Client-IP"
+CLIENT_IP_SIGNATURE_HEADER = "X-Nexus-Client-IP-Signature"
+
+
+def client_ip_signature(secret: str, address: str) -> str:
+    """HMAC-SHA256 the BFF attaches to the exact client address header value it forwards."""
+    digest = hmac.new(
+        secret.encode(), b"nexus-client-ip:v1:" + address.encode(), hashlib.sha256
+    ).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
+def limit_bucket(address: str) -> str:
+    """Rate-limit key for a client address: IPv4 as is, IPv6 aggregated to its /64."""
+    try:
+        parsed = ip_address(address)
+    except ValueError:
+        return address
+    if isinstance(parsed, IPv6Address):
+        if parsed.ipv4_mapped:
+            return str(parsed.ipv4_mapped)
+        # One subscriber normally receives a whole /64, so a single host can rotate through
+        # 2**64 addresses; counting them separately would void every per-IP limit.
+        return str(ip_network(f"{parsed}/64", strict=False))
+    return str(parsed)
+
+
+def auth_limit_peer(
+    request: Request,
+    trusted: frozenset[IPv4Address | IPv6Address],
+    secret: SecretStr | None = None,
+) -> str:
+    """Client address bucket for authentication limits.
+
+    A forwarded client address is accepted only from a configured BFF peer and only when it carries
+    the BFF's signature: a reverse proxy on the same host as the BFF may relay a header supplied
+    by the client, so the peer address alone does not prove that the BFF set it.
+    """
     direct = request.client.host if request.client else "unknown"
-    if not trusted:
-        return direct
+    if not trusted or secret is None:
+        return limit_bucket(direct)
     try:
         peer = ip_address(direct)
     except ValueError:
         return direct
     if peer not in trusted:
-        return direct
-    values = request.headers.getlist("X-Nexus-Client-IP")
-    if len(values) == 1 and "%" not in values[0]:
-        try:
-            address = ip_address(values[0])
-            return (
-                str(address.ipv4_mapped or address)
-                if isinstance(address, IPv6Address)
-                else str(address)
-            )
-        except ValueError:
-            pass
-    return direct
+        return limit_bucket(direct)
+    values = request.headers.getlist(CLIENT_IP_HEADER)
+    signatures = request.headers.getlist(CLIENT_IP_SIGNATURE_HEADER)
+    if len(values) == 1 and len(signatures) == 1 and "%" not in values[0]:
+        expected = client_ip_signature(secret.get_secret_value(), values[0])
+        if hmac.compare_digest(expected.encode(), signatures[0].encode()):
+            try:
+                ip_address(values[0])
+                return limit_bucket(values[0])
+            except ValueError:
+                pass
+    return limit_bucket(direct)

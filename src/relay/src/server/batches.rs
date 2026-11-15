@@ -275,7 +275,7 @@ async fn handle_request(
                     let rejected = matches!(status.as_u16(), 400|401|403|404|413|422|429) && object["type"] == "error";
                     let outcome = if rejected { "failed" } else { "unknown" };
                     node.db.batch_finish(trace, None, None, json!({}), outcome).await?;
-                    return Ok((status, Json(object)).into_response());
+                    return Ok(super::reply(status, object, Endpoint::AnthropicMessages));
                 }
                 let view = metadata(trace, &object)?;
                 let pid = object["id"].as_str().ok_or_else(Failure::upstream)?;
@@ -360,7 +360,7 @@ async fn handle_request(
                 .batch_record(handle, kid, index.revision, pid, &Value::Null, true)
                 .await?;
         }
-        return Ok((status, Json(obj)).into_response());
+        return Ok(super::reply(status, obj, Endpoint::AnthropicMessages));
     }
     if obj["id"] != pid {
         return Err(Failure::upstream());

@@ -903,6 +903,7 @@ async fn roundtrip(
                     || event["event_id"] == wire_id.as_str())
             {
                 event["error"]["event_id"] = json!(client_id);
+                crate::protocol::upstream_error::scrub_event(&mut event);
                 emit(&ch.out, event).await?;
                 cancelling = None;
                 continue;
@@ -926,6 +927,7 @@ async fn roundtrip(
         if let Some(stored) = stored.as_mut() {
             stored.rewrite(&mut event).await?;
         }
+        crate::protocol::upstream_error::scrub_event(&mut event);
         timeout(ch.idle, emit(&ch.out, event))
             .await
             .map_err(|_| ())??;

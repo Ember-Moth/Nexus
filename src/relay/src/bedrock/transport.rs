@@ -174,7 +174,12 @@ pub fn error_body(status: http::StatusCode, body: &Value) -> Value {
         503 | 529 => "overloaded_error",
         _ => "api_error",
     };
-    json!({"type":"error","error":{"type":kind,"message":body["message"].as_str().or_else(||body["Message"].as_str()).unwrap_or("Bedrock request failed")}})
+    let message = body["message"]
+        .as_str()
+        .or_else(|| body["Message"].as_str())
+        .map(crate::protocol::upstream_error::redact)
+        .unwrap_or_else(|| "Bedrock request failed".into());
+    json!({"type":"error","error":{"type":kind,"message":message}})
 }
 
 pub async fn buffered(

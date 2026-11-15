@@ -10,10 +10,10 @@ use crate::{
     upstream::{Upstream, read_body},
 };
 use axum::{
-    Extension, Json,
+    Extension,
     body::to_bytes,
     extract::{Request, State},
-    response::{IntoResponse, Response},
+    response::Response,
 };
 use http::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -301,5 +301,5 @@ async fn operation(
             .await
             .map_err(|_| Failure::upstream())?;
     }
-    Ok((status, Json(value)).into_response())
+    Ok(super::reply(status, value, Endpoint::OpenaiResponses))
 }

@@ -523,7 +523,7 @@ impl OperationRequest {
                 })
                 .await?;
             }
-            return Ok((status, Json(value)).into_response());
+            return Ok(super::reply(status, value, Endpoint::OpenaiResponses));
         }
         if path.len() <= 1 {
             let pid = label(&value["id"])?;
@@ -627,7 +627,7 @@ impl OperationRequest {
         if !get && (files || batches) {
             db.vector_due(id, self.kid, rev).await?;
         }
-        Ok((status, Json(value)).into_response())
+        Ok(super::reply(status, value, Endpoint::OpenaiResponses))
     }
 }
 

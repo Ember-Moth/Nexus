@@ -102,14 +102,12 @@ pub(super) async fn count(
             .map_err(|_| Failure::upstream())?;
         let data: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::upstream())?;
         if status.is_client_error() || status.is_server_error() {
-            if bedrock {
-                return Ok((
-                    status,
-                    Json(crate::bedrock::transport::error_body(status, &data)),
-                )
-                    .into_response());
-            }
-            return Ok((status, Json(data)).into_response());
+            let data = if bedrock {
+                crate::bedrock::transport::error_body(status, &data)
+            } else {
+                data
+            };
+            return Ok(super::reply(status, data, Endpoint::AnthropicMessages));
         }
         let tokens = data[if bedrock {
             "inputTokens"
@@ -354,7 +352,7 @@ pub(super) async fn stored_response(
             .await
             .map_err(|_| Failure::upstream())?;
         }
-        Ok::<_, Failure>((status, Json(value)).into_response())
+        Ok::<_, Failure>(super::reply(status, value, Endpoint::OpenaiResponses))
     }
     .await;
     result.unwrap_or_else(|e| error(trace, Endpoint::OpenaiResponses, e))

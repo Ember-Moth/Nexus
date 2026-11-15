@@ -14,6 +14,7 @@ pub(crate) mod stop;
 pub mod stream;
 pub mod tokens;
 pub mod tools;
+pub mod upstream_error;
 pub mod usage;
 pub mod websocket;
 

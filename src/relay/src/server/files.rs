@@ -549,5 +549,5 @@ async fn request(
             .remove_native_file(id, key.id, index.revision, ep)
             .await?;
     }
-    Ok((status, Json(value)).into_response())
+    Ok(super::reply(status, value, ep))
 }

@@ -262,6 +262,7 @@ async fn replay(
                     *id = binding.id.clone().into();
                 }
                 resources.rewrite(&mut value).await?;
+                crate::protocol::upstream_error::scrub_event(&mut value);
                 let wire = axum::body::Bytes::from(format!("event: {kind}\ndata: {value}\n\n"));
                 if wire.len() > node.event_bytes {
                     return Err(());

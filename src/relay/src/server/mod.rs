@@ -256,6 +256,15 @@ fn error(id: Uuid, endpoint: Endpoint, failure: Failure) -> Response {
     (status, Json(json)).into_response()
 }
 
+/// Answer with an upstream reply. Errors are scrubbed into the client's protocol.
+pub(super) fn reply(status: StatusCode, value: Value, client: Endpoint) -> Response {
+    if status.is_success() {
+        return (status, Json(value)).into_response();
+    }
+    let (status, value) = crate::protocol::upstream_error::scrub(status, &value, client);
+    (status, Json(value)).into_response()
+}
+
 #[derive(Clone, Copy)]
 struct BodyLimit(usize);
 #[derive(Clone)]
@@ -408,10 +417,18 @@ async fn generate(
     match result {
         request::Response::Buffered {
             status,
-            body,
+            mut body,
             receipt,
             applied,
         } => {
+            let mut status = status;
+            if !status.is_success() {
+                // Generation errors come from the upstream, possibly converted to this protocol.
+                let (scrubbed, value) =
+                    crate::protocol::upstream_error::scrub_bytes(status, &body, endpoint);
+                status = scrubbed;
+                body = value.to_string().into_bytes();
+            }
             let length = body.len();
             wire.track(length, receipt);
             applied

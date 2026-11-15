@@ -95,10 +95,22 @@ impl Downstream {
     async fn parsed_event(
         &mut self,
         value: &serde_json::Value,
-        original: Option<Event>,
+        mut original: Option<Event>,
         limit: usize,
         idle: Duration,
     ) -> Result<(), ()> {
+        let scrubbed;
+        let value = if matches!(value["type"].as_str(), Some("error" | "response.failed")) {
+            let mut copy = value.clone();
+            crate::protocol::upstream_error::scrub_event(&mut copy);
+            if copy != *value {
+                original = None;
+            }
+            scrubbed = copy;
+            &scrubbed
+        } else {
+            value
+        };
         let matched = self.stop.as_ref().and_then(|s| s.matched.as_ref());
         let mut projected;
         let value = if value["type"] == "message_delta"

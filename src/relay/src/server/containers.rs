@@ -593,7 +593,7 @@ impl Containers {
                 db.unused_container(trace, self.kid, true).await?;
             }
             let value: Value = serde_json::from_slice(&wire).map_err(|_| Failure::upstream())?;
-            return Ok((status, Json(value)).into_response());
+            return Ok(super::reply(status, value, EP));
         }
         if path.len() == 4 {
             db.container_receipt(trace, self.kid, &remote[0], None, false)

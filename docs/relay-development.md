@@ -94,7 +94,14 @@ Messages 使用工具定义中的 `max_uses`，Responses 使用请求级 `max_to
 
 用企业 Bearer Key 调用 `POST /v1/containers` 可创建禁网容器，使用 `file_ids` 装入本 Key 的 OpenAI 文件。Responses 的 `code_interpreter` 工具可引用返回的句柄，也可使用 `{"type":"auto","memory_limit":"1g"}` 让供应商分配或复用容器。容器支持列表、读取和删除。`/v1/containers/{id}/files` 支持二进制上传或 JSON 文件引用。生成内容的 `container_file_citation` 包含本 Key 的容器和文件句柄，可据此下载。容器内文件随容器到期失效。网络策略目前支持 `disabled`。[OpenAI Code Interpreter](https://developers.openai.com/api/docs/guides/tools-code-interpreter)
 
-容器在独立的 `openai_container_v1` 账目预留资金，生成请求单独按 token 结算。自动模式复用同一容器时，Relay 合并重复的临时预留。供应商确认新建容器和内存档、执行成功，且在首个起计窗口内确认删除时，可以结算一个起计窗口。其余会话在关闭或到达复核时间后核对供应商计费分钟数。读取容器本身会刷新空闲时间，Relay 仅因客户操作读取容器。财务人员可用 `container_origin`、`container_handle`、`container_unit` 和 `container_tariff` 对应账单明细。
+容器在独立的 `openai_container_v1` 账目预留资金，生成请求单独按 token 结算。供应商从创建起计费，直到容器被删除或空闲到期（默认 20 分钟）。每次操作（创建、读取、文件操作或 Code Interpreter 调用）都可能把容器寿命延长到“该操作的截止时间 + 空闲到期”：生成请求的截止时间是其预留到期时间，直接调用容器接口按 15 分钟计。
+
+- **先预留再执行。** 会话的资金是一串不可变的预留：创建时的首个预留覆盖 `container_reserve_minutes`，且不少于新容器在上述截止时间内可能计费的分钟数；之后每次操作前，若已预留分钟数不足以覆盖新的可能结束时间，就追加一个扩展预留，至少 `container_reserve_minutes`，`session_20m` 按 20 分钟取整。追加因余额、预算或账户状态失败时拒绝这次复用（返回 402 或 403），客户可新建容器。
+- **回执后补足。** 回执给出的空闲到期比假设更长，或自动模式下供应商复用了覆盖不足的旧容器时，操作已经执行，无法拒绝：Relay 把本次请求的临时预留转为旧会话的扩展预留，仍不足时再追加；追加失败则冻结钱包并写入 `container.coverage_unreserved` 审计事件，直到财务处理该会话。旧会话覆盖充足时，临时预留照常取消。
+- **复核后不再接受操作。** 会话进入复核（空闲到期或确认删除）后，其事件已关闭，再引用该句柄返回 404，需新建容器。
+- **节点崩溃或请求中断。** 预留在调用供应商之前提交，崩溃不会留下未预留的用量；已登记但未执行的操作仍按截止时间计入可能结束时间，多出的扩展预留在复核时由财务确认零收费。
+
+供应商确认新建容器和内存档、执行成功，且在首个起计窗口内确认删除时，可以结算一个起计窗口，扩展预留全部释放。其余会话在关闭或到达复核时间后核对供应商计费分钟数：首个预留和每个扩展预留各是一个核对请求，起点晚于确认删除时间或最晚可能结束时间的扩展预留自动释放。财务按时间顺序把供应商分钟数分配到各段：每段不超过其预留分钟数，`session_20m` 的每段为 20 的倍数，`minute_min_5` 的五分钟起计只适用于首段；每段使用各自的证据引用（例如在供应商明细引用后加段序号）。读取容器本身会刷新空闲时间，Relay 仅因客户操作读取容器。财务人员可用 `container_origin`、`container_handle`、`container_unit` 和 `container_tariff` 对应账单明细，扩展预留另见 `billing.container_extensions`。
 
 ### 后台生成
 

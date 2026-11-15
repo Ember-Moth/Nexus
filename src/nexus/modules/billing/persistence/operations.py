@@ -215,6 +215,16 @@ class OperationsRepository(PaymentRepository):
             )
         ).scalar_one()
 
+    async def container_extension(self, request_id):
+        return (
+            await self._session.execute(
+                text(
+                    "SELECT EXISTS(SELECT FROM billing.container_extensions WHERE request_id=:rid)"
+                ),
+                {"rid": request_id},
+            )
+        ).scalar_one()
+
     async def bind_execution_receipt(self, request_id, attempt, evidence, seconds):
         # One supplier line can support procurement and sale for the same operation.
         # It cannot be applied to a second request or silently change the duration.

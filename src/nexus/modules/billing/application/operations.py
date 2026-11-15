@@ -158,11 +158,14 @@ class Operations:
             minutes = body.quantities.get(unit)
             if minutes is None or any(v for k, v in body.quantities.items() if k != unit):
                 conflict("Only the recorded container memory tier can be reconciled")
+            # The five-minute minimum applies once per container, to its first hold;
+            # an extension hold continues the same container's billed minutes.
             if minutes and (
                 request.container_tariff == "session_20m"
                 and minutes % 20 != 0
                 or request.container_tariff == "minute_min_5"
                 and minutes < 5
+                and not await repo.container_extension(request.id)
             ):
                 conflict("Billed minutes contradict the frozen container tariff")
             if not await repo.bind_execution_receipt(

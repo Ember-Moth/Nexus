@@ -736,3 +736,171 @@ async def test_background_container_is_bound_after_restart(http, admin, tls, rel
             assert admin.execute(
                 "SELECT sum(signed_amount) FROM billing.ledger_entries WHERE kind='usage_debit'"
             ).fetchone() == (-2,)
+
+
+async def test_container_holds_grow_before_the_session_outlives_them(
+    http,
+    admin,
+    tls,  # noqa: F811
+    relay_binary,  # noqa: F811
+):
+    """A reused container keeps billing while it lives. Each operation first reserves every
+    minute the supplier may bill until the operation's deadline plus the idle expiry."""
+    pid = "cntr_long_lived"
+    container = {
+        "id": pid,
+        "object": "container",
+        "memory_limit": "1g",
+        "created_at": 1781234567,
+        "last_active_at": 1781234567,
+        "name": "long",
+        "status": "running",
+        "expires_after": {"anchor": "last_active_at", "minutes": 20},
+    }
+
+    async def provider(reader, writer):
+        try:
+            head = (await reader.readuntil(b"\r\n\r\n")).decode().split("\r\n")
+            method, path, _ = head[0].split()
+            hdr = {k.lower(): v.strip() for row in head[1:] if row for k, v in [row.split(":", 1)]}
+            raw = await reader.readexactly(int(hdr.get("content-length", 0)))
+            if path == "/v1/responses":
+                req = json.loads(raw)
+                call = {
+                    "id": "ci_reuse",
+                    "type": "code_interpreter_call",
+                    "status": "completed",
+                    "container_id": pid,
+                    "code": "print(1)",
+                    "outputs": [{"type": "logs", "logs": "1"}],
+                }
+                value = {
+                    "id": "resp_reuse",
+                    "object": "response",
+                    "status": "completed",
+                    "output": [
+                        call,
+                        {"type": "message", "content": [{"type": "output_text", "text": "1"}]},
+                    ],
+                    "tools": req["tools"],
+                    "usage": {
+                        "input_tokens": 2,
+                        "output_tokens": 1,
+                        "input_tokens_details": {"cached_tokens": 0},
+                    },
+                }
+            else:
+                assert method in {"GET", "POST"} and path.startswith(ROOT)
+                value = container
+            wire = json.dumps(value).encode()
+            writer.write(
+                (
+                    f"HTTP/1.1 200 OK\r\nContent-Length: {len(wire)}\r\n"
+                    "Content-Type: application/json\r\nConnection: close\r\n\r\n"
+                ).encode()
+                + wire
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+
+    def held():
+        return admin.execute(
+            "SELECT held_amount FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+        ).fetchone()[0]
+
+    def age(minutes):
+        admin.execute(
+            "UPDATE billing.container_sessions SET created_at=created_at-make_interval(mins=>%s) "
+            "WHERE provider_id=%s",
+            (minutes, pid),
+        )
+
+    server = await asyncio.start_server(provider, "127.0.0.1", 0, ssl=tls[0])
+    async with (
+        server,
+        stream_plane(
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            "openai_compatible",
+        ) as (relay, model, key, _, plane),
+    ):
+        org = plane[2]
+        await configure(http, admin, plane, "session_20m")
+        h = {"Authorization": "Bearer " + key}
+        created = await relay.post(ROOT, headers=h, json={"name": "long"})
+        assert created.status_code == 200, created.text
+        handle = created.json()["id"]
+        # The first hold covers the deployment's forty minutes at 2 per twenty minutes.
+        assert held() == 4
+        # Fifty minutes later a read refreshes the idle timer: the supplier may now bill until
+        # fifteen plus twenty minutes from now, 85 minutes after creation, rounded to 100.
+        age(50)
+        assert (await relay.get(f"{ROOT}/{handle}", headers=h)).status_code == 200
+        assert held() == 10
+        meter, covered = admin.execute(
+            "SELECT id,covered_minutes FROM billing.container_sessions WHERE provider_id=%s",
+            (pid,),
+        ).fetchone()
+        assert covered == 100
+        assert admin.execute(
+            "SELECT e.minutes,r.container_unit,r.container_handle,r.reserved_amount "
+            "FROM billing.container_extensions e JOIN billing.request_runs r ON r.id=e.request_id "
+            "WHERE e.meter=%s",
+            (meter,),
+        ).fetchall() == [(60, "container_1g_minutes", handle, 6)]
+        # An extension the wallet cannot fund refuses the reuse; nothing else changes.
+        age(30 * 24 * 60)
+        refused = await relay.get(f"{ROOT}/{handle}", headers=h)
+        assert refused.status_code == 402, refused.text
+        assert held() == 10
+        age(-30 * 24 * 60 + 60)
+        # In auto mode the supplier reuses this container. Its holds no longer cover the
+        # request deadline plus idle time, so the request's own container hold extends it.
+        auto = await relay.post(
+            "/v1/responses",
+            headers=h,
+            json={
+                "model": model,
+                "input": "again",
+                "tools": [{"type": "code_interpreter", "container": {"type": "auto"}}],
+            },
+        )
+        assert auto.status_code == 200, auto.text
+        extensions = admin.execute(
+            "SELECT e.minutes,s.state FROM billing.container_extensions e "
+            "JOIN billing.container_sessions s ON s.id=e.request_id WHERE e.meter=%s",
+            (meter,),
+        ).fetchall()
+        assert extensions == [(40, "released")]
+        assert admin.execute(
+            "SELECT covered_minutes FROM billing.container_sessions WHERE id=%s", (meter,)
+        ).fetchone() >= (160,)
+        await wait_events(admin, 2)
+        assert await http[2].state.usage.process() == 1
+        before = held()
+        admin.execute(
+            "UPDATE billing.container_sessions SET review_after=clock_timestamp() WHERE id=%s",
+            (meter,),
+        )
+        assert await http[2].state.usage.review_containers() == 1
+        # The session's own hold and every extension wait for the supplier's minutes.
+        runs = admin.execute(
+            "SELECT count(*) FROM billing.usage_events WHERE kind='request.closed' "
+            "AND (request_id=%s OR request_id IN "
+            "(SELECT request_id FROM billing.container_extensions WHERE meter=%s))",
+            (meter, meter),
+        ).fetchone()[0]
+        assert (
+            runs
+            == 1
+            + admin.execute(
+                "SELECT count(*) FROM billing.container_extensions WHERE meter=%s", (meter,)
+            ).fetchone()[0]
+        )
+        assert held() == before
+        # A reviewed session no longer accepts work.
+        assert (await relay.get(f"{ROOT}/{handle}", headers=h)).status_code == 404

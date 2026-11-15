@@ -46,8 +46,17 @@ def write_private(path: Path, value: str) -> None:
 
 
 class NativeServices:
-    def __init__(self, root: Path, *, database: str = "nexus", track_commits: bool = False) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        database: str = "nexus",
+        track_commits: bool = False,
+        options: tuple[str, ...] = (),
+    ) -> None:
         self.track_commits = track_commits
+        # Extra `-c name=value` server settings, e.g. for load runs with many nodes.
+        self.options = options
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.metadata = self.root / "services.json"
@@ -137,6 +146,7 @@ class NativeServices:
                     "-k",
                     str(self.socket_dir),
                     *(["-c", "track_commit_timestamp=on"] if self.track_commits else []),
+                    *(arg for option in self.options for arg in ("-c", option)),
                 ]
             )
             self._run(

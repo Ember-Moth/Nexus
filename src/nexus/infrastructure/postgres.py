@@ -1,9 +1,12 @@
+import asyncio
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from time import monotonic
 from uuid import UUID
 
-from sqlalchemy import text
+import psycopg
+from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nexus.shared.errors import StorageUnavailable
@@ -58,10 +61,60 @@ class ModuleDatabase:
                 raise StorageUnavailable("module database role is unavailable")
 
 
+class Notifications:
+    """A dedicated LISTEN session that wakes a waiter when its channel is notified.
+
+    Notifications are hints: a lost session reconnects and reports a wake-up, because
+    anything sent while it was away was not observed. Callers keep a polling fallback.
+    """
+
+    def __init__(self, conninfo: str, channel: str, timeout: float) -> None:
+        if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", channel):
+            raise ValueError("invalid notification channel")
+        self._conninfo = conninfo
+        self._channel = channel
+        self._timeout = timeout
+        self._connection: psycopg.AsyncConnection | None = None
+
+    async def __call__(self, seconds: float) -> bool:
+        if self._connection is None or self._connection.closed:
+            try:
+                self._connection = await psycopg.AsyncConnection.connect(
+                    self._conninfo, autocommit=True, connect_timeout=max(1, int(self._timeout))
+                )
+                await self._connection.execute(f"LISTEN {self._channel}")
+            except psycopg.Error:
+                await self.close()
+                await asyncio.sleep(min(seconds, 1.0))
+            return True
+        try:
+            woken = False
+            async for _ in self._connection.notifies(timeout=seconds, stop_after=1):
+                woken = True
+            if woken:
+                # Coalesce a burst of commits into one wake-up.
+                async for _ in self._connection.notifies(timeout=0.05):
+                    pass
+            return woken
+        except psycopg.Error:
+            await self.close()
+            return True
+
+    async def close(self) -> None:
+        connection, self._connection = self._connection, None
+        if connection is not None:
+            try:
+                await connection.close()
+            except psycopg.Error:
+                pass
+
+
 class Database:
     def __init__(
         self, url: str, *, runtime_role: str, pool_size: int, max_overflow: int, timeout: float
     ) -> None:
+        self._url = url
+        self._timeout = timeout
         self._runtime_role = runtime_role
         self.metrics = ProcessMetrics()
         self._engine = create_async_engine(
@@ -80,6 +133,10 @@ class Database:
 
     def for_module(self, module: ModuleName) -> ModuleDatabase:
         return ModuleDatabase(self._sessions, module, self.metrics)
+
+    def notifications(self, channel: str) -> Notifications:
+        conninfo = make_url(self._url).set(drivername="postgresql")
+        return Notifications(conninfo.render_as_string(hide_password=False), channel, self._timeout)
 
     async def check_revision(self) -> None:
         async with self._engine.connect() as conn:

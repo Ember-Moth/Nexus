@@ -1,11 +1,20 @@
 from nexus.infrastructure.audit_reader import audit_reader
 from nexus.shared.storage import ModuleName
 
+from .application.automation import AutoPublisher
 from .application.service import PublicationService
 from .persistence.organizations import create_organization_scope
 from .persistence.repository import transaction
 
-__all__ = ["create_audit_reader", "create_service", "api"]
+__all__ = [
+    "SOURCE_CHANNEL",
+    "create_audit_reader",
+    "create_auto_publisher",
+    "create_service",
+    "api",
+]
+# PostgreSQL notification channel announcing a changed publication source revision.
+SOURCE_CHANNEL = "nexus_source_revision"
 
 
 def create_service(database, administrator, identity, catalog, prices, cache):
@@ -18,6 +27,19 @@ def create_service(database, administrator, identity, catalog, prices, cache):
         prices,
         cache,
         create_organization_scope(database),
+    )
+
+
+def create_auto_publisher(database, service, notifications, *, quiet, max_delay, poll):
+    """notifications(seconds) must wait on SOURCE_CHANNEL, returning early when notified."""
+    database.require_module(ModuleName.PUBLICATION)
+    return AutoPublisher(
+        service,
+        lambda: transaction(database),
+        notifications,
+        quiet=quiet,
+        max_delay=max_delay,
+        poll=poll,
     )
 
 

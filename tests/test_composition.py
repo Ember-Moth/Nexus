@@ -25,11 +25,23 @@ class FakeDatabase:
     def for_module(self, module):
         return Scope(module, self.seen)
 
+    def notifications(self, channel):
+        assert channel == "nexus_source_revision"
+        return FakeNotifications()
+
     async def check_revision(self):
         pass
 
     async def close(self):
         self.closed = True
+
+
+class FakeNotifications:
+    async def __call__(self, seconds):
+        return False
+
+    async def close(self):
+        pass
 
 
 class FakeCache:

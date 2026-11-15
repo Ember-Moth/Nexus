@@ -53,6 +53,12 @@ class RuntimeSettings(BaseSettings):
     worker_id: str = Field(default_factory=socket.gethostname)
     worker_interval: float = Field(default=5.0, ge=0.1, le=60)
     worker_heartbeat_ttl: int = Field(default=30, ge=2, le=300)
+    # Clusters with auto_publish release once their sources stay unchanged for the quiet
+    # window, and at most max_delay after the first unpublished change.
+    auto_publish_quiet_seconds: float = Field(default=3.0, ge=0, le=300)
+    auto_publish_max_delay_seconds: float = Field(default=30.0, gt=0, le=3600)
+    # Source changes wake the Worker through PostgreSQL notifications; polling is a fallback.
+    auto_publish_poll_seconds: float = Field(default=30.0, ge=1, le=3600)
     redis_namespace: str = "nexus:v1"
     log_level: Literal["debug", "info", "warning", "error"] = "info"
     session_ttl_seconds: int = Field(default=28800, ge=60, le=86400)
@@ -235,6 +241,8 @@ class RuntimeSettings(BaseSettings):
             raise ValueError("auth proxy peers require an auth proxy secret")
         if self.mail_per_recipient > self.mail_per_recipient_total:
             raise ValueError("per-requester recipient mail limit exceeds the recipient total")
+        if self.auto_publish_max_delay_seconds < self.auto_publish_quiet_seconds:
+            raise ValueError("auto-publish maximum delay must not be shorter than its quiet window")
         if self.environment == "production":
             if self.mock_payment_url:
                 raise ValueError("mock payment gateway is not permitted in production")

@@ -177,6 +177,15 @@ class Application:
             billing.create_price_source(self._storage["billing"]),
             self.cache,
         )
+        self._notifications = self.database.notifications(publication.SOURCE_CHANNEL)
+        self.auto_publisher = publication.create_auto_publisher(
+            self._storage["publication"],
+            self.publication,
+            self._notifications,
+            quiet=settings.auto_publish_quiet_seconds,
+            max_delay=settings.auto_publish_max_delay_seconds,
+            poll=settings.auto_publish_poll_seconds,
+        )
         self.usage = billing.create_usage_processor(
             self._storage["billing"],
             settings.billing_currency,
@@ -254,6 +263,7 @@ class Application:
         return dict(await asyncio.gather(*(probe(name, check) for name, check in checks.items())))
 
     async def close(self) -> None:
+        await self._notifications.close()
         jobs = [self.database.close(), self.cache.close()]
         if self.payment_http:
             jobs.append(self.payment_http.close())

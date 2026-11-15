@@ -24,6 +24,8 @@ FIELDS = frozenset(
         "outcome",
         "consumer",
         "ready",
+        "cluster_id",
+        "revision",
     }
 )
 

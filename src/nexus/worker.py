@@ -129,6 +129,7 @@ async def serve_worker(settings: RuntimeSettings) -> None:
                 "storage_prepayment": application.usage.renew_storage,
                 "container_usage": application.usage.review_containers,
                 "publication_outbox": application.publication.distribute,
+                "auto_publish": application.auto_publisher.step,
             },
         )
     finally:

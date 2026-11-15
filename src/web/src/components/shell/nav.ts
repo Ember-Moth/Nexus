@@ -21,6 +21,7 @@ import {
   PlugIcon,
   ReceiptIcon,
   ServerIcon,
+  Settings2Icon,
   ShieldIcon,
   SlidersHorizontalIcon,
   SplitIcon,
@@ -143,6 +144,7 @@ export const platformNav: NavGroup[] = [
     items: [
       { segment: "audit", label: "nav.items.platformAudit", icon: FileTextIcon, roles: [PA, PF] },
       { segment: "metrics", label: "nav.items.metrics", icon: ActivityIcon, roles: [PA] },
+      { segment: "settings", label: "nav.items.settings", icon: Settings2Icon, roles: [PA] },
     ],
   },
 ];

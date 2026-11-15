@@ -4,9 +4,11 @@
 import id from "./zh-CN/identity";
 import pc from "./zh-CN/platform-catalog";
 import pf from "./zh-CN/platform-finance";
+import st from "./zh-CN/settings";
 import ws from "./zh-CN/workspace";
 
 const zhCN = {
+  st,
   ws,
   pc,
   pf,
@@ -309,6 +311,7 @@ const zhCN = {
       channels: "支付渠道",
       platformAudit: "审计事件",
       metrics: "运行指标",
+      settings: "设置",
     },
   },
   roles: {
@@ -649,7 +652,16 @@ const zhCN = {
     columns: { layer: "层级", scope: "范围", metric: "指标", limit: "上限", version: "版本", actions: "操作" },
     layers: { customer: "企业层", platform: "平台层" },
     scopes: { organization: "整个企业", project: "项目", key: "Key" },
-    metrics: { rpm: "每分钟请求（RPM）", tpm: "每分钟 Tokens（TPM）", concurrency: "并发" },
+    metrics: {
+      rpm: "每分钟请求（RPM）",
+      tpm: "每分钟 Tokens（TPM）",
+      concurrency: "并发",
+      resources_per_key: "每个 Key 的资源数",
+      resources_per_organization: "企业资源总数",
+      vector_stores_per_key: "每个 Key 的向量库数",
+      vector_stores_per_organization: "企业向量库总数",
+    },
+    countHint: "资源数量只能由平台层对整个企业设置，覆盖平台设置里的默认值；在每个网关集群内分别计数。",
     layer: "层级",
     scopeType: "范围",
     scopeProject: "项目",

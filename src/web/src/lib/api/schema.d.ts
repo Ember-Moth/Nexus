@@ -306,6 +306,34 @@ export type paths = {
         patch: operations["update_api_v1_gateway_clusters__cluster_id__patch"];
         trace?: never;
     };
+    "/api/v1/gateway-clusters/{cluster_id}/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cluster Policy
+         * @description Relay and automatic publication policy of the cluster.
+         */
+        get: operations["cluster_policy_api_v1_gateway_clusters__cluster_id__policy_get"];
+        /**
+         * Update Cluster Policy
+         * @description Replace the cluster's overrides; a null value follows the platform default.
+         *
+         *     Automatic publication delivers a Relay policy change like any other source change;
+         *     a cluster without auto_publish applies it at its next release. An effective Relay
+         *     policy other than the Relay's built-in one requires relay.cluster-policy.v1 on every node.
+         */
+        put: operations["update_cluster_policy_api_v1_gateway_clusters__cluster_id__policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/gateway-clusters/{cluster_id}/principals": {
         parameters: {
             query?: never;
@@ -1848,6 +1876,102 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/billing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Billing Policy
+         * @description Billing currency and limits; platform administrators only.
+         */
+        get: operations["billing_policy_api_v1_settings_billing_get"];
+        /**
+         * Update Billing Policy
+         * @description Replace the billing policy. API and worker processes apply it within seconds.
+         */
+        put: operations["update_billing_policy_api_v1_settings_billing_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/cluster-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cluster Defaults
+         * @description The Relay and auto-publish policy every cluster follows unless it overrides a value.
+         */
+        get: operations["cluster_defaults_api_v1_settings_cluster_defaults_get"];
+        /**
+         * Update Cluster Defaults
+         * @description Replace the defaults; clusters without overrides publish the change automatically.
+         */
+        put: operations["update_cluster_defaults_api_v1_settings_cluster_defaults_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/reporting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reporting Policy
+         * @description Export limits; platform administrators only.
+         */
+        get: operations["reporting_policy_api_v1_settings_reporting_get"];
+        /**
+         * Update Reporting Policy
+         * @description Replace the export limits; new exports use them at once.
+         */
+        put: operations["update_reporting_policy_api_v1_settings_reporting_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/resource-quotas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resource Quota Defaults
+         * @description Platform defaults of the tenant resource counts; platform administrators only.
+         */
+        get: operations["resource_quota_defaults_api_v1_settings_resource_quotas_get"];
+        /**
+         * Update Resource Quota Defaults
+         * @description Replace the defaults. Nodes enforce them once the cluster publishes its next release.
+         */
+        put: operations["update_resource_quota_defaults_api_v1_settings_resource_quotas_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/upstream-resources": {
         parameters: {
             query?: never;
@@ -2262,16 +2386,32 @@ export type components = {
             /** Trace Id */
             trace_id?: string | null;
         };
-        /** AuthPolicy */
+        /**
+         * AuthPolicy
+         * @description The complete authentication policy; a PUT replaces all of it.
+         */
         AuthPolicy: {
             /** Email Verification */
             email_verification: boolean;
+            mail: components["schemas"]["MailBudgets"];
+            /**
+             * Platform Email Recovery
+             * @description Whether holders of a platform role may recover access by email
+             */
+            platform_email_recovery: boolean;
             /**
              * Registration
              * @description Self-service registration; requires email_verification. Omitted means closed.
              * @default false
              */
             registration: boolean;
+            /**
+             * Reserved Logins
+             * @description Logins that self-service registration may not claim
+             */
+            reserved_logins: string[];
+            sessions: components["schemas"]["CredentialLifetimes"];
+            sign_in: components["schemas"]["SignInLimits"];
             /** Turnstile */
             turnstile: boolean;
         };
@@ -2279,8 +2419,23 @@ export type components = {
         AuthPolicyView: {
             /** Email Verification */
             email_verification: boolean;
+            mail: components["schemas"]["MailBudgets"];
+            /** @description The policy file that locked this policy; writes are refused while set */
+            managed: components["schemas"]["ManagedSource"] | null;
+            /**
+             * Platform Email Recovery
+             * @description Whether holders of a platform role may recover access by email
+             */
+            platform_email_recovery: boolean;
             /** Registration */
             registration: boolean;
+            /**
+             * Reserved Logins
+             * @description Logins that self-service registration may not claim
+             */
+            reserved_logins: string[];
+            sessions: components["schemas"]["CredentialLifetimes"];
+            sign_in: components["schemas"]["SignInLimits"];
             /** Turnstile */
             turnstile: boolean;
             /** Version */
@@ -2293,6 +2448,16 @@ export type components = {
             code: string;
             /** Message */
             message: string;
+        };
+        /**
+         * AutoPublishOverrides
+         * @description Null follows the platform default.
+         */
+        AutoPublishOverrides: {
+            /** Max Delay Seconds */
+            max_delay_seconds?: number | null;
+            /** Quiet Seconds */
+            quiet_seconds?: number | null;
         };
         /** AutoPublishPause */
         AutoPublishPause: {
@@ -2333,6 +2498,22 @@ export type components = {
              */
             state: "disabled" | "paused" | "pending" | "failing" | "current" | "unknown";
         };
+        /**
+         * AutoPublishTiming
+         * @description When the worker publishes a cluster with auto_publish after its sources change.
+         */
+        AutoPublishTiming: {
+            /**
+             * Max Delay Seconds
+             * @description At most this long after the first unpublished change
+             */
+            max_delay_seconds: number;
+            /**
+             * Quiet Seconds
+             * @description Sources unchanged for this long
+             */
+            quiet_seconds: number;
+        };
         /** BedrockGuardrail */
         BedrockGuardrail: {
             /** Guardrailidentifier */
@@ -2353,6 +2534,24 @@ export type components = {
                 [key: string]: unknown;
             };
             guardrailConfig?: components["schemas"]["BedrockGuardrail"] | null;
+        };
+        /** BillingPolicy */
+        BillingPolicy: {
+            /** @description Every account, price, budget and channel uses it; it cannot change once any of them exists (currency_locked) */
+            currency: components["schemas"]["Currency"];
+            payments: components["schemas"]["PaymentLimits"];
+            vector_storage: components["schemas"]["VectorStoragePolicy"];
+        };
+        /** BillingPolicyView */
+        BillingPolicyView: {
+            /** @description Every account, price, budget and channel uses it; it cannot change once any of them exists (currency_locked) */
+            currency: components["schemas"]["Currency"];
+            /** @description The policy file that locked this policy; writes are refused while set */
+            managed: components["schemas"]["ManagedSource"] | null;
+            payments: components["schemas"]["PaymentLimits"];
+            vector_storage: components["schemas"]["VectorStoragePolicy"];
+            /** Version */
+            version: number;
         };
         /** BudgetCreate */
         BudgetCreate: {
@@ -2802,6 +3001,41 @@ export type components = {
             /** Region */
             region: string;
         };
+        /**
+         * ClusterDefaultsView
+         * @description The policy every cluster follows unless it overrides a value.
+         */
+        ClusterDefaultsView: {
+            auto_publish: components["schemas"]["AutoPublishTiming"];
+            /** @description The policy file that locked the defaults; writes are refused while set */
+            managed: components["schemas"]["ManagedSource"] | null;
+            relay: components["schemas"]["RelayPolicy"];
+            /** Version */
+            version: number;
+        };
+        /** ClusterOverrides */
+        ClusterOverrides: {
+            auto_publish: components["schemas"]["AutoPublishOverrides"];
+            relay: components["schemas"]["RelayOverrides"];
+        };
+        /** ClusterPolicy */
+        ClusterPolicy: {
+            auto_publish: components["schemas"]["AutoPublishTiming"];
+            relay: components["schemas"]["RelayPolicy"];
+        };
+        /** ClusterPolicyView */
+        ClusterPolicyView: {
+            /**
+             * Cluster Id
+             * Format: uuid
+             */
+            cluster_id: string;
+            /** @description The overrides applied to the platform defaults */
+            effective: components["schemas"]["ClusterPolicy"];
+            overrides: components["schemas"]["ClusterOverrides"];
+            /** Version */
+            version: number;
+        };
         /** ClusterUpdate */
         ClusterUpdate: {
             /** Active */
@@ -2896,6 +3130,13 @@ export type components = {
              * Format: password
              */
             secret: string;
+        };
+        /** CredentialLifetimes */
+        CredentialLifetimes: {
+            /** Password Setup Ttl Seconds */
+            password_setup_ttl_seconds: number;
+            /** Session Ttl Seconds */
+            session_ttl_seconds: number;
         };
         /** CredentialView */
         CredentialView: {
@@ -3216,6 +3457,24 @@ export type components = {
              * @enum {string}
              */
             state: "queued" | "running" | "ready" | "failed" | "expired";
+        };
+        /** ExportPolicy */
+        ExportPolicy: {
+            /**
+             * Max Rows
+             * @description Larger exports fail as export_too_large
+             */
+            max_rows: number;
+            /**
+             * Per Org Minute
+             * @description Exports one organization may queue
+             */
+            per_org_minute: number;
+            /**
+             * Ttl Seconds
+             * @description How long a finished export is kept
+             */
+            ttl_seconds: number;
         };
         /** ExportRequest */
         ExportRequest: {
@@ -3662,6 +3921,50 @@ export type components = {
             password: string;
             /** Turnstile Token */
             turnstile_token?: string | null;
+        };
+        /**
+         * MailBudgets
+         * @description Identity mail per window, shared by registration, mailbox binding and recovery.
+         */
+        MailBudgets: {
+            /** Global Limit */
+            global_limit: number;
+            /**
+             * Per Account
+             * @description One registering login or one signed-in account
+             */
+            per_account: number;
+            /**
+             * Per Ip
+             * @description One requester, all recipients
+             */
+            per_ip: number;
+            /**
+             * Per Recipient
+             * @description One recipient, per requester IPv4 address or IPv6 /64
+             */
+            per_recipient: number;
+            /**
+             * Per Recipient Total
+             * @description One recipient, all requesters
+             */
+            per_recipient_total: number;
+            /**
+             * Queue Ttl Seconds
+             * @description Unsent mail is dropped after this; tokens last 15 minutes from sending
+             */
+            queue_ttl_seconds: number;
+            /** Window Seconds */
+            window_seconds: number;
+        };
+        /**
+         * ManagedSource
+         * @description The policy file that locked a policy group; only another import can change the group.
+         */
+        ManagedSource: {
+            /** File Sha256 */
+            file_sha256: string;
+            imported_at: components["schemas"]["Timestamp"];
         };
         /** MemberCreate */
         MemberCreate: {
@@ -4187,6 +4490,18 @@ export type components = {
             channel_id: string;
             currency: components["schemas"]["Currency"];
         };
+        /** PaymentLimits */
+        PaymentLimits: {
+            /** Notifications Per Channel Per Minute */
+            notifications_per_channel_per_minute: number;
+            /** Notifications Per Ip Per Minute */
+            notifications_per_ip_per_minute: number;
+            /**
+             * Requests Per Merchant Per Minute
+             * @description Worker calls to one merchant account per minute
+             */
+            requests_per_merchant_per_minute: number;
+        };
         /** PaymentMethod */
         PaymentMethod: {
             /**
@@ -4600,7 +4915,7 @@ export type components = {
              * Metric
              * @enum {string}
              */
-            metric: "rpm" | "tpm" | "concurrency";
+            metric: "rpm" | "tpm" | "concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
             /** Scope Id */
             scope_id?: string | null;
             /**
@@ -4637,7 +4952,7 @@ export type components = {
              * Metric
              * @enum {string}
              */
-            metric: "rpm" | "tpm" | "concurrency";
+            metric: "rpm" | "tpm" | "concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
             /** Scope Id */
             scope_id: string | null;
             /**
@@ -4666,7 +4981,7 @@ export type components = {
              * Metric
              * @enum {string}
              */
-            metric: "rpm" | "tpm" | "concurrency";
+            metric: "rpm" | "tpm" | "concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
             /**
              * Organization Id
              * Format: uuid
@@ -4851,6 +5166,46 @@ export type components = {
              */
             token_type: string;
         };
+        /**
+         * RelayOverrides
+         * @description Null follows the platform default.
+         */
+        RelayOverrides: {
+            /** Failover Budget Ms */
+            failover_budget_ms?: number | null;
+            /** Max Attempts */
+            max_attempts?: number | null;
+            /** Purge Grace Seconds */
+            purge_grace_seconds?: number | null;
+            /** Stream Lifetime Seconds */
+            stream_lifetime_seconds?: number | null;
+        };
+        /**
+         * RelayPolicy
+         * @description Applied by every node of the cluster from the release that carries it.
+         */
+        RelayPolicy: {
+            /**
+             * Failover Budget Ms
+             * @description No further attempt starts once this much time has passed
+             */
+            failover_budget_ms: number;
+            /**
+             * Max Attempts
+             * @description Attempts per HTTP generation; 1 disables failover
+             */
+            max_attempts: number;
+            /**
+             * Purge Grace Seconds
+             * @description How long a key stays unusable before its upstream copies are deleted
+             */
+            purge_grace_seconds: number;
+            /**
+             * Stream Lifetime Seconds
+             * @description Longest time a resumed response stream may stay open
+             */
+            stream_lifetime_seconds: number;
+        };
         /** RelayProfile */
         RelayProfile: {
             /**
@@ -5030,6 +5385,18 @@ export type components = {
              * @enum {string}
              */
             time_basis: "occurred_at" | "posted_at";
+        };
+        /** ReportingPolicy */
+        ReportingPolicy: {
+            exports: components["schemas"]["ExportPolicy"];
+        };
+        /** ReportingPolicyView */
+        ReportingPolicyView: {
+            exports: components["schemas"]["ExportPolicy"];
+            /** @description The policy file that locked this policy; writes are refused while set */
+            managed: components["schemas"]["ManagedSource"] | null;
+            /** Version */
+            version: number;
         };
         /** ReportPage[AttemptCostEntry] */
         ReportPage_AttemptCostEntry_: {
@@ -5261,6 +5628,35 @@ export type components = {
              */
             state: "pending" | "purged" | "failed";
         };
+        /**
+         * ResourceQuotaDefaults
+         * @description Platform defaults of the resource counts; organizations override them with quota policies.
+         */
+        ResourceQuotaDefaults: {
+            /** Resources Per Key */
+            resources_per_key: number;
+            /** Resources Per Organization */
+            resources_per_organization: number;
+            /** Vector Stores Per Key */
+            vector_stores_per_key: number;
+            /** Vector Stores Per Organization */
+            vector_stores_per_organization: number;
+        };
+        /** ResourceQuotaDefaultsView */
+        ResourceQuotaDefaultsView: {
+            /** @description The policy file that locked these defaults; writes are refused while set */
+            managed: components["schemas"]["ManagedSource"] | null;
+            /** Resources Per Key */
+            resources_per_key: number;
+            /** Resources Per Organization */
+            resources_per_organization: number;
+            /** Vector Stores Per Key */
+            vector_stores_per_key: number;
+            /** Vector Stores Per Organization */
+            vector_stores_per_organization: number;
+            /** Version */
+            version: number;
+        };
         /** ReviewBasis */
         ReviewBasis: {
             evidence: components["schemas"]["Nonblank"];
@@ -5483,6 +5879,18 @@ export type components = {
             /** Setup Token */
             setup_token: string;
             user: components["schemas"]["UserView"];
+        };
+        /**
+         * SignInLimits
+         * @description Attempts per window for one account and for one client address (IPv4 or IPv6 /64).
+         */
+        SignInLimits: {
+            /** Per Account */
+            per_account: number;
+            /** Per Ip */
+            per_ip: number;
+            /** Window Seconds */
+            window_seconds: number;
         };
         /** Statement */
         Statement: {
@@ -5773,6 +6181,20 @@ export type components = {
             uncertain: boolean;
             /** Vector Store Id */
             vector_store_id: string;
+        };
+        /** VectorStoragePolicy */
+        VectorStoragePolicy: {
+            /**
+             * Lapse Policy
+             * @description What happens to a store once renewal failed and its prepaid days ran out
+             * @enum {string}
+             */
+            lapse_policy: "delete" | "suspend";
+            /**
+             * Prepaid Days
+             * @description Days of storage held ahead and renewed by the worker
+             */
+            prepaid_days: number;
         };
         /** VerificationPending */
         VerificationPending: {
@@ -7570,6 +7992,182 @@ export interface operations {
             };
             /** @description Idempotency key reuse, state transition or resource conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    cluster_policy_api_v1_gateway_clusters__cluster_id__policy_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterPolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_cluster_policy_api_v1_gateway_clusters__cluster_id__policy_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                cluster_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterOverrides"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterPolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15030,7 +15628,7 @@ export interface operations {
             };
             path: {
                 layer: "platform" | "customer";
-                metric: "rpm" | "tpm" | "concurrency";
+                metric: "rpm" | "tpm" | "concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
                 organization_id: string;
                 scope_id: string;
                 scope_type: "organization" | "project" | "key";
@@ -18179,6 +18777,622 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthPolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    billing_policy_api_v1_settings_billing_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingPolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_billing_policy_api_v1_settings_billing_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BillingPolicy"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingPolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    cluster_defaults_api_v1_settings_cluster_defaults_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterDefaultsView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_cluster_defaults_api_v1_settings_cluster_defaults_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterPolicy"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterDefaultsView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reporting_policy_api_v1_settings_reporting_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportingPolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_reporting_policy_api_v1_settings_reporting_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportingPolicy"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportingPolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resource_quota_defaults_api_v1_settings_resource_quotas_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceQuotaDefaultsView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_resource_quota_defaults_api_v1_settings_resource_quotas_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourceQuotaDefaults"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceQuotaDefaultsView"];
                 };
             };
             /** @description Session is missing, expired or revoked */

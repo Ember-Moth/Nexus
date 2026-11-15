@@ -2601,6 +2601,243 @@
         }
       }
     },
+    "/api/v1/settings/reporting": {
+      "get": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Reporting Policy",
+        "description": "Export limits; platform administrators only.",
+        "operationId": "reporting_policy_api_v1_settings_reporting_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportingPolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Update Reporting Policy",
+        "description": "Replace the export limits; new exports use them at once.",
+        "operationId": "update_reporting_policy_api_v1_settings_reporting_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportingPolicy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportingPolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition or resource conflict",
+            "x-error-codes": [
+              "policy_managed_externally"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "If-Match does not match the current resource version",
+            "x-error-codes": [
+              "version_conflict"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "invalid_version",
+              "validation_error"
+            ]
+          },
+          "428": {
+            "description": "A required If-Match or Idempotency-Key header is missing",
+            "x-error-codes": [
+              "precondition_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/reconciliation-cases/upstream-statements": {
       "post": {
         "tags": [
@@ -3906,6 +4143,292 @@
               "invalid_version",
               "validation_error"
             ]
+          },
+          "428": {
+            "description": "A required If-Match or Idempotency-Key header is missing",
+            "x-error-codes": [
+              "precondition_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gateway-clusters/{cluster_id}/policy": {
+      "get": {
+        "tags": [
+          "gateway publication"
+        ],
+        "summary": "Cluster Policy",
+        "description": "Relay and automatic publication policy of the cluster.",
+        "operationId": "cluster_policy_api_v1_gateway_clusters__cluster_id__policy_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterPolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource does not exist or is not visible to the caller",
+            "x-error-codes": [
+              "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "validation_error"
+            ]
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "gateway publication"
+        ],
+        "summary": "Update Cluster Policy",
+        "description": "Replace the cluster's overrides; a null value follows the platform default.\n\nAutomatic publication delivers a Relay policy change like any other source change;\na cluster without auto_publish applies it at its next release. An effective Relay\npolicy other than the Relay's built-in one requires relay.cluster-policy.v1 on every node.",
+        "operationId": "update_cluster_policy_api_v1_gateway_clusters__cluster_id__policy_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Cluster Id"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClusterOverrides"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterPolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource does not exist or is not visible to the caller",
+            "x-error-codes": [
+              "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "If-Match does not match the current resource version",
+            "x-error-codes": [
+              "version_conflict"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "x-error-codes": [
+              "invalid_cluster_policy",
+              "invalid_version",
+              "validation_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
           },
           "428": {
             "description": "A required If-Match or Idempotency-Key header is missing",
@@ -5427,6 +5950,243 @@
         }
       }
     },
+    "/api/v1/settings/cluster-defaults": {
+      "get": {
+        "tags": [
+          "gateway publication"
+        ],
+        "summary": "Cluster Defaults",
+        "description": "The Relay and auto-publish policy every cluster follows unless it overrides a value.",
+        "operationId": "cluster_defaults_api_v1_settings_cluster_defaults_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterDefaultsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "gateway publication"
+        ],
+        "summary": "Update Cluster Defaults",
+        "description": "Replace the defaults; clusters without overrides publish the change automatically.",
+        "operationId": "update_cluster_defaults_api_v1_settings_cluster_defaults_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClusterPolicy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterDefaultsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition or resource conflict",
+            "x-error-codes": [
+              "policy_managed_externally"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "If-Match does not match the current resource version",
+            "x-error-codes": [
+              "version_conflict"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "invalid_version",
+              "validation_error"
+            ]
+          },
+          "428": {
+            "description": "A required If-Match or Idempotency-Key header is missing",
+            "x-error-codes": [
+              "precondition_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/route-policies/{organization_id}/{model_id}": {
       "put": {
         "tags": [
@@ -5966,7 +6726,11 @@
               "enum": [
                 "rpm",
                 "tpm",
-                "concurrency"
+                "concurrency",
+                "resources_per_key",
+                "resources_per_organization",
+                "vector_stores_per_key",
+                "vector_stores_per_organization"
               ],
               "type": "string",
               "title": "Metric"
@@ -6444,6 +7208,243 @@
               "invalid_cursor",
               "validation_error"
             ]
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/resource-quotas": {
+      "get": {
+        "tags": [
+          "gateway routing"
+        ],
+        "summary": "Resource Quota Defaults",
+        "description": "Platform defaults of the tenant resource counts; platform administrators only.",
+        "operationId": "resource_quota_defaults_api_v1_settings_resource_quotas_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceQuotaDefaultsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "gateway routing"
+        ],
+        "summary": "Update Resource Quota Defaults",
+        "description": "Replace the defaults. Nodes enforce them once the cluster publishes its next release.",
+        "operationId": "update_resource_quota_defaults_api_v1_settings_resource_quotas_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceQuotaDefaults"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceQuotaDefaultsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition or resource conflict",
+            "x-error-codes": [
+              "policy_managed_externally"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "If-Match does not match the current resource version",
+            "x-error-codes": [
+              "version_conflict"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "invalid_version",
+              "validation_error"
+            ]
+          },
+          "428": {
+            "description": "A required If-Match or Idempotency-Key header is missing",
+            "x-error-codes": [
+              "precondition_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "500": {
             "description": "Internal server error",
@@ -7138,6 +8139,7 @@
           "409": {
             "description": "Idempotency key reuse, state transition or resource conflict",
             "x-error-codes": [
+              "policy_managed_externally",
               "turnstile_not_configured"
             ],
             "content": {
@@ -21783,6 +22785,244 @@
         }
       }
     },
+    "/api/v1/settings/billing": {
+      "get": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "Billing Policy",
+        "description": "Billing currency and limits; platform administrators only.",
+        "operationId": "billing_policy_api_v1_settings_billing_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingPolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "Update Billing Policy",
+        "description": "Replace the billing policy. API and worker processes apply it within seconds.",
+        "operationId": "update_billing_policy_api_v1_settings_billing_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BillingPolicy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingPolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition or resource conflict",
+            "x-error-codes": [
+              "currency_locked",
+              "policy_managed_externally"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "If-Match does not match the current resource version",
+            "x-error-codes": [
+              "version_conflict"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "invalid_version",
+              "validation_error"
+            ]
+          },
+          "428": {
+            "description": "A required If-Match or Idempotency-Key header is missing",
+            "x-error-codes": [
+              "precondition_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payment-gateway-types": {
       "get": {
         "tags": [
@@ -24590,15 +25830,46 @@
           "turnstile": {
             "type": "boolean",
             "title": "Turnstile"
+          },
+          "sign_in": {
+            "$ref": "#/components/schemas/SignInLimits"
+          },
+          "mail": {
+            "$ref": "#/components/schemas/MailBudgets"
+          },
+          "sessions": {
+            "$ref": "#/components/schemas/CredentialLifetimes"
+          },
+          "reserved_logins": {
+            "items": {
+              "type": "string",
+              "maxLength": 254,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "title": "Reserved Logins",
+            "description": "Logins that self-service registration may not claim"
+          },
+          "platform_email_recovery": {
+            "type": "boolean",
+            "title": "Platform Email Recovery",
+            "description": "Whether holders of a platform role may recover access by email"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "email_verification",
-          "turnstile"
+          "turnstile",
+          "sign_in",
+          "mail",
+          "sessions",
+          "reserved_logins",
+          "platform_email_recovery"
         ],
-        "title": "AuthPolicy"
+        "title": "AuthPolicy",
+        "description": "The complete authentication policy; a PUT replaces all of it."
       },
       "AuthPolicyView": {
         "properties": {
@@ -24614,6 +25885,42 @@
             "type": "boolean",
             "title": "Turnstile"
           },
+          "sign_in": {
+            "$ref": "#/components/schemas/SignInLimits"
+          },
+          "mail": {
+            "$ref": "#/components/schemas/MailBudgets"
+          },
+          "sessions": {
+            "$ref": "#/components/schemas/CredentialLifetimes"
+          },
+          "reserved_logins": {
+            "items": {
+              "type": "string",
+              "maxLength": 254,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "title": "Reserved Logins",
+            "description": "Logins that self-service registration may not claim"
+          },
+          "platform_email_recovery": {
+            "type": "boolean",
+            "title": "Platform Email Recovery",
+            "description": "Whether holders of a platform role may recover access by email"
+          },
+          "managed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManagedSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The policy file that locked this policy; writes are refused while set"
+          },
           "version": {
             "type": "integer",
             "title": "Version"
@@ -24625,6 +25932,12 @@
           "registration",
           "email_verification",
           "turnstile",
+          "sign_in",
+          "mail",
+          "sessions",
+          "reserved_logins",
+          "platform_email_recovery",
+          "managed",
           "version"
         ],
         "title": "AuthPolicyView"
@@ -24651,6 +25964,40 @@
           "at"
         ],
         "title": "AutoPublishFailure"
+      },
+      "AutoPublishOverrides": {
+        "properties": {
+          "quiet_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 300,
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet Seconds"
+          },
+          "max_delay_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 3600,
+                "exclusiveMinimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Delay Seconds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AutoPublishOverrides",
+        "description": "Null follows the platform default."
       },
       "AutoPublishPause": {
         "properties": {
@@ -24794,6 +26141,32 @@
         ],
         "title": "AutoPublishStatus"
       },
+      "AutoPublishTiming": {
+        "properties": {
+          "quiet_seconds": {
+            "type": "number",
+            "maximum": 300,
+            "minimum": 0,
+            "title": "Quiet Seconds",
+            "description": "Sources unchanged for this long"
+          },
+          "max_delay_seconds": {
+            "type": "number",
+            "maximum": 3600,
+            "exclusiveMinimum": 0,
+            "title": "Max Delay Seconds",
+            "description": "At most this long after the first unpublished change"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "quiet_seconds",
+          "max_delay_seconds"
+        ],
+        "title": "AutoPublishTiming",
+        "description": "When the worker publishes a cluster with auto_publish after its sources change."
+      },
       "BedrockGuardrail": {
         "properties": {
           "guardrailIdentifier": {
@@ -24849,6 +26222,67 @@
         "additionalProperties": false,
         "type": "object",
         "title": "BedrockRequestOptions"
+      },
+      "BillingPolicy": {
+        "properties": {
+          "currency": {
+            "$ref": "#/components/schemas/Currency",
+            "description": "Every account, price, budget and channel uses it; it cannot change once any of them exists (currency_locked)"
+          },
+          "vector_storage": {
+            "$ref": "#/components/schemas/VectorStoragePolicy"
+          },
+          "payments": {
+            "$ref": "#/components/schemas/PaymentLimits"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "currency",
+          "vector_storage",
+          "payments"
+        ],
+        "title": "BillingPolicy"
+      },
+      "BillingPolicyView": {
+        "properties": {
+          "currency": {
+            "$ref": "#/components/schemas/Currency",
+            "description": "Every account, price, budget and channel uses it; it cannot change once any of them exists (currency_locked)"
+          },
+          "vector_storage": {
+            "$ref": "#/components/schemas/VectorStoragePolicy"
+          },
+          "payments": {
+            "$ref": "#/components/schemas/PaymentLimits"
+          },
+          "managed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManagedSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The policy file that locked this policy; writes are refused while set"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "currency",
+          "vector_storage",
+          "payments",
+          "managed",
+          "version"
+        ],
+        "title": "BillingPolicyView"
       },
       "BudgetCreate": {
         "properties": {
@@ -25945,6 +27379,104 @@
         ],
         "title": "Cluster"
       },
+      "ClusterDefaultsView": {
+        "properties": {
+          "relay": {
+            "$ref": "#/components/schemas/RelayPolicy"
+          },
+          "auto_publish": {
+            "$ref": "#/components/schemas/AutoPublishTiming"
+          },
+          "managed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManagedSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The policy file that locked the defaults; writes are refused while set"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "relay",
+          "auto_publish",
+          "managed",
+          "version"
+        ],
+        "title": "ClusterDefaultsView",
+        "description": "The policy every cluster follows unless it overrides a value."
+      },
+      "ClusterOverrides": {
+        "properties": {
+          "relay": {
+            "$ref": "#/components/schemas/RelayOverrides"
+          },
+          "auto_publish": {
+            "$ref": "#/components/schemas/AutoPublishOverrides"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "relay",
+          "auto_publish"
+        ],
+        "title": "ClusterOverrides"
+      },
+      "ClusterPolicy": {
+        "properties": {
+          "relay": {
+            "$ref": "#/components/schemas/RelayPolicy"
+          },
+          "auto_publish": {
+            "$ref": "#/components/schemas/AutoPublishTiming"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "relay",
+          "auto_publish"
+        ],
+        "title": "ClusterPolicy"
+      },
+      "ClusterPolicyView": {
+        "properties": {
+          "cluster_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Cluster Id"
+          },
+          "overrides": {
+            "$ref": "#/components/schemas/ClusterOverrides"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/ClusterPolicy",
+            "description": "The overrides applied to the platform defaults"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "cluster_id",
+          "overrides",
+          "effective",
+          "version"
+        ],
+        "title": "ClusterPolicyView"
+      },
       "ClusterUpdate": {
         "properties": {
           "active": {
@@ -26202,6 +27734,29 @@
           "secret"
         ],
         "title": "CredentialCreate"
+      },
+      "CredentialLifetimes": {
+        "properties": {
+          "session_ttl_seconds": {
+            "type": "integer",
+            "maximum": 86400,
+            "minimum": 60,
+            "title": "Session Ttl Seconds"
+          },
+          "password_setup_ttl_seconds": {
+            "type": "integer",
+            "maximum": 86400,
+            "minimum": 60,
+            "title": "Password Setup Ttl Seconds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_ttl_seconds",
+          "password_setup_ttl_seconds"
+        ],
+        "title": "CredentialLifetimes"
       },
       "CredentialView": {
         "properties": {
@@ -27016,6 +28571,39 @@
           "expires_at"
         ],
         "title": "ExportJob"
+      },
+      "ExportPolicy": {
+        "properties": {
+          "per_org_minute": {
+            "type": "integer",
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Per Org Minute",
+            "description": "Exports one organization may queue"
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "maximum": 2592000,
+            "minimum": 60,
+            "title": "Ttl Seconds",
+            "description": "How long a finished export is kept"
+          },
+          "max_rows": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "title": "Max Rows",
+            "description": "Larger exports fail as export_too_large"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "per_org_minute",
+          "ttl_seconds",
+          "max_rows"
+        ],
+        "title": "ExportPolicy"
       },
       "ExportRequest": {
         "properties": {
@@ -28135,6 +29723,90 @@
           "password"
         ],
         "title": "Login"
+      },
+      "MailBudgets": {
+        "properties": {
+          "window_seconds": {
+            "type": "integer",
+            "maximum": 86400,
+            "minimum": 60,
+            "title": "Window Seconds"
+          },
+          "per_recipient": {
+            "type": "integer",
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Per Recipient",
+            "description": "One recipient, per requester IPv4 address or IPv6 /64"
+          },
+          "per_recipient_total": {
+            "type": "integer",
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Per Recipient Total",
+            "description": "One recipient, all requesters"
+          },
+          "per_account": {
+            "type": "integer",
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Per Account",
+            "description": "One registering login or one signed-in account"
+          },
+          "per_ip": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "title": "Per Ip",
+            "description": "One requester, all recipients"
+          },
+          "global_limit": {
+            "type": "integer",
+            "maximum": 10000000,
+            "minimum": 1,
+            "title": "Global Limit"
+          },
+          "queue_ttl_seconds": {
+            "type": "integer",
+            "maximum": 86400,
+            "minimum": 60,
+            "title": "Queue Ttl Seconds",
+            "description": "Unsent mail is dropped after this; tokens last 15 minutes from sending"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "window_seconds",
+          "per_recipient",
+          "per_recipient_total",
+          "per_account",
+          "per_ip",
+          "global_limit",
+          "queue_ttl_seconds"
+        ],
+        "title": "MailBudgets",
+        "description": "Identity mail per window, shared by registration, mailbox binding and recovery."
+      },
+      "ManagedSource": {
+        "properties": {
+          "file_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "File Sha256"
+          },
+          "imported_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "file_sha256",
+          "imported_at"
+        ],
+        "title": "ManagedSource",
+        "description": "The policy file that locked a policy group; only another import can change the group."
       },
       "MemberCreate": {
         "properties": {
@@ -29903,6 +31575,37 @@
         ],
         "title": "PaymentCreate"
       },
+      "PaymentLimits": {
+        "properties": {
+          "requests_per_merchant_per_minute": {
+            "type": "integer",
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Requests Per Merchant Per Minute",
+            "description": "Worker calls to one merchant account per minute"
+          },
+          "notifications_per_channel_per_minute": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "title": "Notifications Per Channel Per Minute"
+          },
+          "notifications_per_ip_per_minute": {
+            "type": "integer",
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Notifications Per Ip Per Minute"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "requests_per_merchant_per_minute",
+          "notifications_per_channel_per_minute",
+          "notifications_per_ip_per_minute"
+        ],
+        "title": "PaymentLimits"
+      },
       "PaymentMethod": {
         "properties": {
           "channel_id": {
@@ -30885,7 +32588,11 @@
             "enum": [
               "rpm",
               "tpm",
-              "concurrency"
+              "concurrency",
+              "resources_per_key",
+              "resources_per_organization",
+              "vector_stores_per_key",
+              "vector_stores_per_organization"
             ],
             "title": "Metric"
           },
@@ -30956,7 +32663,11 @@
             "enum": [
               "rpm",
               "tpm",
-              "concurrency"
+              "concurrency",
+              "resources_per_key",
+              "resources_per_organization",
+              "vector_stores_per_key",
+              "vector_stores_per_organization"
             ],
             "title": "Metric"
           },
@@ -31027,7 +32738,11 @@
             "enum": [
               "rpm",
               "tpm",
-              "concurrency"
+              "concurrency",
+              "resources_per_key",
+              "resources_per_organization",
+              "vector_stores_per_key",
+              "vector_stores_per_organization"
             ],
             "title": "Metric"
           },
@@ -31476,6 +33191,108 @@
           "personal_organization_id"
         ],
         "title": "RegistrationCreated"
+      },
+      "RelayOverrides": {
+        "properties": {
+          "max_attempts": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4,
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Attempts"
+          },
+          "failover_budget_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 60000,
+                "minimum": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failover Budget Ms"
+          },
+          "purge_grace_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2147483647,
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purge Grace Seconds"
+          },
+          "stream_lifetime_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2147483647,
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stream Lifetime Seconds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RelayOverrides",
+        "description": "Null follows the platform default."
+      },
+      "RelayPolicy": {
+        "properties": {
+          "max_attempts": {
+            "type": "integer",
+            "maximum": 4,
+            "minimum": 1,
+            "title": "Max Attempts",
+            "description": "Attempts per HTTP generation; 1 disables failover"
+          },
+          "failover_budget_ms": {
+            "type": "integer",
+            "maximum": 60000,
+            "minimum": 100,
+            "title": "Failover Budget Ms",
+            "description": "No further attempt starts once this much time has passed"
+          },
+          "purge_grace_seconds": {
+            "type": "integer",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "title": "Purge Grace Seconds",
+            "description": "How long a key stays unusable before its upstream copies are deleted"
+          },
+          "stream_lifetime_seconds": {
+            "type": "integer",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "title": "Stream Lifetime Seconds",
+            "description": "Longest time a resumed response stream may stay open"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "max_attempts",
+          "failover_budget_ms",
+          "purge_grace_seconds",
+          "stream_lifetime_seconds"
+        ],
+        "title": "RelayPolicy",
+        "description": "Applied by every node of the cluster from the release that carries it."
       },
       "RelayProfile": {
         "properties": {
@@ -32130,6 +33947,49 @@
         ],
         "title": "ReportPage[VectorStorageDay]"
       },
+      "ReportingPolicy": {
+        "properties": {
+          "exports": {
+            "$ref": "#/components/schemas/ExportPolicy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "exports"
+        ],
+        "title": "ReportingPolicy"
+      },
+      "ReportingPolicyView": {
+        "properties": {
+          "exports": {
+            "$ref": "#/components/schemas/ExportPolicy"
+          },
+          "managed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManagedSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The policy file that locked this policy; writes are refused while set"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "exports",
+          "managed",
+          "version"
+        ],
+        "title": "ReportingPolicyView"
+      },
       "RequestAccepted": {
         "properties": {
           "accepted": {
@@ -32583,6 +34443,98 @@
           "finished_at"
         ],
         "title": "ResourcePurge"
+      },
+      "ResourceQuotaDefaults": {
+        "properties": {
+          "resources_per_key": {
+            "type": "integer",
+            "maximum": 2000000000,
+            "minimum": 1,
+            "title": "Resources Per Key"
+          },
+          "resources_per_organization": {
+            "type": "integer",
+            "maximum": 2000000000,
+            "minimum": 1,
+            "title": "Resources Per Organization"
+          },
+          "vector_stores_per_key": {
+            "type": "integer",
+            "maximum": 2000000000,
+            "minimum": 1,
+            "title": "Vector Stores Per Key"
+          },
+          "vector_stores_per_organization": {
+            "type": "integer",
+            "maximum": 2000000000,
+            "minimum": 1,
+            "title": "Vector Stores Per Organization"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "resources_per_key",
+          "resources_per_organization",
+          "vector_stores_per_key",
+          "vector_stores_per_organization"
+        ],
+        "title": "ResourceQuotaDefaults",
+        "description": "Platform defaults of the resource counts; organizations override them with quota policies."
+      },
+      "ResourceQuotaDefaultsView": {
+        "properties": {
+          "resources_per_key": {
+            "type": "integer",
+            "maximum": 2000000000,
+            "minimum": 1,
+            "title": "Resources Per Key"
+          },
+          "resources_per_organization": {
+            "type": "integer",
+            "maximum": 2000000000,
+            "minimum": 1,
+            "title": "Resources Per Organization"
+          },
+          "vector_stores_per_key": {
+            "type": "integer",
+            "maximum": 2000000000,
+            "minimum": 1,
+            "title": "Vector Stores Per Key"
+          },
+          "vector_stores_per_organization": {
+            "type": "integer",
+            "maximum": 2000000000,
+            "minimum": 1,
+            "title": "Vector Stores Per Organization"
+          },
+          "managed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManagedSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The policy file that locked these defaults; writes are refused while set"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "resources_per_key",
+          "resources_per_organization",
+          "vector_stores_per_key",
+          "vector_stores_per_organization",
+          "managed",
+          "version"
+        ],
+        "title": "ResourceQuotaDefaultsView"
       },
       "ReviewBasis": {
         "properties": {
@@ -33135,6 +35087,37 @@
           "expires_at"
         ],
         "title": "SetupIssued"
+      },
+      "SignInLimits": {
+        "properties": {
+          "window_seconds": {
+            "type": "integer",
+            "maximum": 3600,
+            "minimum": 1,
+            "title": "Window Seconds"
+          },
+          "per_account": {
+            "type": "integer",
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Per Account"
+          },
+          "per_ip": {
+            "type": "integer",
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Per Ip"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "window_seconds",
+          "per_account",
+          "per_ip"
+        ],
+        "title": "SignInLimits",
+        "description": "Attempts per window for one account and for one client address (IPv4 or IPv6 /64)."
       },
       "Statement": {
         "properties": {
@@ -33932,6 +35915,33 @@
         ],
         "title": "VectorStorageDay"
       },
+      "VectorStoragePolicy": {
+        "properties": {
+          "prepaid_days": {
+            "type": "integer",
+            "maximum": 31,
+            "minimum": 1,
+            "title": "Prepaid Days",
+            "description": "Days of storage held ahead and renewed by the worker"
+          },
+          "lapse_policy": {
+            "type": "string",
+            "enum": [
+              "delete",
+              "suspend"
+            ],
+            "title": "Lapse Policy",
+            "description": "What happens to a store once renewal failed and its prepaid days ran out"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "prepaid_days",
+          "lapse_policy"
+        ],
+        "title": "VectorStoragePolicy"
+      },
       "VerificationPending": {
         "properties": {
           "email_verification_required": {
@@ -34472,6 +36482,20 @@
         "retry": "after_correction"
       }
     ],
+    "policy_managed_externally": [
+      {
+        "status": 409,
+        "action": "edit_policy_file",
+        "retry": "after_correction"
+      }
+    ],
+    "currency_locked": [
+      {
+        "status": 409,
+        "action": "keep_billing_currency",
+        "retry": "after_correction"
+      }
+    ],
     "account_frozen": [
       {
         "status": 409,
@@ -34592,6 +36616,13 @@
       }
     ],
     "invalid_catalog_config": [
+      {
+        "status": 422,
+        "action": "correct_input",
+        "retry": "after_correction"
+      }
+    ],
+    "invalid_cluster_policy": [
       {
         "status": 422,
         "action": "correct_input",

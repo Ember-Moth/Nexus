@@ -27,7 +27,14 @@ type Layer = QuotaPolicy["layer"];
 type ScopeType = QuotaPolicy["scope_type"];
 type Metric = QuotaPolicy["metric"];
 
-const METRICS: Metric[] = ["rpm", "tpm", "concurrency"];
+const RATES: Metric[] = ["rpm", "tpm", "concurrency"];
+// Resource counts override the platform defaults (平台设置 → 资源配额) for the whole organization.
+const COUNTS: Metric[] = [
+  "resources_per_key",
+  "resources_per_organization",
+  "vector_stores_per_key",
+  "vector_stores_per_organization",
+];
 const SCOPES: ScopeType[] = ["organization", "project", "key"];
 const MAX_LIMIT = 2_000_000_000;
 
@@ -163,7 +170,14 @@ function QuotaDialog({
         <div className="grid grid-cols-2 gap-3">
           <div className="grid gap-2">
             <Label htmlFor="quota-layer">{t("quotas.layer")}</Label>
-            <Select value={layer} onValueChange={(value) => setLayer(value as Layer)} disabled={Boolean(editing)}>
+            <Select
+              value={layer}
+              onValueChange={(value) => {
+                setLayer(value as Layer);
+                if (value !== "platform" && COUNTS.includes(metric)) setMetric("rpm");
+              }}
+              disabled={Boolean(editing)}
+            >
               <SelectTrigger id="quota-layer" className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -178,12 +192,22 @@ function QuotaDialog({
           </div>
           <div className="grid gap-2">
             <Label htmlFor="quota-metric">{t("quotas.metric")}</Label>
-            <Select value={metric} onValueChange={(value) => setMetric(value as Metric)} disabled={Boolean(editing)}>
+            <Select
+              value={metric}
+              onValueChange={(value) => {
+                setMetric(value as Metric);
+                if (COUNTS.includes(value as Metric)) {
+                  setScopeType("organization");
+                  setScopeId("");
+                }
+              }}
+              disabled={Boolean(editing)}
+            >
               <SelectTrigger id="quota-metric" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {METRICS.map((value) => (
+                {(layer === "platform" ? [...RATES, ...COUNTS] : RATES).map((value) => (
                   <SelectItem key={value} value={value}>
                     {t(`quotas.metrics.${value}`)}
                   </SelectItem>
@@ -200,7 +224,7 @@ function QuotaDialog({
               setScopeType(value as ScopeType);
               setScopeId("");
             }}
-            disabled={Boolean(editing)}
+            disabled={Boolean(editing) || COUNTS.includes(metric)}
           >
             <SelectTrigger id="quota-scope" className="w-full">
               <SelectValue />
@@ -242,6 +266,7 @@ function QuotaDialog({
             </Select>
           ) : null}
           {touched && !scopeOk ? <span className="text-xs text-destructive">{t("quotas.scopeRequired")}</span> : null}
+          {COUNTS.includes(metric) ? <span className="text-xs text-muted-foreground">{t("quotas.countHint")}</span> : null}
         </div>
         <div className="grid gap-2">
           <Label htmlFor="quota-limit">{t("quotas.limit")}</Label>

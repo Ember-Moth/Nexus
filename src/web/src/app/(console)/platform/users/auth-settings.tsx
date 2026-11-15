@@ -87,10 +87,19 @@ function AuthSettingsForm({
   const [emailVerification, setEmailVerification] = useState(policy.email_verification);
   const [turnstile, setTurnstile] = useState(policy.turnstile);
 
+  // The PUT replaces the whole policy: limits and lifetimes travel along unchanged.
+  const managed = policy.managed;
+  const locked = managed !== null;
+  const rest = Object.fromEntries(
+    Object.entries(policy).filter(([key]) => key !== "version" && key !== "managed"),
+  ) as Omit<AuthPolicyView, "version" | "managed">;
   const save = useMutation({
-    mutationFn: async (body: { registration: boolean; email_verification: boolean; turnstile: boolean }) =>
+    mutationFn: async (switches: { registration: boolean; email_verification: boolean; turnstile: boolean }) =>
       call(() =>
-        nexus.PUT("/api/v1/settings/authentication", { params: { header: { "If-Match": etag } }, body }),
+        nexus.PUT("/api/v1/settings/authentication", {
+          params: { header: { "If-Match": etag } },
+          body: { ...rest, ...switches },
+        }),
       ),
     onSuccess: () => {
       toast.success(t("pc.auth.saved"));
@@ -118,11 +127,13 @@ function AuthSettingsForm({
       ) : save.error ? (
         <PcErrorAlert error={save.error} />
       ) : null}
+      {locked ? <p className="text-xs text-muted-foreground">{t("st.managed.title")}</p> : null}
       <SwitchRow
         id="auth-registration"
         label={t("pc.auth.registration")}
         hint={t("pc.auth.registrationHint")}
         checked={registration}
+        disabled={locked}
         onChange={(next) => {
           setRegistration(next);
           // The API refuses open registration without email verification.
@@ -136,7 +147,7 @@ function AuthSettingsForm({
         label={t("pc.auth.emailVerification")}
         hint={registration ? t("pc.auth.emailVerificationLocked") : t("pc.auth.emailVerificationHint")}
         checked={emailVerification}
-        disabled={registration}
+        disabled={registration || locked}
         onChange={setEmailVerification}
       >
         {options.data ? (
@@ -150,6 +161,7 @@ function AuthSettingsForm({
         label={t("pc.auth.turnstile")}
         hint={t("pc.auth.turnstileHint")}
         checked={turnstile}
+        disabled={locked}
         onChange={setTurnstile}
       >
         {options.data?.turnstile && options.data.turnstile_site_key ? (
@@ -159,7 +171,7 @@ function AuthSettingsForm({
       <div className="flex justify-end">
         <Button
           type="button"
-          disabled={!changed || save.isPending || conflict || reloading}
+          disabled={!changed || save.isPending || conflict || reloading || locked}
           onClick={() => save.mutate({ registration, email_verification: emailVerification, turnstile })}
         >
           {save.isPending ? <Spinner /> : null}

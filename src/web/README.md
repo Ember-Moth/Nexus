@@ -171,6 +171,7 @@ pnpm api:types:check                                 # CI：生成结果必须�
 | 集群与发布 `clusters` | 已完成 | 新建与编辑：企业范围（指定企业 / 全部企业 / 全部个人企业）、自动发布开关、启停、轮换公钥；列表显示自动发布状态；详情页“自动发布”卡片显示最近一次自动发布及触发来源、最近一次失败的错误码与原因、回滚后的暂停与“恢复自动发布”；登记节点；手动发布或回滚（回滚前提示会暂停自动发布）；发布历史按 `initiator` 标出“系统（自动发布器）”。已在浏览器走通：开启自动发布 → 新 Key 触发自动发布 r2 → 回滚 r3 暂停 → 恢复后自动发布 r4；`personal` 范围缺少路由时显示失败原因 |
 | 审计事件 `audit` | 已完成 | 按企业、动作、追踪 ID 筛选，操作人与企业显示名称 |
 | 运行指标 `metrics` | 已完成 | 经 `GET /api/metrics`（仅平台管理员）读取 `/internal/metrics`，按 API 请求、数据库、发布、用量、支付、异常分组，15 秒刷新 |
+| 设置 `settings` | 已完成 | 按模块分 Tab：身份（`/settings/authentication` 的限额、有效期、保留登录名）、计费（`/settings/billing`，含出现账务数据前可改的币种）、报表（`/settings/reporting`）、资源配额（`/settings/resource-quotas`）、网关集群（`/settings/cluster-defaults` 默认值和 `/gateway-clusters/{id}/policy` 覆盖，留空跟随默认值）。均为整资源 PUT + If-Match，412 时提示重新加载；被策略文件锁定的组只读并显示文件摘要 |
 
 ### 本地联调准备
 

@@ -1,12 +1,7 @@
 "use client";
 
-import { SkeletonPage } from "@/components/page";
+import { PriceVersionsPage } from "../prices/price-versions";
 
-export default function Page() {
-  return (
-    <SkeletonPage
-      title="nav.items.costPrices"
-      endpoints={["GET/POST /cost-price-versions?scope_id=（Idempotency-Key）", "PATCH /cost-price-versions/{id}（If-Match）", "POST /cost-price-versions/{id}/publish（If-Match + Idempotency-Key）"]}
-    />
-  );
+export default function CostPricesPage() {
+  return <PriceVersionsPage kind="cost" />;
 }

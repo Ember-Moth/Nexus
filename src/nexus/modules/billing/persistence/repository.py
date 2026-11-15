@@ -340,7 +340,8 @@ class BillingRepository:
     async def flush(self):
         await self._session.flush()
 
-    async def page(self, kind, org_id, limit, cursor, **filters):
+    async def page(self, kind, org_id, limit, cursor, /, **filters):
+        # Positional-only: a column filter may share a name with a parameter, e.g. price `kind`.
         model = TABLES[kind]
         query = select(model)
         if org_id is not None:

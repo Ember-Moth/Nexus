@@ -468,6 +468,36 @@ async def test_locked_prices_discounts_and_per_attempt_costs(http, admin):
         admin.execute("UPDATE billing.ledger_entries SET signed_amount=99")
 
 
+async def test_price_version_lists_filter_by_kind_and_scope(http):
+    client, root, _, _ = http
+    org, _, _ = await setup_wallet(http)
+    model, deployment, sale, cost, _ = await setup_model(http, org)
+    other = await make_model(client, root, "other-model", ["openai_compatible"])
+    other_sale = await publish_price(client, root, "sale", other)
+    for kind, scope, own, foreign in [
+        ("sale", model, sale, other_sale),
+        ("cost", deployment, cost, None),
+    ]:
+        path = f"/api/v1/{kind}-price-versions"
+        listed = await client.get(path, headers=auth(root))
+        assert listed.status_code == 200, listed.text
+        rows = listed.json()["items"]
+        assert {row["kind"] for row in rows} == {kind}
+        assert own["id"] in {row["id"] for row in rows}
+        if foreign:
+            assert foreign["id"] in {row["id"] for row in rows}
+        scoped = await client.get(path, headers=auth(root), params={"scope_id": scope["id"]})
+        assert scoped.status_code == 200, scoped.text
+        assert [row["id"] for row in scoped.json()["items"]] == [own["id"]]
+        page = await client.get(path, headers=auth(root), params={"limit": 1})
+        assert page.status_code == 200 and len(page.json()["items"]) == 1, page.text
+    # A model ID is not a cost scope: each list keeps its own kind.
+    response = await client.get(
+        "/api/v1/cost-price-versions", headers=auth(root), params={"scope_id": model["id"]}
+    )
+    assert response.status_code == 200 and response.json()["items"] == []
+
+
 async def test_price_publication_order_idempotency_and_unsupported_values(http):
     client, root, app, _ = http
     org, _, _ = await setup_wallet(http)

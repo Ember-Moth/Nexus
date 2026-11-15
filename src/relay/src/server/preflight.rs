@@ -236,6 +236,11 @@ pub(super) async fn stored_response(
                     "after" | "limit" | "order" if inputs => {}
                     _ => return Err(Failure(StatusCode::BAD_REQUEST, "invalid_response_query")),
                 }
+                // Input item cursors were issued bound to this key.
+                let v = match node.ownership.open_id(key.id, &v) {
+                    Some(id) if k == "after" => id.to_owned(),
+                    _ => v.into_owned(),
+                };
                 url.query_pairs_mut().append_pair(&k, &v);
             }
         }

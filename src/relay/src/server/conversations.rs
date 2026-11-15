@@ -244,7 +244,11 @@ async fn operation(
             .map_err(|_| Failure::unavailable())?;
         seg.pop().push("conversations");
         if let Some(pid) = &pid {
-            seg.push(pid).extend(path[1..].iter().copied());
+            seg.push(pid).extend(path[1..2].iter().copied());
+            if let Some(item) = path.get(2) {
+                // Item IDs were issued bound to this key; the conversation is the key's own.
+                seg.push(node.ownership.open_id(kid, item).unwrap_or(item));
+            }
         }
     }
     if let Some(query) = parts.uri.query() {
@@ -258,6 +262,11 @@ async fn operation(
             ) {
                 return Err(invalid());
             }
+            let v = if k == "after" {
+                node.ownership.open_id(kid, &v).unwrap_or(&v).to_owned()
+            } else {
+                v.into_owned()
+            };
             url.query_pairs_mut().append_pair(&k, &v);
         }
     }

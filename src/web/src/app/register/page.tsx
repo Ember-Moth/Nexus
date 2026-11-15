@@ -89,10 +89,10 @@ export default function RegisterPage() {
     }
   });
 
-  // registration_unavailable is the code the auth hardening branch returns when sign-up is off.
+  // Closed by the platform setting, or the switch flipped while the page was open.
   const closed =
-    isApiError(error) &&
-    (CLOSED_CODES.has(error.code) || (error.status === 403 && error.code === "forbidden"));
+    options.data?.registration === false ||
+    (isApiError(error) && (CLOSED_CODES.has(error.code) || (error.status === 403 && error.code === "forbidden")));
 
   return (
     <AuthLayout>
@@ -107,16 +107,22 @@ export default function RegisterPage() {
               <Link href="/register/verify">{t("id.register.continueVerify")}</Link>
             </Button>
           </>
+        ) : closed ? (
+          <>
+            <Alert className="border-amber-200 bg-amber-50 text-amber-900">
+              <AlertTitle>{t("id.register.closed")}</AlertTitle>
+            </Alert>
+            <p className="text-[13px] text-muted-foreground">
+              {t("id.register.haveAccount")}{" "}
+              <Link href="/login" className="font-medium text-foreground underline underline-offset-3">
+                {t("id.register.loginLink")}
+              </Link>
+            </p>
+          </>
         ) : (
           <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
             {options.error ? <ErrorAlert error={options.error} title={t("id.shared.optionsUnavailable")} /> : null}
-            {closed ? (
-              <Alert className="border-amber-200 bg-amber-50 text-amber-900">
-                <AlertTitle>{t("id.register.closed")}</AlertTitle>
-              </Alert>
-            ) : error ? (
-              <ErrorAlert error={error} />
-            ) : null}
+            {error ? <ErrorAlert error={error} /> : null}
             {verification && options.data && !options.data.email_delivery_available ? (
               <Alert className="border-amber-200 bg-amber-50 text-amber-900">
                 <AlertDescription className="text-amber-900">{t("id.register.emailUnavailable")}</AlertDescription>

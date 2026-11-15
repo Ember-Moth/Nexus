@@ -122,7 +122,7 @@ export function LoginForm() {
         >
           <div className="flex flex-col gap-1.5">
             <h1 className="text-[22px] font-semibold tracking-tight">{t("login.title")}</h1>
-            <p className="text-sm text-muted-foreground">{t("login.subtitle")}</p>
+            <p className="text-sm text-muted-foreground">{options.data?.registration ? t("login.subtitleOpen") : t("login.subtitle")}</p>
           </div>
 
           {expired && !failure ? (
@@ -195,10 +195,14 @@ export function LoginForm() {
           </Button>
           <div className="h-px bg-border" />
           <p className="text-[13px] leading-relaxed text-muted-foreground">
-            <Link href="/register" className="font-medium text-foreground underline underline-offset-3">
-              {t("id.login.register")}
-            </Link>
-            {" · "}
+            {options.data?.registration ? (
+              <>
+                <Link href="/register" className="font-medium text-foreground underline underline-offset-3">
+                  {t("id.login.register")}
+                </Link>
+                {" · "}
+              </>
+            ) : null}
             {t("login.setupHint")}{" "}
             <Link href="/setup-password" className="font-medium text-foreground underline underline-offset-3">
               {t("login.setupLink")}

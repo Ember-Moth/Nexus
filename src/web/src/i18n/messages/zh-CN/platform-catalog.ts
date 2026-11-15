@@ -138,9 +138,13 @@ const pc = {
   },
   auth: {
     title: "认证设置",
-    description: "注册与找回流程的全局开关。两项默认关闭。",
+    description: "自助注册、邮箱验证与人机验证的全局开关，默认全部关闭。",
+    registration: "开放自助注册",
+    registrationHint: "关闭时注册页只显示“当前不开放自助注册”。开放注册必须同时开启邮箱验证，否则 API 会拒绝。",
+    registrationEnablesEmail: "已同时开启邮箱验证",
+    emailVerificationLocked: "开放注册期间必须开启；先关闭自助注册才能关闭它。",
     emailVerification: "邮箱验证",
-    emailVerificationHint: "开启后自助注册必须验证邮箱。需要 API 与 Worker 配置发信渠道并运行 Worker。",
+    emailVerificationHint: "注册和绑定邮箱需通过邮件中的一次性令牌确认。需要 API 与 Worker 配置发信渠道并运行 Worker。",
     turnstile: "Cloudflare Turnstile",
     turnstileHint:
       "登录、注册和找回密码时要求人机验证。需在 API 进程配置 NEXUS_TURNSTILE_SITE_KEY、NEXUS_TURNSTILE_SECRET_KEY 和 NEXUS_TURNSTILE_HOSTNAME。",

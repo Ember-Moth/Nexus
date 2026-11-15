@@ -236,6 +236,7 @@ const zhCN = {
   login: {
     title: "登录",
     subtitle: "使用管理员为你创建的账号。未开放自助注册。",
+    subtitleOpen: "使用你的账号登录。还没有账号可以自助注册。",
     login: "登录名",
     password: "密码",
     showPassword: "显示密码",

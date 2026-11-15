@@ -29,6 +29,7 @@ const en: DeepPartial<Messages> = {
   login: {
     title: "Sign in",
     subtitle: "Use the account an administrator created for you. Self sign-up is not available.",
+    subtitleOpen: "Sign in with your account, or sign up if you do not have one.",
     login: "Login",
     password: "Password",
     submit: "Sign in",

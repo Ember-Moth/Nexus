@@ -83,11 +83,12 @@ function AuthSettingsForm({
   const t = useT();
   const queryClient = useQueryClient();
   const options = useAuthOptions();
+  const [registration, setRegistration] = useState(policy.registration);
   const [emailVerification, setEmailVerification] = useState(policy.email_verification);
   const [turnstile, setTurnstile] = useState(policy.turnstile);
 
   const save = useMutation({
-    mutationFn: async (body: { email_verification: boolean; turnstile: boolean }) =>
+    mutationFn: async (body: { registration: boolean; email_verification: boolean; turnstile: boolean }) =>
       call(() =>
         nexus.PUT("/api/v1/settings/authentication", { params: { header: { "If-Match": etag } }, body }),
       ),
@@ -98,7 +99,10 @@ function AuthSettingsForm({
     },
   });
 
-  const changed = emailVerification !== policy.email_verification || turnstile !== policy.turnstile;
+  const changed =
+    registration !== policy.registration ||
+    emailVerification !== policy.email_verification ||
+    turnstile !== policy.turnstile;
   const conflict = isConflict(save.error);
   const mailReady = options.data?.email_delivery_available;
 
@@ -115,10 +119,24 @@ function AuthSettingsForm({
         <PcErrorAlert error={save.error} />
       ) : null}
       <SwitchRow
+        id="auth-registration"
+        label={t("pc.auth.registration")}
+        hint={t("pc.auth.registrationHint")}
+        checked={registration}
+        onChange={(next) => {
+          setRegistration(next);
+          // The API refuses open registration without email verification.
+          if (next) setEmailVerification(true);
+        }}
+      >
+        {registration && !policy.email_verification ? <Readiness ok text={t("pc.auth.registrationEnablesEmail")} /> : null}
+      </SwitchRow>
+      <SwitchRow
         id="auth-email-verification"
         label={t("pc.auth.emailVerification")}
-        hint={t("pc.auth.emailVerificationHint")}
+        hint={registration ? t("pc.auth.emailVerificationLocked") : t("pc.auth.emailVerificationHint")}
         checked={emailVerification}
+        disabled={registration}
         onChange={setEmailVerification}
       >
         {options.data ? (
@@ -142,7 +160,7 @@ function AuthSettingsForm({
         <Button
           type="button"
           disabled={!changed || save.isPending || conflict || reloading}
-          onClick={() => save.mutate({ email_verification: emailVerification, turnstile })}
+          onClick={() => save.mutate({ registration, email_verification: emailVerification, turnstile })}
         >
           {save.isPending ? <Spinner /> : null}
           {t("pc.auth.save")}

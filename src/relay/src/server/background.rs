@@ -294,16 +294,14 @@ pub(super) fn resume(
     upstream: reqwest::Response,
     cursor: Option<i64>,
     permit: super::tenancy::Admitted,
+    lifetime: std::time::Duration,
 ) -> axum::response::Response {
     let (tx, rx) = tokio::sync::mpsc::channel(2);
     let tasks = node.tasks.clone();
     tasks.spawn(async move {
         let _permit = (permit, stream);
-        let replayed = tokio::time::timeout(
-            node.stream_lifetime,
-            replay(&node, &binding, upstream, cursor, &tx),
-        )
-        .await;
+        let replayed =
+            tokio::time::timeout(lifetime, replay(&node, &binding, upstream, cursor, &tx)).await;
         if !matches!(replayed, Ok(Ok(()))) {
             let _ = tokio::time::timeout(
                 node.stream_idle,

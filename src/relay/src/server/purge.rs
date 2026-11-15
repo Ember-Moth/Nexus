@@ -34,7 +34,9 @@ pub(super) async fn supervise(node: Arc<Node>, stop: CancellationToken) {
         let Some(index) = node.current() else {
             continue;
         };
-        let jobs = match node.db.claim_purges(node.purge_grace_seconds, BATCH).await {
+        // The grace period comes from the snapshot the node runs, like every cluster policy.
+        let grace = index.policy.purge_grace_seconds();
+        let jobs = match node.db.claim_purges(grace, BATCH).await {
             Ok(jobs) => jobs,
             Err(error) => {
                 warn!(reason = error.reason(), "upstream purge claim failed");

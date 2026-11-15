@@ -31,15 +31,19 @@ impl Gateway {
         key: Uuid,
         revision: i64,
         organization_keys: &[Uuid],
+        (key_limit, organization_limit): (u64, u64),
     ) -> Result<Usage, ControlError> {
+        // Counts stop at the limits, which the snapshot validated to fit a bigint.
         let Json(usage): Json<Value> = self
             .call(
                 "resource_usage",
-                sqlx::query_scalar("SELECT gateway_v1.resource_usage($1,$2,$3,$4)")
+                sqlx::query_scalar("SELECT gateway_v1.resource_usage($1,$2,$3,$4,$5,$6)")
                     .bind(kind)
                     .bind(key)
                     .bind(revision)
                     .bind(organization_keys)
+                    .bind(key_limit as i64)
+                    .bind(organization_limit as i64)
                     .fetch_one(&self.pool),
             )
             .await?;

@@ -3,7 +3,7 @@ use crypto_box::SecretKey;
 use nexus_relay::{
     control::{database::Gateway, limits::Limits},
     metrics,
-    server::{Node, NodeLimits, serve, tenancy::ResourceLimits},
+    server::{Node, NodeLimits, serve},
     telemetry,
     upstream::Upstream,
 };
@@ -88,30 +88,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
             sessions: setting("NEXUS_RELAY_WS_SESSIONS", 128)?,
             sessions_per_tenant: setting("NEXUS_RELAY_WS_SESSIONS_PER_TENANT", 16)?,
             turns_per_tenant: setting("NEXUS_RELAY_WS_TURNS_PER_TENANT", 16)?,
-            max_attempts: setting("NEXUS_RELAY_MAX_ATTEMPTS", 2)?,
-            failover_budget: Duration::from_millis(setting(
-                "NEXUS_RELAY_FAILOVER_BUDGET_MS",
-                10000,
-            )?),
             requests_per_tenant: setting("NEXUS_RELAY_REQUESTS_PER_TENANT", 32)?,
             streams_per_tenant: setting("NEXUS_RELAY_STREAMS_PER_TENANT", 8)?,
-            stream_lifetime: Duration::from_secs(setting(
-                "NEXUS_RELAY_STREAM_LIFETIME_SECONDS",
-                1800,
-            )?),
-            resources: ResourceLimits {
-                per_key: setting("NEXUS_RELAY_RESOURCES_PER_KEY", 10000)?,
-                per_organization: setting("NEXUS_RELAY_RESOURCES_PER_ORGANIZATION", 100000)?,
-                vector_stores_per_key: setting("NEXUS_RELAY_VECTOR_STORES_PER_KEY", 100)?,
-                vector_stores_per_organization: setting(
-                    "NEXUS_RELAY_VECTOR_STORES_PER_ORGANIZATION",
-                    1000,
-                )?,
-            },
-            purge_grace: Duration::from_secs(setting(
-                "NEXUS_RELAY_PURGE_GRACE_SECONDS",
-                7 * 24 * 3600,
-            )?),
             purge_interval: Duration::from_millis(setting(
                 "NEXUS_RELAY_PURGE_INTERVAL_MS",
                 60_000,

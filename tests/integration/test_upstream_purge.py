@@ -18,9 +18,9 @@ async def test_revoked_key_resources_are_purged_upstream(
     relay_binary,  # noqa: F811
     monkeypatch,
 ):
-    monkeypatch.setenv("NEXUS_RELAY_PURGE_GRACE_SECONDS", "0")
+    # The purge interval is a node resource setting; the grace period and the resource counts
+    # are cluster policy and reach the node in the snapshot.
     monkeypatch.setenv("NEXUS_RELAY_PURGE_INTERVAL_MS", "200")
-    monkeypatch.setenv("NEXUS_RELAY_RESOURCES_PER_KEY", "1")
     calls = []
 
     async def provider(reader, writer):
@@ -68,9 +68,17 @@ async def test_revoked_key_resources_are_purged_upstream(
             server.sockets[0].getsockname()[1],
             "openai_compatible",
             features=["files", "conversations"],
+            cluster_policy={"purge_grace_seconds": 0},
+            resource_quotas={"resources_per_key": 1},
         ) as (relay, model, key, _, plane),
     ):
         hdr = {"authorization": f"Bearer {key}"}
+        manifest = admin.execute(
+            "SELECT manifest FROM publication.config_snapshots ORDER BY revision DESC LIMIT 1"
+        ).fetchone()[0]
+        limits = manifest["resources"]["resource_limits"]
+        assert limits["organizations"][0]["resources_per_key"] == 1
+        assert limits["organizations"][0]["resources_per_organization"] == 100000
 
         async def upload():
             return await relay.post(
@@ -82,7 +90,7 @@ async def test_revoked_key_resources_are_purged_upstream(
 
         first = await upload()
         assert first.status_code == 200 and first.json()["id"].startswith("file_nx_"), first.text
-        # Each key may hold one live resource of a kind in this test.
+        # The organization's override lets each key hold one live resource of a kind.
         over = await upload()
         assert over.status_code == 429, over.text
         assert over.json()["error"]["code"] == "resource_limit_exceeded"

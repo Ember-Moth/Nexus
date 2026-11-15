@@ -143,32 +143,21 @@ pub(super) async fn admit(node: &Node, index: &Index, key: &Key) -> Result<Admit
     })
 }
 
-/// Live resources a key may own of one kind, per key and per organization.
-#[derive(Clone, Copy)]
-pub struct ResourceLimits {
-    pub per_key: u64,
-    pub per_organization: u64,
-    pub vector_stores_per_key: u64,
-    pub vector_stores_per_organization: u64,
-}
-
 /// Refuse a creation that would exceed the key's or the organization's resource count.
+///
+/// The limits come from the snapshot: the platform defaults, or the organization's own
+/// override. The database counts no further than them.
 pub(super) async fn room(
     node: &Node,
     index: &Index,
     key: &Key,
     kind: &'static str,
 ) -> Result<(), Failure> {
-    let l = node.resource_limits;
-    let (per_key, per_org) = if kind == "vector_store" {
-        (l.vector_stores_per_key, l.vector_stores_per_organization)
-    } else {
-        (l.per_key, l.per_organization)
-    };
+    let (per_key, per_org) = index.resource_limits(key.organization_id).of(kind);
     let keys = index.organization_keys(key.organization_id);
     let usage = node
         .db
-        .resource_usage(kind, key.id, index.revision, &keys)
+        .resource_usage(kind, key.id, index.revision, &keys, (per_key, per_org))
         .await?;
     if usage.key >= per_key || usage.organization >= per_org {
         return Err(Failure(

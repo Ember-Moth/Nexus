@@ -6,6 +6,10 @@
 
 从仓库根目录执行 `cargo build --release --locked --manifest-path src/relay/Cargo.toml`，生成 `src/relay/target/release/nexus-relay`。节点通过 HTTP/1.1 提供生成端点 `POST /v1/messages`、`POST /v1/responses` 和 `POST /v1/chat/completions`，压缩端点 `POST /v1/responses/compact`，以及 `GET /v1/responses` Upgrade。生成端点支持普通 JSON 和 `stream=true` 的 SSE。Upgrade 建立串行多轮会话，首轮准入后才拨部署的 WSS。对外 TLS 由入口负载均衡终止，`GET /live` 和 `GET /ready` 分别提供存活和就绪状态。Prometheus 指标在独立的指标监听上提供，日志为 stderr 上逐行 JSON，字段、指标清单和探针用法见[Relay 可观测性](operations.md#relay-可观测性)。
 
+### 运行配置
+
+环境变量只放节点的启动参数、凭据和本节点的资源上限。标注“单节点”的租户公平性上限由每个节点独立计数，保护本节点的容量；它们不是集群级配额，节点数变化时企业能用的总量随之变化。集群级配额（RPM、TPM、并发、资源数量）和集群策略由控制平面保存并随快照下发，见下文[集群策略](#集群策略)。
+
 | 环境变量 | 节点配置 |
 | --- | --- |
 | `NEXUS_RELAY_DATABASE_URL` | 节点专属 PostgreSQL 登录的连接 URL，使用已登记的 gateway principal |
@@ -17,15 +21,26 @@
 | `NEXUS_RELAY_REQUEST_BYTES`、`NEXUS_RELAY_RESPONSE_BYTES` | 默认请求上限 2 MiB，解压后非流式响应上限 8 MiB |
 | `NEXUS_RELAY_CONCURRENCY`、`NEXUS_RELAY_LEASE_MS` | 默认最多 128 个并发任务，Redis 租期默认 15000 毫秒，范围 100 至 60000 毫秒 |
 | `NEXUS_RELAY_EVENT_BYTES`、`NEXUS_RELAY_STREAM_IDLE_MS` | 每个 SSE 事件和 WS 消息默认上限 1 MiB，上游事件和下游写出空闲时限默认 30000 毫秒 |
-| `NEXUS_RELAY_WS_SESSIONS`、`NEXUS_RELAY_WS_SESSIONS_PER_TENANT`、`NEXUS_RELAY_WS_TURNS_PER_TENANT` | 单节点默认最多 128 个会话，同一企业在该节点默认最多 16 个会话和 16 个活跃轮次。跨节点生成额度由 Redis 控制 |
-| `NEXUS_RELAY_MAX_ATTEMPTS` | HTTP/SSE 生成每个请求最多尝试的次数，默认 2，范围 1 至 4；1 表示关闭故障转移 |
-| `NEXUS_RELAY_FAILOVER_BUDGET_MS` | 首次尝试开始后仍可发起新尝试的时限，默认 10000 毫秒，范围 100 至 60000 毫秒；不截断已在执行的尝试 |
-| `NEXUS_RELAY_REQUESTS_PER_TENANT` | 同一企业在该节点同时占用的 HTTP 请求数，默认 32，覆盖生成和资源接口。超出返回 429 `tenant_concurrency_limit` |
-| `NEXUS_RELAY_STREAMS_PER_TENANT`、`NEXUS_RELAY_STREAM_LIFETIME_SECONDS` | 同一企业在该节点同时续读的已存储 response 流数，默认 8，超出返回 429 `stream_limit`；续读流最长保持 1800 秒 |
-| `NEXUS_RELAY_RESOURCES_PER_KEY`、`NEXUS_RELAY_RESOURCES_PER_ORGANIZATION` | 每个 Key、每个企业在本集群可持有的文件、会话、容器、批处理的数量，分别计数，默认 10000 和 100000。创建超限返回 429 `resource_limit_exceeded` |
-| `NEXUS_RELAY_VECTOR_STORES_PER_KEY`、`NEXUS_RELAY_VECTOR_STORES_PER_ORGANIZATION` | 向量库的同类上限，默认 100 和 1000 |
-| `NEXUS_RELAY_PURGE_GRACE_SECONDS` | Key 撤销、过期或企业、项目、服务账户停用后，删除其上游资源前的宽限期，默认 604800 秒（7 天），0 表示下一轮即删除。`NEXUS_RELAY_PURGE_INTERVAL_MS` 设置节点调度和执行清理的间隔，默认 60000 毫秒 |
+| `NEXUS_RELAY_WS_SESSIONS`、`NEXUS_RELAY_WS_SESSIONS_PER_TENANT`、`NEXUS_RELAY_WS_TURNS_PER_TENANT` | 单节点：默认最多 128 个会话，同一企业在该节点默认最多 16 个会话和 16 个活跃轮次。跨节点生成额度由 Redis 控制 |
+| `NEXUS_RELAY_REQUESTS_PER_TENANT` | 单节点：同一企业在该节点同时占用的 HTTP 请求数，默认 32，覆盖生成和资源接口。超出返回 429 `tenant_concurrency_limit` |
+| `NEXUS_RELAY_STREAMS_PER_TENANT` | 单节点：同一企业在该节点同时续读的已存储 response 流数，默认 8，超出返回 429 `stream_limit` |
+| `NEXUS_RELAY_PURGE_INTERVAL_MS` | 节点调度和执行上游清理的间隔，默认 60000 毫秒 |
 | `NEXUS_RELAY_UPSTREAM_CA` | 可选的 PEM 根证书路径，用于拥有专用 CA 的 HTTPS 部署 |
+
+### 集群策略
+
+以下取值对一个集群的所有节点相同，不是环境变量：由控制平面保存、随配置快照下发。
+
+| 字段 | 修改位置 | 含义与默认值 |
+| --- | --- | --- |
+| `relay.max_attempts` | 平台默认值 `PUT /api/v1/settings/cluster-defaults`，单个集群覆盖 `PUT /api/v1/gateway-clusters/{cluster_id}/policy` | HTTP/SSE 生成每个请求最多尝试的次数，默认 2，范围 1 至 4；1 表示关闭故障转移 |
+| `relay.failover_budget_ms` | 同上 | 首次尝试开始后仍可发起新尝试的时限，默认 10000 毫秒，范围 100 至 60000 毫秒；不截断已在执行的尝试 |
+| `relay.stream_lifetime_seconds` | 同上 | 续读的已存储 response 流最长保持时间，默认 1800 秒 |
+| `relay.purge_grace_seconds` | 同上 | Key 撤销、过期或企业、项目、服务账户停用后，删除其上游资源前的宽限期，默认 604800 秒（7 天），0 表示下一轮即删除 |
+| `resources_per_key`、`resources_per_organization` | 平台默认值 `PUT /api/v1/settings/resource-quotas`；企业覆盖为平台层、整个企业范围的同名 quota policy | 每个 Key、每个企业在本集群可持有的文件、会话、容器、批处理的数量，分别计数，默认 10000 和 100000。创建超限返回 429 `resource_limit_exceeded` |
+| `vector_stores_per_key`、`vector_stores_per_organization` | 同上 | 向量库的同类上限，默认 100 和 1000 |
+
+快照里的 `resources.cluster_policy` 和 `resources.resource_limits` 只在生效值不等于上表默认值时出现，此时发布要求节点能力 `relay.cluster-policy.v1`。没有这两项的快照按节点内置的上表默认值运行。资源计数调用 `gateway_v1.resource_usage(kind, key, revision, keys, key_limit, organization_limit)`，数据库数到上限即停止。节点在应用新修订后立即使用新策略；已经开始的请求和续读流沿用开始时的修订。
 
 在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 或 `websocket` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认使用 `store=false`，省略输出限制时使用部署上限。已存储 response、后台运行、会话、文件、向量库、批处理、代码执行、远程 MCP、Web Fetch 和 Web Search 默认关闭，须在 `provider_features` 中逐项启用。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。旧部署保留原配置，声明端点后才参与原生转发。
 
@@ -87,13 +102,13 @@ Messages 使用工具定义中的 `max_uses`，Responses 使用请求级 `max_to
 
 节点约每分钟读取供应商报告的 `usage_bytes`，文件变更后会安排读取。企业存储费按上一次成功观测的字节数乘以持续秒数计算，在 UTC 日期交界或存储终止时分单。相邻、字节数相同且观测连续的时段合并保留，可按时段重算每日总量。已知到期时间用于截断计量。用量按创建时冻结的销售价、组织折扣和部署采购价计算。供应商账户共享的免费额度留给采购对账。连续观测相隔超过五分钟、轮询失败或资源意外消失，涉及时段转入核对。余额或预算不足时保留待结算记录，后续补足后可继续处理。
 
-**存储预付。** 存储费在发生前预留。Worker 为每个未关闭的存储保持一个预付预留，覆盖从现在到 `NEXUS_VECTOR_STORAGE_PREPAID_DAYS` 天后（默认 7，范围 1–31），按最近观测字节数的 125% 计算；剩余不足四分之三、观测字节数超出预付字节数或预留临近 24 小时有效期时续期。续期把旧预留释放并在同一事务中预留新窗口，因此钱包只需补足差额。每个 UTC 日结算时，先释放预付预留以支付当日实际费用，再为剩余窗口重新预留。存储关闭（删除、到期或供应商确认不存在）时释放预付预留。创建后、首次观测前约两分钟内写入的字节，在首次观测后补足预留。
+**存储预付。** 存储费在发生前预留。Worker 为每个未关闭的存储保持一个预付预留，覆盖从现在到账务策略 `vector_storage.prepaid_days` 天后（默认 7，范围 1–31），按最近观测字节数的 125% 计算；剩余不足四分之三、观测字节数超出预付字节数或预留临近 24 小时有效期时续期。续期把旧预留释放并在同一事务中预留新窗口，因此钱包只需补足差额。每个 UTC 日结算时，先释放预付预留以支付当日实际费用，再为剩余窗口重新预留。存储关闭（删除、到期或供应商确认不存在）时释放预付预留。创建后、首次观测前约两分钟内写入的字节，在首次观测后补足预留。
 
 **续期失败与失效策略。** 余额、预算或账户状态导致续期失败时：
 
 1. 立即停止新写入：添加文件、批量添加文件和修改到期设置返回 402。读取和检索继续可用。
 2. 已有预留按观测字节数折算可覆盖的时长，预付到期时间相应提前，例如字节数翻倍则剩余时长减半。Worker 每 5 分钟重试；补足资金后续期成功，恢复写入。
-3. 预付到期仍未续期时，存储失效，按 `NEXUS_VECTOR_STORAGE_LAPSE_POLICY` 处理：
+3. 预付到期仍未续期时，存储失效，按账务策略 `vector_storage.lapse_policy` 处理：
    - `delete`（默认）：存储对客户只接受删除；轮询节点删除供应商存储，供应商停止计费，已发生的天数照常结算。数据不可恢复。
    - `suspend`：存储对客户只接受删除，但数据保留在供应商侧。存储费继续发生且没有预留，按日记为待结算记录，余额不足时转入核对；适合需要人工决定的部署，敞口由运营方控制。续期成功后恢复使用。
 
@@ -166,7 +181,7 @@ Relay 分别核对 `usage.iterations` 中的 `message` 与 `compaction`。顶层
 
 在路由策略中为同一模型配置多个候选并设置 priority 和 weight。故障转移只在请求授权时的快照内挑选，先用完同组剩余权重再降组；候选的输入上界须不超过首次预留，输出上限须能容纳已预留的输出。每个候选都需要已发布的成本价，并在网关集群的部署范围内。每次重发都提交新的尝试，Worker 只对最终交付的尝试向客户收费；没有用量的失败尝试单独进入成本核对。
 
-运行 `cargo test --locked --manifest-path src/relay/Cargo.toml --test failover` 验证候选选择与错误分类。运行 `uv run python scripts/run_integration.py -q tests/integration/test_relay_failover.py`，用两个本地 TLS 上游验证 503 与拒绝连接后的切换、SSE 切换、发送后读超时、SSE 输出后断流、全部候选失败及 `NEXUS_RELAY_MAX_ATTEMPTS=1` 的原有行为，并核对尝试记录、单笔扣费、独立成本和预留释放。用例包含一次 30 秒的上游响应头等待。
+运行 `cargo test --locked --manifest-path src/relay/Cargo.toml --test failover` 验证候选选择与错误分类。运行 `uv run python scripts/run_integration.py -q tests/integration/test_relay_failover.py`，用两个本地 TLS 上游验证 503 与拒绝连接后的切换、SSE 切换、发送后读超时、SSE 输出后断流、全部候选失败及集群策略 `relay.max_attempts` 为 1 时的原有行为，并核对尝试记录、单笔扣费、独立成本和预留释放。用例包含一次 30 秒的上游响应头等待。
 
 ## Bedrock Converse 上游
 

@@ -6,7 +6,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::{ControlError, credential::CredentialRef, database::Snapshot};
+use super::{
+    ControlError,
+    credential::CredentialRef,
+    database::Snapshot,
+    policy::{self, ClusterPolicy, ResourceLimits, ResourceSection, ResourceTable},
+};
 use crate::protocol::{
     Endpoint, cache,
     features::{Feature, Features},
@@ -43,6 +48,7 @@ pub const CAPABILITIES: &[&str] = &[
     "relay.code-execution.v1",
     "relay.remote-mcp.v1",
     "relay.web-fetch.v1",
+    policy::CAPABILITY,
 ];
 
 #[derive(Deserialize)]
@@ -289,6 +295,12 @@ struct Resources {
     quota_policies: Vec<Quota>,
     routes: Vec<Route>,
     credential_refs: Vec<CredentialRef>,
+    /// Present only once the cluster policy differs from the built-in defaults.
+    #[serde(default)]
+    cluster_policy: Option<ClusterPolicy>,
+    /// Present only once resource counts differ from the built-in defaults.
+    #[serde(default)]
+    resource_limits: Option<ResourceSection>,
 }
 
 pub struct Index {
@@ -303,6 +315,9 @@ pub struct Index {
     policies: HashMap<Uuid, Vec<Access>>,
     pub quotas: Vec<Quota>,
     pub credentials: HashMap<Uuid, CredentialRef>,
+    /// Failover, stream lifetime and purge grace of every request served from this snapshot.
+    pub policy: ClusterPolicy,
+    resources: ResourceTable,
 }
 
 fn unique<K: Eq + std::hash::Hash, V>(
@@ -416,8 +431,13 @@ impl Selection<'_> {
 
 impl Index {
     pub fn build(snapshot: &mut Snapshot) -> Result<Self, ControlError> {
-        let r: Resources = serde_json::from_value(snapshot.resources.take())
+        let mut r: Resources = serde_json::from_value(snapshot.resources.take())
             .map_err(|_| ControlError::Invalid("resource schema"))?;
+        let (policy, resources) = policy::install(
+            r.cluster_policy.take(),
+            r.resource_limits.take(),
+            &snapshot.required_capabilities,
+        )?;
         let mut index = Self {
             cluster: snapshot.cluster_id,
             node: snapshot.node_id,
@@ -430,6 +450,8 @@ impl Index {
             policies: HashMap::new(),
             quotas: r.quota_policies,
             credentials: HashMap::new(),
+            policy,
+            resources,
         };
         let mut models = HashMap::new();
         for model in &r.models {
@@ -773,6 +795,10 @@ impl Index {
                 .deployments
                 .get(&dep)
                 .is_some_and(|d| d.model_id == model)
+    }
+    /// Resource count limits of an organization in this snapshot.
+    pub fn resource_limits(&self, organization: Uuid) -> ResourceLimits {
+        self.resources.get(organization)
     }
     /// API keys of an organization in this snapshot.
     pub fn organization_keys(&self, organization: Uuid) -> Vec<Uuid> {

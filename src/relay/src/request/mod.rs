@@ -436,7 +436,7 @@ pub async fn run(
         }
     };
     let frozen = selected.bounds;
-    let deadline = run.retry_deadline(node.failover_budget);
+    let deadline = run.retry_deadline(index.policy.failover_budget());
     let mut failed = Vec::new();
     let limit = node.upstream.response_limit();
     let transport = if request.stream {
@@ -523,7 +523,7 @@ pub async fn run(
                 // The gate checks the same conditions in the same order and names the one
                 // that stopped failover.
                 // Background and Code Interpreter requests keep their single attempt.
-                let gate = if run.attempts() >= node.max_attempts
+                let gate = if run.attempts() >= index.policy.max_attempts()
                     || request.background()
                     || request.interpreter.is_some()
                 {

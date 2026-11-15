@@ -175,7 +175,7 @@ fn first_byte_histogram() -> Histogram {
 }
 
 fn attempts_histogram() -> Histogram {
-    // NEXUS_RELAY_MAX_ATTEMPTS is at most 4.
+    // The cluster policy allows at most 4 attempts.
     Histogram::new([1.0, 2.0, 3.0, 4.0])
 }
 

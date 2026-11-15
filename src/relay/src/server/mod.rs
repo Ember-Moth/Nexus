@@ -65,26 +65,14 @@ pub struct NodeLimits {
     pub sessions: usize,
     pub sessions_per_tenant: usize,
     pub turns_per_tenant: usize,
-    /// Attempts per HTTP generation; 1 disables failover.
-    pub max_attempts: usize,
-    /// No further attempt starts once this much time has passed since the first one.
-    pub failover_budget: Duration,
-    /// Concurrent HTTP requests one organization may hold on this node.
+    /// Concurrent HTTP requests one organization may hold on this node. This and the other
+    /// per-tenant limits protect one node's capacity; they are not cluster-wide quotas.
     pub requests_per_tenant: usize,
     /// Concurrent resumed response streams one organization may hold on this node.
     pub streams_per_tenant: usize,
-    /// Longest time a resumed response stream may stay open.
-    pub stream_lifetime: Duration,
-    /// Live resources per key and organization, by kind.
-    pub resources: tenancy::ResourceLimits,
-    /// How long a key stays unusable before its upstream copies are deleted.
-    pub purge_grace: Duration,
     /// How often the node schedules and runs upstream purges.
     pub purge_interval: Duration,
 }
-
-/// Bounds for `NodeLimits::max_attempts`.
-pub const MAX_ATTEMPTS: std::ops::RangeInclusive<usize> = 1..=4;
 
 pub struct Node {
     pub(crate) db: Gateway,
@@ -96,13 +84,8 @@ pub struct Node {
     pub(crate) lease_ms: u32,
     pub(crate) stream_idle: Duration,
     pub(crate) event_bytes: usize,
-    pub(crate) max_attempts: usize,
-    pub(crate) failover_budget: Duration,
     pub(crate) tenant_requests: Arc<tenancy::TenantSlots>,
     pub(crate) tenant_streams: Arc<tenancy::TenantSlots>,
-    pub(crate) stream_lifetime: Duration,
-    pub(crate) resource_limits: tenancy::ResourceLimits,
-    pub(crate) purge_grace_seconds: i32,
     pub(crate) purge_interval: Duration,
     cluster: Uuid,
     healthy: AtomicBool,
@@ -132,13 +115,8 @@ impl Node {
             sessions,
             sessions_per_tenant,
             turns_per_tenant,
-            max_attempts,
-            failover_budget,
             requests_per_tenant,
             streams_per_tenant,
-            stream_lifetime,
-            resources,
-            purge_grace,
             purge_interval,
         } = limits_config;
         if stream_idle.is_zero()
@@ -151,19 +129,8 @@ impl Node {
             || !(100..=60_000).contains(&lease_ms)
             || capacity == 0
             || capacity > Semaphore::MAX_PERMITS
-            || !MAX_ATTEMPTS.contains(&max_attempts)
-            || !(Duration::from_millis(100)..=Duration::from_secs(60)).contains(&failover_budget)
             || requests_per_tenant == 0
             || streams_per_tenant == 0
-            || stream_lifetime.is_zero()
-            || [
-                resources.per_key,
-                resources.per_organization,
-                resources.vector_stores_per_key,
-                resources.vector_stores_per_organization,
-            ]
-            .contains(&0)
-            || purge_grace > Duration::from_secs(i32::MAX as u64)
             || !(Duration::from_millis(100)..=Duration::from_secs(86400)).contains(&purge_interval)
         {
             return Err(ControlError::Invalid("node limits"));
@@ -181,13 +148,8 @@ impl Node {
             cluster,
             stream_idle,
             event_bytes,
-            max_attempts,
-            failover_budget,
             tenant_requests: tenancy::TenantSlots::new(requests_per_tenant),
             tenant_streams: tenancy::TenantSlots::new(streams_per_tenant),
-            stream_lifetime,
-            resource_limits: resources,
-            purge_grace_seconds: purge_grace.as_secs() as i32,
             purge_interval,
             healthy: AtomicBool::new(false),
             index: RwLock::new(None),

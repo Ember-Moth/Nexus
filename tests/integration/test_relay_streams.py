@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 from pg_receipt import lose_gateway_receipts
+from policies import put_overrides
 from test_billing import account_amounts, headers, make_budget
 from test_identity_api import auth
 from test_plane import provision_plane
@@ -59,8 +60,14 @@ async def stream_plane(
     auto_cache=False,
     cache_rates=None,
     features=(),
+    cluster_policy=None,
+    resource_quotas=None,
 ):
-    """Provision a relay plane. `features` lists the provider features the deployment enables."""
+    """Provision a relay plane. `features` lists the provider features the deployment enables.
+
+    `cluster_policy` sets Relay policy values and `resource_quotas` overrides resource counts for
+    the organization; either one makes the release require relay.cluster-policy.v1.
+    """
     client, root, app, settings = http
     async with provision_plane(
         http,
@@ -125,6 +132,8 @@ async def stream_plane(
         ]
         if ws:
             caps.append("relay.responses-ws.v1")
+        if cluster_policy or resource_quotas:
+            caps.append("relay.cluster-policy.v1")
         r = await client.put(
             f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
             headers=auth(root),
@@ -174,6 +183,16 @@ async def stream_plane(
             json={"limit_value": 1},
         )
         assert r.status_code == 201, r.text
+        if cluster_policy:
+            await put_overrides(client, root, cid, {"relay": cluster_policy})
+        for metric, value in (resource_quotas or {}).items():
+            r = await client.put(
+                f"/api/v1/organizations/{org['id']}/quota-policies"
+                f"/platform/organization/{org['id']}/{metric}",
+                headers=auth(root),
+                json={"limit_value": value},
+            )
+            assert r.status_code == 201, r.text
         r = await client.post(
             f"/api/v1/gateway-clusters/{cid}/releases", headers=headers(root, "p3"), json={}
         )

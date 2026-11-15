@@ -311,6 +311,7 @@ pub(super) async fn stored_response(
                 response,
                 cursor,
                 permit,
+                index.policy.stream_lifetime(),
             ));
         }
         let bytes = read_body(response, node.upstream.response_limit())

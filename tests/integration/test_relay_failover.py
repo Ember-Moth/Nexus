@@ -5,10 +5,11 @@ import json
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from policies import put_overrides
 from test_billing import headers, make_budget, publish_price
 from test_catalog import make_deployment, make_upstream
 from test_identity_api import auth
@@ -206,6 +207,7 @@ async def failover_plane(http, admin, ports, family="anthropic"):
             "relay.native.v1",
             "relay.provider-features.v1",
             "relay.sse.v1",
+            "relay.cluster-policy.v1",
         ]
         r = await client.put(
             f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
@@ -222,6 +224,21 @@ async def failover_plane(http, admin, ports, family="anthropic"):
         while await app.state.publication.distribute():
             pass
         yield plane, UUID(first["id"]), UUID(second["id"])
+
+
+async def release_policy(http, cid, **relay):
+    """Override the cluster's Relay policy and release it; a node started afterwards applies it."""
+    client, root, app, _ = http
+    await put_overrides(client, root, cid, {"relay": relay})
+    released = await client.post(
+        f"/api/v1/gateway-clusters/{cid}/releases",
+        headers=headers(root, "policy-" + uuid4().hex),
+        json={},
+    )
+    assert released.status_code == 202, released.text
+    while await app.state.publication.distribute():
+        pass
+    return released.json()["revision"]
 
 
 class Ledger:
@@ -317,8 +334,16 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
         def relay():
             return running_relay(relay_binary, peer, private, cid, settings, tls[1], info.port)
 
-        # One attempt is the previous behavior: the primary's 503 reaches the client.
-        monkeypatch.setenv("NEXUS_RELAY_MAX_ATTEMPTS", "1")
+        # One attempt is the previous behavior: the primary's 503 reaches the client. The
+        # cluster policy carries it to the node in the snapshot.
+        await release_policy(http, cid, max_attempts=1)
+        manifest = admin.execute(
+            "SELECT manifest FROM publication.config_snapshots WHERE cluster_id=%s "
+            "ORDER BY revision DESC LIMIT 1",
+            (cid,),
+        ).fetchone()[0]
+        assert manifest["resources"]["cluster_policy"]["max_attempts"] == 1
+        assert "relay.cluster-policy.v1" in manifest["required_capabilities"]
         async with relay() as client:
             result = await client.post("/v1/messages", headers=hdr, json=body("busy"))
             assert result.status_code == 503 and result.json() == OVERLOADED
@@ -329,7 +354,8 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             assert second_upstream.received == []
             assert (await ledger.status(rid))["reservation_state"] == "released"
 
-        monkeypatch.setenv("NEXUS_RELAY_MAX_ATTEMPTS", "2")
+        # Following the defaults again, the snapshot carries no policy; nodes use their own.
+        await release_policy(http, cid, max_attempts=None)
         async with relay() as client:
             # The primary receives this POST and never answers. A read timeout after the
             # request was sent may follow execution, so it is never sent again.
@@ -488,7 +514,7 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
 
         # One attempt sends no backup, but a refused connection was provably never sent:
         # the attempt fails and the reservation is released instead of waiting for review.
-        monkeypatch.setenv("NEXUS_RELAY_MAX_ATTEMPTS", "1")
+        await release_policy(http, cid, max_attempts=1)
         async with relay() as client:
             calls = len(second_upstream.received)
             result = await client.post("/v1/messages", headers=hdr, json=body("refused"))
@@ -513,7 +539,6 @@ async def test_failover_rechecks_after_attempt_commit(
 ):  # noqa: F811
     # Delay only the first attempt's evidence, after attempt two has committed.
     # This is the window between fallback selection and the actual backup POST.
-    monkeypatch.setenv("NEXUS_RELAY_FAILOVER_BUDGET_MS", "200" if gate == "budget" else "10000")
     one = Double("primary", tls[0], primary)
     two = Double("backup", tls[0], backup)
     await one.start()
@@ -521,6 +546,8 @@ async def test_failover_rechecks_after_attempt_commit(
     try:
         async with failover_plane(http, admin, (one.port, two.port)) as (plane, first, second):
             peer, private, _, model, _, _, key, cid = plane
+            if gate == "budget":
+                await release_policy(http, cid, failover_budget_ms=200)
             ledger = Ledger(admin, peer)
             async with running_relay(
                 relay_binary, peer, private, cid, http[3], tls[1], peer.connection.info.port
@@ -660,7 +687,6 @@ async def test_documented_quota_rejections_switch_and_unknown_429_releases(
     two = Double("backup", tls[0], answered)
     await one.start()
     await two.start()
-    monkeypatch.setenv("NEXUS_RELAY_MAX_ATTEMPTS", "2")
     try:
         async with failover_plane(http, admin, (one.port, two.port), "openai_compatible") as (
             plane,

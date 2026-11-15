@@ -427,45 +427,40 @@ class PaymentRepository(BillingRepository):
             total += receipt.amount - min(receipt.amount, reversed_amount)
         return wallet_value(order, total)
 
-    async def reconcile(self, account):
-        issues = await super().reconcile(account)
-        orders = (
-            (
-                await self._session.execute(
-                    select(m.PaymentOrder).where(m.PaymentOrder.account_id == account.id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for order in orders:
-            if order.credit_state != "credited":
-                if order.funding_record_id or order.ledger_entry_id:
+    async def examine(self, account, verified=0):
+        issues, through = await super().examine(account, verified)
+        # A credited order needs its posted funding record, ledger entry and receipt to agree.
+        for row in await self._session.execute(
+            text("""
+            SELECT o.id,o.credit_state='credited' AS credited,
+              o.funding_record_id IS NOT NULL OR o.ledger_entry_id IS NOT NULL AS linked,
+              coalesce(f.id IS NOT NULL AND e.id IS NOT NULL
+                AND f.payment_order_id IS NOT DISTINCT FROM o.id
+                AND f.amount IS NOT DISTINCT FROM o.credit_amount AND f.status='posted'
+                AND e.source_id=f.id AND e.signed_amount IS NOT DISTINCT FROM o.credit_amount,
+                false) AS funded,
+              coalesce(c.id IS NOT NULL AND c.order_id IS NOT DISTINCT FROM o.id
+                AND c.transaction_id IS NOT DISTINCT FROM f.external_reference
+                AND c.receipt_namespace IS NOT DISTINCT FROM f.receipt_namespace
+                AND c.amount IS NOT DISTINCT FROM o.collection_amount
+                AND c.currency IS NOT DISTINCT FROM o.collection_currency,false) AS receipted
+            FROM billing.payment_orders o
+            LEFT JOIN billing.funding_records f
+              ON f.id=o.funding_record_id AND f.organization_id=o.organization_id
+            LEFT JOIN billing.ledger_entries e
+              ON e.id=o.ledger_entry_id AND e.organization_id=o.organization_id
+            LEFT JOIN billing.payment_receipts c ON c.id=f.payment_receipt_id
+            WHERE o.account_id=:account ORDER BY o.created_at,o.id
+        """),
+            {"account": account.id},
+        ):
+            if not row.credited:
+                if row.linked:
                     issues.append(
-                        {"kind": "uncredited_payment_has_funding", "order_id": str(order.id)}
+                        {"kind": "uncredited_payment_has_funding", "order_id": str(row.id)}
                     )
-                continue
-            funding = await self.get("funding", order.funding_record_id, order.organization_id)
-            entry = await self.get("ledger", order.ledger_entry_id, order.organization_id)
-            if (
-                funding is None
-                or entry is None
-                or funding.payment_order_id != order.id
-                or funding.amount != order.credit_amount
-                or funding.status != "posted"
-                or entry.source_id != funding.id
-                or entry.signed_amount != order.credit_amount
-            ):
-                issues.append({"kind": "payment_funding", "order_id": str(order.id)})
-                continue
-            receipt = await self.get("payment_receipt", funding.payment_receipt_id)
-            if (
-                receipt is None
-                or receipt.order_id != order.id
-                or receipt.transaction_id != funding.external_reference
-                or receipt.receipt_namespace != funding.receipt_namespace
-                or receipt.amount != order.collection_amount
-                or receipt.currency != order.collection_currency
-            ):
-                issues.append({"kind": "payment_receipt", "order_id": str(order.id)})
-        return issues
+            elif not row.funded:
+                issues.append({"kind": "payment_funding", "order_id": str(row.id)})
+            elif not row.receipted:
+                issues.append({"kind": "payment_receipt", "order_id": str(row.id)})
+        return issues, through

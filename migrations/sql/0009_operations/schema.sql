@@ -59,9 +59,25 @@ CREATE TABLE billing.case_decisions (
  action text NOT NULL,reason text NOT NULL,evidence text NOT NULL,parameters jsonb NOT NULL,
  result jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+-- One row per account. The Worker claims a due row for a lease, checks the account against a
+-- read-only snapshot and records the result; ledger_sequence is the ledger prefix that passed the
+-- per-entry checks, so the next check starts after it.
 CREATE TABLE billing.account_checks (
- organization_id uuid PRIMARY KEY,checked_at timestamptz NOT NULL,differences integer NOT NULL
+ organization_id uuid PRIMARY KEY,checked_at timestamptz NOT NULL DEFAULT '-infinity',
+ differences integer NOT NULL DEFAULT 0,ledger_sequence bigint NOT NULL DEFAULT 0,
+ claim uuid,claimed_until timestamptz
 );
+CREATE INDEX account_checks_due ON billing.account_checks(checked_at);
+CREATE FUNCTION billing.track_account_check() RETURNS trigger LANGUAGE plpgsql
+ SET search_path=pg_catalog,pg_temp AS $$
+BEGIN
+ INSERT INTO billing.account_checks(organization_id) VALUES(NEW.organization_id)
+ ON CONFLICT(organization_id) DO NOTHING;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER account_check AFTER INSERT ON billing.accounts
+ FOR EACH ROW EXECUTE FUNCTION billing.track_account_check();
+INSERT INTO billing.account_checks(organization_id) SELECT organization_id FROM billing.accounts;
 CREATE TABLE billing.cost_corrections (
  id uuid PRIMARY KEY,attempt_id uuid NOT NULL REFERENCES billing.request_attempts,
  decision_id uuid NOT NULL UNIQUE,amount numeric(28,12) NOT NULL CHECK(amount>=0 AND amount<>'NaN'::numeric),

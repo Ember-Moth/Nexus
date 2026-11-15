@@ -51,24 +51,53 @@ class OperationsRepository(PaymentRepository):
             else None,
         }
 
-    async def check_account(self):
-        rows = await self.rows("""
-                SELECT a.* FROM billing.accounts a LEFT JOIN billing.account_checks c
-         ON c.organization_id=a.organization_id WHERE c.checked_at IS NULL OR c.checked_at
-         <clock_timestamp()-interval '1 hour'
-         ORDER BY c.checked_at NULLS FIRST,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED""")
-        if not rows:
-            return 0
-        org = rows[0]["organization_id"]
-        account = await self.account(org)
-        issues = await self.reconcile(account)
-        await self.execute(
-            """INSERT INTO billing.account_checks VALUES(:org,clock_timestamp(),:n)
-            ON CONFLICT(organization_id) DO UPDATE SET checked_at=excluded.checked_at,
-            differences=excluded.differences""",
-            org=org,
-            n=len(issues),
+    async def claim_account_check(self, lease_seconds):
+        """Claim the most overdue account check for ``lease_seconds``; None when none is due.
+
+        Only the account's ``account_checks`` row is locked, with SKIP LOCKED and until this
+        short transaction commits. The lease keeps other Workers away while the check itself
+        runs in a separate read-only snapshot; a Worker that dies leaves it to expire.
+        """
+        rows = await self.rows(
+            """
+            UPDATE billing.account_checks SET claim=gen_random_uuid(),
+              claimed_until=clock_timestamp()+make_interval(secs=>:lease)
+            WHERE organization_id=(SELECT organization_id FROM billing.account_checks
+              WHERE checked_at<clock_timestamp()-interval '1 hour'
+                AND (claimed_until IS NULL OR claimed_until<clock_timestamp())
+              ORDER BY checked_at,organization_id LIMIT 1 FOR UPDATE SKIP LOCKED)
+            RETURNING organization_id,claim,ledger_sequence""",
+            lease=lease_seconds,
         )
+        return rows[0] if rows else None
+
+    async def account_case_version(self, account_id):
+        """The version of the account's reconciliation case, or None if it has none."""
+        rows = await self.rows(
+            """SELECT version FROM billing.review_cases
+            WHERE source_type='account' AND source_id=:id""",
+            id=account_id,
+        )
+        return rows[0]["version"] if rows else None
+
+    async def record_account_check(self, claim, account_id, issues, through, case_version):
+        """Store a check's result if the claim is still held; False when the lease was lost.
+
+        The differences come from a snapshot taken after the claim. ``case_version`` is the
+        account case as that snapshot saw it: a case resolved or rewritten since then is left
+        alone, so an older snapshot cannot reopen a case that was resolved after a fix.
+        """
+        recorded = await self.rows(
+            """UPDATE billing.account_checks SET checked_at=clock_timestamp(),differences=:n,
+            ledger_sequence=:through,claim=NULL,claimed_until=NULL
+            WHERE organization_id=:org AND claim=:claim RETURNING organization_id""",
+            org=claim["organization_id"],
+            claim=claim["claim"],
+            n=len(issues),
+            through=through,
+        )
+        if not recorded:
+            return False
         if issues:
             await self.execute(
                 """
@@ -77,12 +106,14 @@ class OperationsRepository(PaymentRepository):
               VALUES(:org,'account',:acct,'reconciliation_difference',cast(:facts AS jsonb))
               ON CONFLICT(source_type, source_id) DO UPDATE SET state='open', resolved_at=NULL,
               resolution_id=NULL,
-              evidence=excluded.evidence,version=billing.review_cases.version+1""",
-                org=org,
-                acct=account.id,
+              evidence=excluded.evidence,version=billing.review_cases.version+1
+              WHERE billing.review_cases.version=:seen""",
+                org=claim["organization_id"],
+                acct=account_id,
                 facts=json.dumps(issues, default=str),
+                seen=case_version,
             )
-        return 1
+        return True
 
     async def decision(self, id):
         rows = await self.rows("SELECT * FROM billing.case_decisions WHERE id=:id", id=id)

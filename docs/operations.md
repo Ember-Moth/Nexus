@@ -45,7 +45,24 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 | confirm_cost | 提供 statement_id，以已登记的同一尝试账单纠正成本，保留原成本和差额记账 |
 | verify_payment | 提供 observation_id。核对当前有效的服务端观察、实际收款归属和已过账的反向调整。未追回的款项继续保留在队列中 |
 
-`POST /reconciliation-cases/upstream-statements` 接受组织、尝试、外部账单参考号、金额、币种、原因与依据，并要求 Idempotency-Key。与当前成本有差异时进入核对，后续纠正独立于客户扣费。日常账本核对由 Worker 按账户轮巡，每小时检查一次，发现差异时登记事项。手工决定、资金变更和审计同事务提交。
+`POST /reconciliation-cases/upstream-statements` 接受组织、尝试、外部账单参考号、金额、币种、原因与依据，并要求 Idempotency-Key。与当前成本有差异时进入核对，后续纠正独立于客户扣费。手工决定、资金变更和审计同事务提交。
+
+日常账本核对由 Worker 的 `account_reconciliation` 消费者按账户轮巡，每个账户每小时检查一次。发现差异时登记或更新该账户的 `reconciliation_difference` 事项，证据是差异列表；`differences` 计入指标 `nexus_billing_reconciliation_differences`。核对不锁钱包，同一组织的节点预留、开始尝试和结算在核对期间照常进行，分三个事务完成：
+
+1. **领取。** 在 `billing.account_checks`（每个账户一行，创建账户时写入）中用 `SKIP LOCKED` 取最久未检查、且未被领取的账户，写入 10 分钟租约后立即提交。同一账户同一时刻只有一个 Worker 在检查；Worker 中途退出时租约到期，账户重新可领。
+2. **检查。** 在 REPEATABLE READ 只读事务中比较余额和占用额投影、流水链、冲正、预算期间与预留、充值和调整记录、请求扣费与退费、支付到账。事务不加行锁。每笔资金事务的投影和事实在同一事务提交，快照对每笔事务要么全部可见要么全部不可见，因此并发预留和结算不会产生误报。
+3. **记录。** 结果在一个短事务中写回 `account_checks`，前提是领取凭据仍有效；租约已被其他 Worker 接管时丢弃结果。如果账户事项在快照之后被处理或改写，本次结果不会覆盖它，旧快照不会重新打开已解决的事项。
+
+流水不可修改，序号在账户内唯一，所以逐条检查是增量的：上次通过链、冲正来源与累计、来源记录检查的流水前缀记在 `account_checks.ledger_sequence`，下次只检查之后的新流水，余额用该条的 `balance_after` 加新流水合计比较。某条新流水有问题时，前缀停在它之前，问题每次都会再次报告。请求、预算、充值和调整记录、支付订单仍按整个账户比较，每项一条带索引的查询，只返回有差异的行。请求行会被结算、退费和复核修改，没有按提交顺序记录的变更标记，所以这部分不做增量，耗时随请求数线性增长。本机实测（PostgreSQL 无并发负载）10 万请求的账户检查约 60 毫秒，同一账户全量检查约 130 毫秒；原实现持有钱包行锁检查需 3.3 秒。按这个速度，单条语句约在单账户千万级请求时触及 5 秒的 `statement_timeout`。
+
+手工 `POST /organizations/{org}/account/reconcile`、账户事项的 `retry` 和解冻仍在账户锁内全量比较，作为权威复查。查看核对进度：
+
+```sql
+SELECT organization_id, checked_at, differences, ledger_sequence, claim, claimed_until
+FROM billing.account_checks ORDER BY checked_at;
+```
+
+`claim` 一直不为空、`checked_at` 早于一个多小时以前，说明该账户的检查反复出错，每次租约到期后重试；Worker 日志中有 `consumer=account_reconciliation` 的 `worker.consumer_failed`。
 
 受限账户可在完成核对后调用 `POST /organizations/{org}/account/unfreeze`，提交 reason、evidence、If-Match 与 Idempotency-Key。服务重新检查全部冻结来源和账本差异。新发生的退款、争议或超上界请求可再次冻结账户。
 

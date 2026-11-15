@@ -46,3 +46,5 @@ GRANT SELECT ON billing.report_source TO nexus_billing;
 CREATE INDEX attempts_cost_audit ON billing.audit_events(resource_id,created_at,id)
  WHERE action='attempt.cost_confirmed';
 CREATE INDEX adjustments_source_posted ON billing.adjustments(source_entry_id) WHERE status='posted';
+CREATE INDEX ledger_reversals ON billing.ledger_entries(reverses_entry_id)
+ WHERE reverses_entry_id IS NOT NULL;

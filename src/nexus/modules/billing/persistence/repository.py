@@ -723,18 +723,59 @@ class BillingRepository:
         ).all()
 
     async def reconcile(self, account):
-        ledger_sum = (
-            await self._session.execute(
-                select(func.coalesce(func.sum(m.LedgerEntry.signed_amount), 0)).where(
-                    m.LedgerEntry.account_id == account.id
+        """Every difference between the account's projections and its facts, over all history."""
+        return (await self.examine(account))[0]
+
+    async def examine(self, account, verified=0):
+        """Compare the account's projections and records with its ledger and reservation facts.
+
+        Returns ``(issues, through)``. Ledger entries can be neither updated nor deleted
+        (``ledger_immutable``) and their sequence is unique per account, so the per-entry checks
+        (chain, reversals, orphans) only read entries after ``verified``, a sequence whose prefix
+        passed them before; ``through`` is the prefix that passes them now. The other comparisons
+        cover the whole account, each in one indexed query that returns only the differences.
+        Run it under the account lock or in a REPEATABLE READ snapshot: every financial writer
+        changes the projections and their facts in one transaction.
+        """
+        q = self._session.execute
+        ids = {"account": account.id, "org": account.organization_id}
+        base = Decimal(0)
+        if verified:
+            # An entry numbered below 1 would sit before the verified prefix; scan everything.
+            row = (
+                await q(
+                    text("""
+            SELECT balance_after, EXISTS(SELECT FROM billing.ledger_entries
+              WHERE account_id=:account AND sequence<1) AS stray
+            FROM billing.ledger_entries WHERE account_id=:account AND sequence=:verified
+        """),
+                    {"account": account.id, "verified": verified},
                 )
+            ).one_or_none()
+            if row is None or row.stray:
+                verified = 0
+            else:
+                base = row.balance_after
+        after = " AND e.sequence>:verified" if verified else ""
+        scope = {"account": account.id, "verified": verified}
+        totals = (
+            await q(
+                text(f"""
+            SELECT coalesce(sum(e.signed_amount),0) AS amount,count(*) AS entries,
+              max(e.sequence) AS last
+            FROM billing.ledger_entries e WHERE e.account_id=:account{after}
+        """),
+                scope,
             )
-        ).scalar_one()
+        ).one()
+        ledger_sum = base + totals.amount
         hold_sum = (
-            await self._session.execute(
-                select(func.coalesce(func.sum(m.RequestRun.reserved_amount), 0)).where(
-                    m.RequestRun.account_id == account.id, m.RequestRun.reservation_state == "held"
-                )
+            await q(
+                text("""
+            SELECT coalesce(sum(reserved_amount),0) FROM billing.request_runs
+            WHERE organization_id=:org AND account_id=:account AND reservation_state='held'
+        """),
+                ids,
             )
         ).scalar_one()
         issues = []
@@ -750,110 +791,107 @@ class BillingRepository:
                     "facts": str(hold_sum),
                 }
             )
-        entries = (
-            (
-                await self._session.execute(
-                    select(m.LedgerEntry)
-                    .where(m.LedgerEntry.account_id == account.id)
-                    .order_by(m.LedgerEntry.sequence)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        balance = Decimal(0)
-        for index, entry in enumerate(entries, 1):
-            balance += entry.signed_amount
-            if (
-                entry.sequence != index
-                or entry.balance_after != balance
-                or entry.currency != account.currency
-            ):
-                issues.append({"kind": "ledger_chain", "entry_id": str(entry.id)})
-        if account.entry_sequence != len(entries):
-            issues.append({"kind": "entry_sequence"})
-        by_id = {entry.id: entry for entry in entries}
-        adjustment_totals = {}
-        linked_entries = set()
-        for entry in entries:
-            if entry.reverses_entry_id is None:
-                continue
-            source = by_id.get(entry.reverses_entry_id)
-            expected_kind = "usage_debit" if entry.kind == "usage_refund" else "funding_credit"
-            if source is None or source.kind != expected_kind:
-                issues.append({"kind": "adjustment_source", "entry_id": str(entry.id)})
-                continue
-            total = adjustment_totals.get(source.id, Decimal(0)) + abs(entry.signed_amount)
-            adjustment_totals[source.id] = total
-            if total > abs(source.signed_amount):
-                issues.append({"kind": "adjustment_total", "entry_id": str(source.id)})
-        # All financial writers lock the account first. Compare the periods to
-        # their holds within that same transaction without locking every history row.
-        period_differences = await self._session.execute(
-            text("""
-            SELECT p.id FROM billing.budget_periods p
-            LEFT JOIN billing.budget_holds h ON h.period_id=p.id
-            WHERE p.organization_id=:org GROUP BY p.id
-            HAVING p.reserved<>coalesce(sum(h.reserved),0) OR p.spent<>coalesce(sum(h.spent),0)
+        # Sequences of entries that fail a per-entry check; the verified prefix ends before them.
+        failed = []
+        for entry_id, sequence in await q(
+            text(f"""
+            SELECT id,sequence FROM (
+              SELECT e.id,e.sequence,e.balance_after,e.currency,
+                cast(:verified AS bigint)+row_number() OVER w AS position,
+                cast(:base AS numeric)+sum(e.signed_amount) OVER w AS running
+              FROM billing.ledger_entries e WHERE e.account_id=:account{after}
+              WINDOW w AS (ORDER BY e.sequence ROWS UNBOUNDED PRECEDING)) entries
+            WHERE sequence<>position OR balance_after<>running OR currency<>:currency
+            ORDER BY sequence
         """),
-            {"org": account.organization_id},
-        )
-        for period_id in period_differences.scalars():
+            {**scope, "base": base, "currency": account.currency},
+        ):
+            failed.append(sequence)
+            issues.append({"kind": "ledger_chain", "entry_id": str(entry_id)})
+        if account.entry_sequence != verified + totals.entries:
+            issues.append({"kind": "entry_sequence"})
+        # A reversal must point at an entry of the kind it reverses, and the reversals of one
+        # source, counted in ledger order, must not exceed it.
+        for row in await q(
+            text(f"""
+            SELECT e.id,e.sequence,s.id AS source_id,
+              s.id IS NULL OR s.kind<>CASE WHEN e.kind='usage_refund' THEN 'usage_debit'
+                ELSE 'funding_credit' END AS unmatched,
+              coalesce((SELECT sum(abs(r.signed_amount)) FROM billing.ledger_entries r
+                WHERE r.reverses_entry_id=e.reverses_entry_id AND r.account_id=e.account_id
+                AND r.sequence<=e.sequence AND s.kind=CASE WHEN r.kind='usage_refund'
+                THEN 'usage_debit' ELSE 'funding_credit' END)>abs(s.signed_amount),false) AS excess
+            FROM billing.ledger_entries e LEFT JOIN billing.ledger_entries s
+              ON s.id=e.reverses_entry_id AND s.account_id=e.account_id
+            WHERE e.account_id=:account AND e.reverses_entry_id IS NOT NULL{after}
+            ORDER BY e.sequence
+        """),
+            scope,
+        ):
+            if row.unmatched:
+                failed.append(row.sequence)
+                issues.append({"kind": "adjustment_source", "entry_id": str(row.id)})
+            elif row.excess:
+                failed.append(row.sequence)
+                issues.append({"kind": "adjustment_total", "entry_id": str(row.source_id)})
+        # Holds reference their request and period within one organization, so the holds of
+        # the organization's requests are exactly the holds of its periods.
+        for (period_id,) in await q(
+            text("""
+            SELECT p.id FROM billing.budget_periods p LEFT JOIN (
+              SELECT h.period_id,sum(h.reserved) AS reserved,sum(h.spent) AS spent
+              FROM billing.request_runs r JOIN billing.budget_holds h ON h.request_id=r.id
+              WHERE r.organization_id=:org GROUP BY h.period_id) t ON t.period_id=p.id
+            WHERE p.organization_id=:org
+              AND (p.reserved<>coalesce(t.reserved,0) OR p.spent<>coalesce(t.spent,0))
+            ORDER BY p.id
+        """),
+            ids,
+        ):
             issues.append({"kind": "budget_totals", "period_id": str(period_id)})
-        for kind in ("funding", "adjustment"):
-            model = TABLES[kind]
-            rows = (
-                await self._session.execute(
-                    select(model, m.LedgerEntry)
-                    .outerjoin(
-                        m.LedgerEntry,
-                        (m.LedgerEntry.source_type == kind) & (m.LedgerEntry.source_id == model.id),
-                    )
-                    .where(model.organization_id == account.organization_id)
-                )
-            ).all()
-            for row, entry in rows:
-                if entry:
-                    linked_entries.add(entry.id)
-                if (row.status == "posted") != (entry is not None) or (
-                    entry
-                    and (abs(entry.signed_amount) != row.amount or entry.account_id != account.id)
-                ):
-                    issues.append({"kind": kind + "_ledger", "record_id": str(row.id)})
-        requests = (
-            await self._session.execute(
-                select(m.RequestRun, m.LedgerEntry)
-                .outerjoin(
-                    m.LedgerEntry,
-                    (m.LedgerEntry.source_type == "request")
-                    & (m.LedgerEntry.source_id == m.RequestRun.id),
-                )
-                .where(m.RequestRun.account_id == account.id)
-            )
-        ).all()
-        for request, entry in requests:
-            if entry:
-                linked_entries.add(entry.id)
-            refunded = adjustment_totals.get(entry.id, Decimal(0)) if entry else Decimal(0)
-            if request.refunded_amount != refunded:
-                issues.append({"kind": "request_refunds", "request_id": str(request.id)})
-            expected = request.charged_amount or Decimal(0)
-            if (expected > 0) != (entry is not None) or (
-                entry and entry.signed_amount != -expected
+        for kind, table in (("funding", "funding_records"), ("adjustment", "adjustments")):
+            for (record_id,) in await q(
+                text(f"""
+                SELECT x.id FROM billing.{table} x LEFT JOIN billing.ledger_entries e
+                  ON e.source_type=:kind AND e.source_id=x.id
+                WHERE x.organization_id=:org AND ((x.status='posted')<>(e.id IS NOT NULL)
+                  OR abs(e.signed_amount)<>x.amount OR e.account_id<>:account)
+                ORDER BY x.created_at,x.id
+            """),
+                {**ids, "kind": kind},
             ):
-                issues.append({"kind": "request_ledger", "request_id": str(request.id)})
-        hold_differences = await self._session.execute(
+                issues.append({"kind": kind + "_ledger", "record_id": str(record_id)})
+        for row in await q(
+            text("""
+            SELECT id,refunds,charge FROM (
+              SELECT r.id,r.created_at,
+                r.refunded_amount<>coalesce((SELECT sum(abs(x.signed_amount))
+                  FROM billing.ledger_entries x
+                  WHERE x.reverses_entry_id=e.id AND x.kind='usage_refund'),0) AS refunds,
+                (coalesce(r.charged_amount,0)>0)<>(e.id IS NOT NULL)
+                  OR coalesce(e.signed_amount<>-coalesce(r.charged_amount,0),false) AS charge
+              FROM billing.request_runs r LEFT JOIN billing.ledger_entries e
+                ON e.source_type='request' AND e.source_id=r.id
+              WHERE r.organization_id=:org AND r.account_id=:account) requests
+            WHERE refunds OR charge ORDER BY created_at,id
+        """),
+            ids,
+        ):
+            if row.refunds:
+                issues.append({"kind": "request_refunds", "request_id": str(row.id)})
+            if row.charge:
+                issues.append({"kind": "request_ledger", "request_id": str(row.id)})
+        for request_id, period_id in await q(
             text("""
             SELECT r.id AS request_id,h.period_id
             FROM billing.request_runs r JOIN billing.budget_holds h ON h.request_id=r.id
-            WHERE r.account_id=:account AND (
+            WHERE r.organization_id=:org AND r.account_id=:account AND (
                 h.reserved<>CASE WHEN r.reservation_state='held' THEN r.reserved_amount ELSE 0 END
                 OR h.spent<>coalesce(r.charged_amount,0)-r.refunded_amount)
             ORDER BY r.id,h.period_id
         """),
-            {"account": account.id},
-        )
-        for request_id, period_id in hold_differences:
+            ids,
+        ):
             issues.append(
                 {
                     "kind": "request_budget",
@@ -861,16 +899,51 @@ class BillingRepository:
                     "period_id": str(period_id),
                 }
             )
-        for entry in entries:
-            if entry.id not in linked_entries:
-                issues.append({"kind": "orphan_ledger_entry", "entry_id": str(entry.id)})
-        return issues
+        for entry_id, sequence in await q(
+            text(f"""
+            SELECT e.id,e.sequence FROM billing.ledger_entries e
+            WHERE e.account_id=:account{after} AND NOT CASE e.source_type
+              WHEN 'funding' THEN EXISTS(SELECT FROM billing.funding_records x
+                WHERE x.id=e.source_id AND x.organization_id=:org)
+              WHEN 'adjustment' THEN EXISTS(SELECT FROM billing.adjustments x
+                WHERE x.id=e.source_id AND x.organization_id=:org)
+              WHEN 'request' THEN EXISTS(SELECT FROM billing.request_runs x
+                WHERE x.id=e.source_id AND x.account_id=:account)
+              ELSE false END
+            ORDER BY e.sequence
+        """),
+            {**ids, "verified": verified},
+        ):
+            failed.append(sequence)
+            issues.append({"kind": "orphan_ledger_entry", "entry_id": str(entry_id)})
+        if not failed:
+            return issues, verified if totals.last is None else totals.last
+        through = (
+            await q(
+                text(f"""
+            SELECT greatest(cast(:verified AS bigint),max(e.sequence))
+            FROM billing.ledger_entries e WHERE e.account_id=:account AND e.sequence<:first{after}
+        """),
+                {**scope, "first": min(failed)},
+            )
+        ).scalar_one()
+        return issues, through
 
 
 @asynccontextmanager
-async def transaction(database, repository_type=BillingRepository):
+async def transaction(database, repository_type=BillingRepository, *, snapshot=False):
+    """A billing transaction; ``snapshot`` makes it REPEATABLE READ and read-only.
+
+    A snapshot reads every table as of its first query and takes no row locks, so long reads
+    such as the account check see a consistent state without making writers wait.
+    """
     try:
         async with database.transaction() as session:
+            if snapshot:
+                # SET LOCAL ROLE and search_path take no snapshot; settings() below is the first.
+                await session.execute(
+                    text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                )
             repo = repository_type(session)
             await repo.settings()
             yield repo

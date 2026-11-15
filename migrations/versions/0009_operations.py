@@ -50,7 +50,10 @@ billing.upstream_statements) THEN
     op.execute("ALTER TABLE billing.payment_observations DROP COLUMN query_elapsed_ms")
     op.execute("DROP TABLE billing.upstream_statements")
     usage_replay_counter(False)
-    op.execute("DROP INDEX billing.attempts_cost_audit,billing.adjustments_source_posted")
+    op.execute(
+        "DROP INDEX billing.attempts_cost_audit,billing.adjustments_source_posted,"
+        "billing.ledger_reversals"
+    )
     op.execute("DROP TRIGGER resolved_attempt_review ON billing.request_attempts")
     op.execute("DROP FUNCTION billing.close_cost_review()")
     op.execute("DROP TRIGGER corrected_cost_report ON billing.cost_corrections")
@@ -66,7 +69,11 @@ billing.upstream_statements) THEN
         ("request_runs", "request_review"),
     ]:
         op.execute(f"DROP TRIGGER {trigger} ON billing.{table}")
-    op.execute("DROP FUNCTION billing.mark_report_change(), billing.track_request_review()")
+    op.execute("DROP TRIGGER account_check ON billing.accounts")
+    op.execute(
+        "DROP FUNCTION billing.mark_report_change(), billing.track_request_review(),"
+        "billing.track_account_check()"
+    )
     op.execute(
         "ALTER TABLE billing.payment_cases DROP COLUMN version,DROP COLUMN "
         "decision_id,DROP COLUMN decision_basis"

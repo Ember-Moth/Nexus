@@ -15,15 +15,13 @@ config:
     NEXUS_ENVIRONMENT: production
     NEXUS_LOG_LEVEL: info
 policy:
-  # main has no `nexus settings import` yet (settings-to-db); the Job reports the skip.
-  requireImporter: false
   groups:
-    authentication:
-      mode: fill-missing
-      values: {login_per_ip: 60}
-    reporting:
+    identity.auth_policy:
+      mode: initial
+      values: {sign_in: {per_ip: 60}}
+    reporting.export_policy:
       mode: managed
-      values: {export_max_rows: 10000}
+      values: {exports: {max_rows: 10000}}
 api:
   replicas: 1
   resources:

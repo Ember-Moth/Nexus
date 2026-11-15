@@ -543,8 +543,14 @@ def deploy_from_scratch(address, ingress, api):
     expect(revision.startswith("00"), "migration hook reached head", revision)
     expect("Database roles and grants" in job_log("nexus-provision-database"),
            "provision-database hook succeeded")  # fmt: skip
-    policy_log = job_log("nexus-policy-import")
-    expect(policy_log.strip() != "", "policy-import hook ran", policy_log.strip().splitlines()[-1])
+    imported = json.loads(job_log("nexus-policy-import").strip().splitlines()[-1])
+    statuses = {name: group["status"] for name, group in imported["groups"].items()}
+    expect(
+        set(statuses) == {"identity.auth_policy", "reporting.export_policy"}
+        and imported["groups"]["reporting.export_policy"]["managed"],
+        "policy-import hook wrote the policy file (reporting.export_policy locked)",
+        json.dumps(statuses),
+    )
     configmaps = kubectl("-n", NS, "get", "configmap", "-l", "app.kubernetes.io/instance=nexus",
                          "-o", "jsonpath={.items[*].metadata.name}")  # fmt: skip
     expect(all(f"nexus-{c}" in configmaps for c in ("api", "worker", "web", "policy")),

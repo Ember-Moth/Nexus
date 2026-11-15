@@ -77,45 +77,7 @@ k3s 上的镜像、Helm chart、三层配置和运维流程见[部署手册](dep
 
 ConfigMap 还可以挂载一个策略文件，在 Helm 安装或升级时由 `nexus settings import` 写入数据库：用它给新部署填初始值，或把一部分策略组交给 Git 管理（锁定后后台只读）。文件格式和 Job 示例见[运维：策略文件导入](operations.md#策略文件导入)。
 
-Helm values 的建议结构（部署产物由 k3s 部署负责，这里只约定分层）：
-
-```yaml
-secrets:            # 渲染为 Secret，envFrom 注入
-  NEXUS_DATABASE_URL: postgresql+psycopg://nexus_api:…@db:5432/nexus?sslmode=verify-full
-  NEXUS_REDIS_URL: rediss://:…@redis:6379/0
-  NEXUS_ENCRYPTION_KEY: …
-config:             # 渲染为 ConfigMap，envFrom 注入
-  NEXUS_ENVIRONMENT: production
-  NEXUS_LOG_LEVEL: info
-  NEXUS_REDIS_NAMESPACE: nexus:v1
-  NEXUS_DB_POOL_SIZE: "10"
-policies:           # 渲染为 ConfigMap 里的 policies.yaml，挂载给导入 Job
-  version: 1
-  groups:
-    billing.policy: {mode: initial, values: {currency: CNY}}
-    publication.cluster_defaults: {mode: managed, values: {relay: {max_attempts: 3}}}
-```
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata: {name: nexus-config}
-data:
-  NEXUS_ENVIRONMENT: production
-  NEXUS_LOG_LEVEL: info
-  NEXUS_REDIS_NAMESPACE: nexus:v1
-  NEXUS_DB_POOL_SIZE: "10"
----
-apiVersion: v1
-kind: ConfigMap
-metadata: {name: nexus-policies}
-data:
-  policies.yaml: |
-    version: 1
-    groups:
-      billing.policy: {mode: initial, values: {currency: CNY}}
-      publication.cluster_defaults: {mode: managed, values: {relay: {max_attempts: 3}}}
-```
+k3s 部署的 chart 按这三层组织：Secret 只按名称和键引用（由 External Secrets 或 SOPS 提供，chart 不渲染明文），ConfigMap 由 values 的 `config.*` 按组件生成，策略文件来自 values 的 `policy.groups`。见[部署手册：三层配置](deployment.md#三层配置)和 [`deploy/helm/nexus/values.yaml`](../deploy/helm/nexus/values.yaml)。
 
 ### 数据库中的策略
 

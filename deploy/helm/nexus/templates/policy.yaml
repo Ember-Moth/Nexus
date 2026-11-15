@@ -1,24 +1,34 @@
 {{- /*
-Layer 3: business policy. The file below is imported into the module policy tables by
-`nexus settings import`, which applies each group in its mode:
-  fill-missing  only values never set before (the console stays authoritative afterwards)
-  managed       the whole group, every deploy; the console shows it read-only
-The application never reads or writes Kubernetes objects; the database is the source of truth.
+Layer 3: business policy. policy.groups becomes the policy file that `nexus settings import
+--file` writes into the module policy tables (docs/operations.md#策略文件导入), in a
+pre-install / pre-upgrade hook right after the migration, so managed values are in place before
+any pod rolls. The importer validates every group first and writes nothing if one is invalid;
+the release then stops. The application never reads or writes Kubernetes objects.
 */}}
-{{- if .Values.policy.enabled }}
+{{- if and .Values.policy.enabled .Values.policy.groups }}
+{{- $known := list "identity.auth_policy" "billing.policy" "reporting.export_policy" "catalog.quota_defaults" "publication.cluster_defaults" }}
 {{- range $name, $group := .Values.policy.groups }}
-{{- if not (has $group.mode (list "fill-missing" "managed")) }}
-{{- fail (printf "policy.groups.%s.mode must be fill-missing or managed" $name) }}
+{{- if not (has $name $known) }}
+{{- fail (printf "policy.groups.%s: unknown policy group (one of %s)" $name (join ", " $known)) }}
+{{- end }}
+{{- if not (has $group.mode (list "initial" "managed")) }}
+{{- fail (printf "policy.groups.%s.mode must be initial or managed" $name) }}
 {{- end }}
 {{- end }}
-{{- $document := dict "version" 1 "groups" .Values.policy.groups "clusters" .Values.policy.clusters }}
+{{- $fullname := include "nexus.fullname" . }}
+{{- $document := dict "version" 1 "groups" .Values.policy.groups }}
+{{- $env := mustMergeOverwrite (deepCopy .Values.config.controlPlane) (deepCopy .Values.config.api) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "nexus.fullname" . }}-policy
+  name: {{ $fullname }}-policy
   labels:
     {{- include "nexus.labels" . | nindent 4 }}
     app.kubernetes.io/component: policy
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation
 data:
   policy.yaml: |
     {{- toYaml $document | nindent 4 }}
@@ -26,17 +36,18 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "nexus.fullname" . }}-policy-import
+  name: {{ $fullname }}-policy-import
   labels:
     {{- include "nexus.labels" . | nindent 4 }}
     app.kubernetes.io/component: policy
   annotations:
-    helm.sh/hook: post-install,post-upgrade
-    helm.sh/hook-weight: "0"
+    helm.sh/hook: pre-install,pre-upgrade
+    # After migrate (0): the importer requires the current schema revision.
+    helm.sh/hook-weight: "5"
     helm.sh/hook-delete-policy: before-hook-creation
     checksum/policy: {{ toYaml $document | sha256sum }}
 spec:
-  backoffLimit: {{ .Values.hooks.backoffLimit }}
+  backoffLimit: 0
   activeDeadlineSeconds: {{ .Values.hooks.activeDeadlineSeconds }}
   ttlSecondsAfterFinished: {{ .Values.hooks.ttlSecondsAfterFinished }}
   template:
@@ -44,32 +55,26 @@ spec:
       labels:
         {{- include "nexus.selector" (list . "policy") | nindent 8 }}
         nexus.io/postgres-client: "true"
-        nexus.io/redis-client: "true"
     spec:
       {{- include "nexus.hookPod" . | nindent 6 }}
       containers:
         - name: import
           image: {{ include "nexus.image" (list . .Values.images.controlPlane) }}
           imagePullPolicy: {{ .Values.images.pullPolicy }}
-          command:
-            - sh
-            - -c
-            - |
-              if ! nexus settings import --help >/dev/null 2>&1; then
-                if [ "$REQUIRE_IMPORTER" = "true" ]; then
-                  echo "this image has no 'nexus settings import'; set policy.requireImporter=false to skip" >&2
-                  exit 1
-                fi
-                echo "skipped: this image has no 'nexus settings import' (policy file left unapplied)"
-                exit 0
-              fi
-              exec nexus settings import --file /etc/nexus/policy/policy.yaml $DRY_RUN
-          envFrom:
-            - configMapRef:
-                name: {{ include "nexus.fullname" . }}-api
+          args:
+            - settings
+            - import
+            - --file
+            - /etc/nexus/policy/policy.yaml
+            {{- if .Values.policy.dryRun }}
+            - --dry-run
+            {{- end }}
+          # Runs as the API (nexus_api role) and only talks to PostgreSQL. The API ConfigMap does
+          # not exist yet before the first install, so its values are set here directly.
           env:
-            - {name: REQUIRE_IMPORTER, value: {{ .Values.policy.requireImporter | toString | quote }}}
-            - {name: DRY_RUN, value: {{ ternary "--dry-run" "" .Values.policy.dryRun | quote }}}
+            {{- range $key, $value := $env }}
+            - {name: {{ $key }}, value: {{ $value | toString | quote }}}
+            {{- end }}
             {{- include "nexus.databaseEnv" (list . "api" "NEXUS_DATABASE_URL") | nindent 12 }}
             {{- include "nexus.redisEnv" (list . "NEXUS_REDIS_URL" "python") | nindent 12 }}
             {{- include "nexus.controlPlaneSecretEnv" (list . "api") | nindent 12 }}
@@ -84,7 +89,7 @@ spec:
       volumes:
         - name: policy
           configMap:
-            name: {{ include "nexus.fullname" . }}-policy
+            name: {{ $fullname }}-policy
         {{- include "nexus.caVolumes" . | nindent 8 }}
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 64Mi}

@@ -26,9 +26,10 @@ relay:
   replicas: 0
 policy:
   groups:
-    authentication:
-      mode: fill-missing
-      values: {}
+    # Chosen before the first account, price or channel exists; later changes return 409.
+    billing.policy:
+      mode: initial
+      values: {currency: USD}
 networkPolicy:
   monitoring:
     namespaceLabels: {kubernetes.io/metadata.name: monitoring}

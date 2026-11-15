@@ -44,7 +44,7 @@ Nexus 在 k3s 上从单节点起步：内置 etcd、一台 server 同时承载�
 | --- | --- | --- | --- |
 | 密钥 | 连接口令、加密密钥、集群私钥、共享密钥、第三方凭据 | Kubernetes Secret，chart 只引用名称和键 | External Secrets 或 SOPS；改后重启读取它的组件 |
 | 启动参数 | 非敏感的启动参数、单节点资源上限 | 每个组件一个 ConfigMap，由 values 的 `config.*` 生成，`envFrom` 注入 | `helm upgrade`；checksum 注解使对应组件滚动重启 |
-| 业务策略 | 限额、配额、保留期等运营可调的策略 | 数据库各模块的策略表，以数据库为准 | 管理后台；或 values 的 `policy.*` 经导入 Job 写入 |
+| 业务策略 | 运营方随时调整、要求全局一致或按企业区分的策略：认证与邮件限额、账务币种与支付限额、导出、资源数量默认值、Relay 集群策略 | 数据库各模块的策略表，以数据库为准，见[数据库中的策略](development.md#数据库中的策略) | 管理后台“平台 → 设置”或 `/api/v1/settings/*`；values 的 `policy.groups` 经导入 Job 写入初始值或锁定由 Git 管理的组 |
 
 应用不读写 k3s 的 etcd，也不调用 Kubernetes API。唯一调用 Kubernetes API 的是 Relay 节点登记 Job，它只读写节点登录 Secret。
 
@@ -57,7 +57,7 @@ chart 中不出现任何明文。生产用 [External Secrets 示例](../deploy/e
 | `nexus-db-api`、`nexus-db-worker`、`nexus-db-migrator` | `username`、`password`（basic-auth，标签 `cnpg.io/reload=true`） | 对应进程；同时是 CloudNativePG managed role 的密码来源 |
 | `nexus-pg-superuser` | `username`、`password` | 仅建库和 Relay 节点登记 Job；CloudNativePG 生成。外部数据库改用 `secrets.database.admin` |
 | `nexus-redis` | `password` | Redis、API、Worker、Relay |
-| `nexus-encryption` | `encryption-key`、`encryption-key-version`、`previous-encryption-keys`（可选 JSON） | API、Worker、策略导入 Job |
+| `nexus-encryption` | `encryption-key`、`previous-encryption-keys`（可选 JSON）；当前版本号在 ConfigMap 的 `NEXUS_ENCRYPTION_KEY_VERSION` | API、Worker、策略导入 Job |
 | `nexus-auth-proxy` | `secret`（至少 32 个字符） | 管理后台和 API |
 | `nexus-relay-cluster` | `private-key`（Base64 的 32 字节 Curve25519 私钥） | Relay |
 | `nexus-relay-node-<序号>` | `username`、`password`、`node-id` | 只有该序号 Relay Pod 的 init 容器；由登记 Job 创建，也可预先由 External Secrets 提供 |
@@ -86,18 +86,26 @@ Relay 的 ConfigMap 只允许 `NEXUS_RELAY_*` 键，写错组件时渲染失败�
 
 ### 业务策略
 
-values 的 `policy.groups` 渲染成 ConfigMap `nexus-policy` 中的 `policy.yaml`。post-install / post-upgrade 钩子 Job 挂载它并执行 `nexus settings import --file`。每个策略组选一种模式：
+values 的 `policy.groups` 渲染成策略文件 `policy.yaml`（`{version: 1, groups: {<组名>: {mode, values}}}`），由 pre-install / pre-upgrade 钩子在迁移之后执行 `nexus settings import --file` 写入数据库。导入在任何 Pod 滚动之前完成；文件中任何一组不合法，导入整体拒绝，发布中止，数据库保持原值。命令参数、文件格式和输出见[策略文件导入](operations.md#策略文件导入)。
 
-- `fill-missing`（默认）：只写入从未设置过的值。之后以管理后台为准，下次部署不会覆盖后台的修改。
-- `managed`：由 GitOps 管理。每次部署都写入这组值，后台对这一组只读。
+| 组 | 对应接口 | `values` 示例 |
+| --- | --- | --- |
+| `identity.auth_policy` | `PUT /api/v1/settings/authentication` | `{sign_in: {per_ip: 100}}` |
+| `billing.policy` | `PUT /api/v1/settings/billing` | `{currency: USD}`，只能在出现第一个账户、价格、收款账户或支付渠道之前设定 |
+| `reporting.export_policy` | `PUT /api/v1/settings/reporting` | `{exports: {max_rows: 20000}}` |
+| `catalog.quota_defaults` | `PUT /api/v1/settings/resource-quotas` | `{vector_stores_per_key: 50}` |
+| `publication.cluster_defaults` | `PUT /api/v1/settings/cluster-defaults` | `{relay: {max_attempts: 3}, auto_publish: {quiet_seconds: 5}}` |
 
-`policy.dryRun: true` 只校验并报告差异，不写入。`policy.clusters` 按集群 UUID 配置集群策略。导入文件的格式是 `{version: 1, groups: {<组名>: {mode, values}}, clusters: {<集群 UUID>: {mode, values}}}`。
+每个组选一种模式：
 
-> **依赖说明**：策略表、`nexus settings import --file` 和按策略组锁定由 settings-to-db 分支（`claude/settings-to-db-80fa79`）提供，该分支尚未合入 main。导入 Job 按约定的接口编写（`--file`、`--dry-run`，文件格式见上）。镜像中没有这个命令时，`policy.requireImporter: true`（默认）让发布失败，`false` 则跳过导入并在日志中说明。
+- `initial`：只在该组从未被修改过时写入，之后以管理后台为准，下次部署不会覆盖后台的修改。对已锁定的组声明 `initial` 会解除锁定。
+- `managed`：由 Git 管理。每次部署都用文件值覆盖所列字段，并锁定整组：后台设置页只读，接口写请求返回 409 `policy_managed_externally`。
+
+`values` 可以只写部分字段，没写的字段保持数据库现值；文件里没有的组不受影响。单个集群和单个企业的覆盖值属于运行时数据，在后台或接口中维护，不进文件。`policy.groups` 为空时不渲染导入 Job。`policy.dryRun: true` 只在 Job 日志中输出将会发生的变化，不写入。
 
 ### 环境变量归属
 
-“派生”指 chart 自动生成，不需要配置。策略组列出导入文件中的组名，以 settings-to-db 合入时的最终清单为准。
+与[三层配置](development.md#三层配置)一致，每个变量只有一个来源。业务策略不再有环境变量。“派生”指 chart 自动生成，不需要配置。
 
 | 变量 | 层 | 说明 |
 | --- | --- | --- |
@@ -105,41 +113,36 @@ values 的 `policy.groups` 渲染成 ConfigMap `nexus-policy` 中的 `policy.yam
 | `NEXUS_MIGRATION_DATABASE_URL` | 密钥 | 迁移 Job，口令来自 `nexus-db-migrator` |
 | `NEXUS_PROVISION_DATABASE_URL`、`NEXUS_PROVISION_*_PASSWORD` | 密钥 | 建库 Job；外部数据库模式才传入三个登录口令 |
 | `NEXUS_REDIS_URL` | 密钥 | `rediss://`，口令来自 `nexus-redis`，`ssl_ca_certs` 指向挂载的 CA |
-| `NEXUS_ENCRYPTION_KEY`、`NEXUS_ENCRYPTION_KEY_VERSION`、`NEXUS_PREVIOUS_ENCRYPTION_KEYS` | 密钥 | 版本号和密钥放在同一个 Secret，轮换时一起变 |
+| `NEXUS_ENCRYPTION_KEY`、`NEXUS_PREVIOUS_ENCRYPTION_KEYS` | 密钥 | `nexus-encryption` |
 | `NEXUS_AUTH_PROXY_SECRET` | 密钥 | API 与管理后台共用 |
 | `NEXUS_SMTP_PASSWORD`、`NEXUS_RESEND_API_KEY`、`NEXUS_CLOUDFLARE_EMAIL_API_TOKEN`、`NEXUS_TURNSTILE_SECRET_KEY` | 密钥 | `nexus-integrations`，均可选 |
-| `NEXUS_ENVIRONMENT`、`NEXUS_LOG_LEVEL`、`NEXUS_REDIS_NAMESPACE`、`NEXUS_BILLING_CURRENCY`、`NEXUS_DEPENDENCY_TIMEOUT`、`NEXUS_SHUTDOWN_TIMEOUT` | 启动参数 | `config.controlPlane`。账务币种必须与数据库一致 |
+| `NEXUS_ENCRYPTION_KEY_VERSION` | 启动参数 | `config.controlPlane`，与 `nexus-encryption` 中的当前密钥对应，轮换时两者在同一次发布中修改 |
+| `NEXUS_ENVIRONMENT`、`NEXUS_LOG_LEVEL`、`NEXUS_REDIS_NAMESPACE`、`NEXUS_DEPENDENCY_TIMEOUT`、`NEXUS_SHUTDOWN_TIMEOUT` | 启动参数 | `config.controlPlane` |
+| `NEXUS_PROCESS_ROLE` | — | 由 `nexus api` / `nexus worker` 命令决定，不需要设置 |
 | `NEXUS_HOST`、`NEXUS_PORT` | 派生 | API |
 | `NEXUS_DB_POOL_SIZE`、`NEXUS_DB_MAX_OVERFLOW` | 启动参数 | 单进程连接上限，按 PostgreSQL `max_connections` 分配 |
 | `NEXUS_LOGIN_HASH_CONCURRENCY`、`NEXUS_ACCOUNT_HASH_CONCURRENCY`、`NEXUS_HASH_QUEUE_TIMEOUT_SECONDS` | 启动参数 | 单 Pod 的 Argon2 并发，随 CPU 配额调整 |
 | `NEXUS_AUTH_PROXY_PEERS` | 启动参数 | 默认 k3s Pod 网段 `["10.42.0.0/16"]`，见[客户端 IP](#真实客户端-ip) |
 | `NEXUS_WORKER_ID` | 派生 | Worker 的 Pod 名 |
-| `NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL` | 启动参数 | Worker |
-| `NEXUS_AUTO_PUBLISH_QUIET_SECONDS`、`…_MAX_DELAY_SECONDS`、`…_POLL_SECONDS` | 启动参数 | Worker |
-| `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM`、`NEXUS_SMTP_HOST`、`NEXUS_SMTP_PORT`、`NEXUS_SMTP_SECURITY`、`NEXUS_SMTP_USERNAME`、`NEXUS_CLOUDFLARE_EMAIL_ACCOUNT_ID` | 启动参数 | 发信通道 |
-| `NEXUS_TURNSTILE_SITE_KEY`、`NEXUS_TURNSTILE_HOSTNAME` | 启动参数 | 是否启用 Turnstile 在后台设置 |
+| `NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL`、`NEXUS_AUTO_PUBLISH_POLL_SECONDS` | 启动参数 | Worker。自动发布的静默时间和最长延迟是 `publication.cluster_defaults` 策略 |
+| `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM`、`NEXUS_SMTP_HOST`、`NEXUS_SMTP_PORT`、`NEXUS_SMTP_SECURITY`、`NEXUS_SMTP_USERNAME`、`NEXUS_CLOUDFLARE_EMAIL_ACCOUNT_ID` | 启动参数 | 发信服务商的非密钥参数 |
+| `NEXUS_TURNSTILE_SITE_KEY`、`NEXUS_TURNSTILE_HOSTNAME` | 启动参数 | 是否启用 Turnstile 是 `identity.auth_policy` 策略 |
 | `NEXUS_PAYMENT_PUBLIC_BASE_URL`、`NEXUS_PAYMENT_RETURN_URL` | 启动参数 | 生产环境必须是 HTTPS |
 | `NEXUS_MOCK_PAYMENT_URL` | — | 生产环境禁止设置 |
 | `NEXUS_MIGRATION_LOCK_TIMEOUT_MS`、`NEXUS_MIGRATION_STATEMENT_TIMEOUT_MS` | 启动参数 | `config.migrate`，只进迁移 Job |
-| `NEXUS_SESSION_TTL_SECONDS`、`NEXUS_PASSWORD_SETUP_TTL_SECONDS` | 策略 | `authentication` |
-| `NEXUS_LOGIN_WINDOW_SECONDS`、`NEXUS_LOGIN_PER_ACCOUNT`、`NEXUS_LOGIN_PER_IP` | 策略 | `authentication` |
-| `NEXUS_MAIL_WINDOW_SECONDS`、`NEXUS_MAIL_PER_RECIPIENT`、`NEXUS_MAIL_PER_RECIPIENT_TOTAL`、`NEXUS_MAIL_PER_ACCOUNT`、`NEXUS_MAIL_PER_IP`、`NEXUS_MAIL_GLOBAL`、`NEXUS_MAIL_QUEUE_TTL_SECONDS` | 策略 | `authentication` |
-| `NEXUS_PLATFORM_EMAIL_RECOVERY`、`NEXUS_RESERVED_LOGINS` | 策略 | `authentication` |
-| `NEXUS_EXPORT_PER_ORG_MINUTE`、`NEXUS_EXPORT_TTL_SECONDS`、`NEXUS_EXPORT_MAX_ROWS` | 策略 | `reporting` |
-| `NEXUS_VECTOR_STORAGE_PREPAID_DAYS`、`NEXUS_VECTOR_STORAGE_LAPSE_POLICY` | 策略 | `billing` |
-| `NEXUS_PAYMENT_REQUESTS_PER_MERCHANT_PER_MINUTE`、`NEXUS_PAYMENT_NOTIFICATION_PER_CHANNEL`、`NEXUS_PAYMENT_NOTIFICATION_PER_IP` | 策略 | `billing` |
+| `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION` | 派生 | 来自 `objectStorage.*`，见[对象存储](#对象存储cloudflare-r2)；变量名以导出改造的最终实现为准 |
+| `NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID`、`NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY` | 密钥 | `nexus-app-r2` |
 | `NEXUS_API_URL`、`NEXUS_WEB_ORIGIN` | 派生 | 管理后台 |
 | `NEXUS_COOKIE_SECURE`、`NEXUS_WEB_CLIENT_IP_HEADER` | 启动参数 | 管理后台，后者默认 `x-real-ip` |
 | `NEXUS_RELAY_DATABASE_URL` | 密钥 | 每个节点一份，init 容器从节点 Secret 生成文件，经 `NEXUS_RELAY_DATABASE_URL_FILE` 读取 |
 | `NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_PRIVATE_KEY` | 密钥 | 所有节点相同 |
 | `NEXUS_RELAY_CLUSTER_ID`、`NEXUS_RELAY_NAMESPACE`、`NEXUS_RELAY_LISTEN`、`NEXUS_RELAY_METRICS_LISTEN`、`NEXUS_RELAY_DRAIN_SECONDS`、`NEXUS_RELAY_UPSTREAM_CA` | 派生 | 来自 `relay.*` values |
 | `NEXUS_RELAY_LOG`、`NEXUS_RELAY_POOL_SIZE`、`NEXUS_RELAY_CONCURRENCY`、`NEXUS_RELAY_LEASE_MS`、`NEXUS_RELAY_REQUEST_BYTES`、`NEXUS_RELAY_RESPONSE_BYTES`、`NEXUS_RELAY_EVENT_BYTES`、`NEXUS_RELAY_STREAM_IDLE_MS`、`NEXUS_RELAY_WS_SESSIONS`、`NEXUS_RELAY_PURGE_INTERVAL_MS` | 启动参数 | 单节点资源上限，`config.relay` |
-| `NEXUS_RELAY_REQUESTS_PER_TENANT`、`NEXUS_RELAY_STREAMS_PER_TENANT`、`NEXUS_RELAY_STREAM_LIFETIME_SECONDS`、`NEXUS_RELAY_WS_SESSIONS_PER_TENANT`、`NEXUS_RELAY_WS_TURNS_PER_TENANT`、`NEXUS_RELAY_MAX_ATTEMPTS`、`NEXUS_RELAY_FAILOVER_BUDGET_MS`、`NEXUS_RELAY_PURGE_GRACE_SECONDS` | 策略 | 集群策略 `policy.clusters.<id>` |
-| `NEXUS_RELAY_RESOURCES_PER_KEY`、`NEXUS_RELAY_RESOURCES_PER_ORGANIZATION`、`NEXUS_RELAY_VECTOR_STORES_PER_KEY`、`NEXUS_RELAY_VECTOR_STORES_PER_ORGANIZATION` | 策略 | `resource-quotas` |
+| `NEXUS_RELAY_REQUESTS_PER_TENANT`、`NEXUS_RELAY_STREAMS_PER_TENANT`、`NEXUS_RELAY_WS_SESSIONS_PER_TENANT`、`NEXUS_RELAY_WS_TURNS_PER_TENANT` | 启动参数 | 单节点的租户公平性上限，每个节点独立计数，不是集群级配额 |
 | `SSL_CERT_FILE` | 派生 | Relay 的信任库：公共根证书加 Redis CA |
-| `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION` | 派生 | 来自 `objectStorage.*`，见[对象存储](#对象存储cloudflare-r2)；变量名以导出改造的最终实现为准 |
-| `NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID`、`NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY` | 密钥 | `nexus-app-r2` |
 | `NEXUS_GATEWAY_DSN`、`NEXUS_SIMULATION_API_KEY`、`RELAY_ACCEPTANCE_*` | — | 模拟器和验收测试，不部署 |
+
+Relay 的尝试次数、故障转移时间预算、清理宽限期、续读流时长和资源数量上限都是集群策略，随配置快照下发，见[Relay 运行配置](relay-development.md#集群策略)。
 
 ## 单节点安装
 
@@ -260,7 +263,7 @@ CloudNativePG 的 `retentionPolicy`（默认 `30d`）决定恢复窗口：它会
    helm upgrade --install nexus deploy/helm/nexus -n nexus -f my-values.yaml --wait --timeout 15m
    ```
 
-   首次安装时保持 `relay.replicas: 0`。pre-install 钩子依次执行建库（授予权限）和迁移，post-install 钩子导入策略。
+   首次安装时保持 `relay.replicas: 0`。pre-install 钩子依次执行建库（授予权限）、迁移和策略导入。
 4. **管理员**：按初始化流程创建第一个管理员（待定：初始化流程由另一项改动提供，届时在此补充具体步骤），再按 [登录与企业成员](identity-api.md) 建立日常账号。为 Relay 节点登记 Job 建一个专用平台管理员，例如 `deployer`，把它的登录名和密码写入 `nexus-deployer`。
 5. **目录与计价**：配置模型、上游、凭据、部署（含 `relay_profile`）、售价、成本价、路由和企业。见[模型与上游目录](catalog-api.md)和[定价](billing-api.md)。
 6. **集群**：用 `nexus-relay-cluster` 私钥对应的公钥调用 `POST /api/v1/gateway-clusters`，记下返回的 `id`。公钥可以这样计算：
@@ -285,7 +288,7 @@ CloudNativePG 的 `retentionPolicy`（默认 `30d`）决定恢复窗口：它会
 | pre-install / pre-upgrade | -10 | `provision-database` | `nexus provision-database`：补齐组角色、建库和权限，可重复执行。复用 `scripts/native_services.py` 的逻辑（`nexus.infrastructure.provisioning`）。CloudNativePG 模式下等待 managed roles 出现，外部数据库模式下用 Secret 中的口令创建登录 |
 | pre-install / pre-upgrade | -5 | `relay-nodes-pre` | 建立节点登录和 Secret。API 已在运行时（即升级时）同时登记 principal |
 | pre-install / pre-upgrade | 0 | `migrate` | `nexus migrate`，使用迁移角色和 `lock_timeout`。失败即中止发布，此时还没有任何 Pod 滚动 |
-| post-install / post-upgrade | 0 | `policy-import` | `nexus settings import --file` |
+| pre-install / pre-upgrade | 5 | `policy-import` | `nexus settings import --file`，`policy.groups` 非空时才有。要求数据库已是最新修订，只连 PostgreSQL |
 | post-install / post-upgrade | 5 | `relay-nodes-post` | 等 API 就绪后登记全部节点，可重复执行 |
 
 节点登记放在迁移之前：迁移完成后，旧版 API 会因为 schema 修订不一致而变为未就绪（见[升级](#升级)），之后就无法通过它登记节点了。
@@ -328,7 +331,7 @@ helm upgrade nexus deploy/helm/nexus -n nexus -f my-values.yaml --set relay.repl
 helm upgrade nexus deploy/helm/nexus -n nexus -f my-values.yaml --wait --timeout 20m
 ```
 
-1. **先迁移**：pre-upgrade 钩子依次执行建库、节点登记和 `nexus migrate`，迁移使用默认 5 秒的 `lock_timeout`。迁移失败时发布中止，Pod 都不会滚动。排查长事务后重新执行 `helm upgrade`，会从失败的修订继续。
+1. **先迁移**：pre-upgrade 钩子依次执行建库、节点登记、`nexus migrate` 和策略导入，迁移使用默认 5 秒的 `lock_timeout`。迁移失败时发布中止，Pod 都不会滚动。排查长事务后重新执行 `helm upgrade`，会从失败的修订继续。
 2. **再滚动**：API、Worker 和管理后台按 `maxSurge: 1`、`maxUnavailable: 0` 逐个替换，Relay 每次替换一个节点，并按上节排空。
 3. **schema 修订变化时的窗口**：API 的就绪检查要求数据库修订与代码完全一致。迁移完成后，旧版 API Pod 会变为未就绪，直到新版 Pod 就绪，这段时间管理 API 和管理后台不可用，一般在 1 分钟以内。Relay 直接调用 `gateway_v1`，不受影响。不改 schema 的升级没有这个窗口。
 
@@ -347,7 +350,7 @@ Secret 的变化不会触发 checksum 重启（checksum 只跟踪 ConfigMap）�
 
 | 密钥 | 步骤 |
 | --- | --- |
-| 应用加密密钥 | 以当前版本 1 换成版本 2 为例。1. 设置 `previous-encryption-keys` 为 `{"2":"<新密钥>"}`，当前密钥不变，重启 API 和 Worker，让所有实例都能解密版本 2；2. 把 `encryption-key` 和 `encryption-key-version` 改为新密钥和 `2`，`previous-encryption-keys` 改为 `{"1":"<旧密钥>"}`，再重启一次。旧记录不会自动重新加密：仍有密文引用旧版本时，旧密钥必须保留。按[凭据轮换](catalog-api.md#凭据加密与轮换)重建上游凭据之后，才能删除旧版本 |
+| 应用加密密钥 | 以当前版本 1 换成版本 2 为例。1. 在 `nexus-encryption` 中设置 `previous-encryption-keys` 为 `{"2":"<新密钥>"}`，重启 API 和 Worker，让所有实例都能解密版本 2；2. 把 `encryption-key` 改为新密钥、`previous-encryption-keys` 改为 `{"1":"<旧密钥>"}`，同时把 values 的 `config.controlPlane.NEXUS_ENCRYPTION_KEY_VERSION` 改为 `"2"`，执行 `helm upgrade`（ConfigMap 变化会滚动 API 和 Worker）。旧记录不会自动重新加密：仍有密文引用旧版本时，旧密钥必须保留。按[凭据轮换](catalog-api.md#凭据加密与轮换)重建上游凭据之后，才能删除旧版本 |
 | 数据库口令 | 更新 basic-auth Secret。带 `cnpg.io/reload` 标签时 CloudNativePG 会立即修改角色口令，之后马上执行 `kubectl rollout restart deploy/nexus-api deploy/nexus-worker`。已建立的连接不受影响，旧 Pod 新建连接会失败，直到重启完成。外部数据库模式下，执行 `helm upgrade` 由建库 Job 修改口令 |
 | Relay 节点口令 | 修改 `nexus-relay-node-<n>` 的 `password`，执行 `helm upgrade`（登记 Job 会把登录口令改成 Secret 中的值），再 `kubectl rollout restart statefulset/nexus-relay` |
 | 集群私钥 | 生成新密钥对，用 `PATCH /gateway-clusters/{id}` 提交新公钥并设置 `key_grace_seconds`，然后更新 `nexus-relay-cluster`，并在宽限期内滚动重启 Relay |
@@ -442,7 +445,7 @@ etcd 快照里本来就有后两样，但它们必须独立保存一份：只有
 - [ ] NetworkPolicy 生效：管理后台连不上 5432/6379，入口访问不到 Relay 的 9464、`/live`、`/ready` 和 API 的 `/internal`；Prometheus 能抓取指标。
 - [ ] 告警已配置：Relay 指标（[建议告警](operations.md#指标)）、API `/internal/metrics/prometheus`、CloudNativePG、证书到期、etcd 快照失败。
 - [ ] `NEXUS_ENVIRONMENT=production`，没有设置 `NEXUS_MOCK_PAYMENT_URL`，发信和 Turnstile 已配置。
-- [ ] 策略组的模式（`fill-missing` 或 `managed`）已确定，策略导入 Job 成功。
+- [ ] `policy.groups` 中每组的模式（`initial` 或 `managed`）已确定，`billing.policy.currency` 已按业务设定，策略导入 Job 成功。
 
 **业务**
 
@@ -484,12 +487,11 @@ VMHOME=$(limactl shell nexus-k3s sh -c 'echo $HOME'); KUBECTL="limactl shell nex
   加上 `--drills` 时还会执行：
   - 演练 A：修改 API 的 ConfigMap，只有 API 滚动重启，并读到新值；
   - 演练 B：持续发送请求和 12 秒的长流，同时修改 Relay 的配置触发滚动更新，然后检查没有请求失败、两个节点都被替换、账本平衡。
-- 冒烟用的 `values-app.yaml` 把 `policy.requireImporter` 设为 false，因为 main 上还没有导入命令。
+- 冒烟用的 `values-app.yaml` 导入两个策略组：`identity.auth_policy`（`initial`）和 `reporting.export_policy`（`managed`），脚本检查导入结果中后者已锁定。
 - 从零部署要拉取约 1 GB 镜像并构建 Rust，在笔记本上耗时较长。环境已经部署过时，用 `--reuse` 接着使用上次的企业、模型和集群：脚本重新应用 chart、把 Relay 滚动到当前镜像，然后只做调用、账本核对和演练；Relay 已经是当前镜像时，加 `--skip-roll` 跳过滚动。`--fresh` 会先删除上次的 release 和命名空间。
 - 冒烟发现并修复了一个问题：Relay 关闭 keep-alive 后，hyper 在 101 响应上也追加 `close`，Traefik 因此拒绝 WebSocket 升级（返回 500）。现在 Relay 只在非 101 响应上加 `Connection: close`。
 
 ## 已知限制与后续
 
-- **策略导入依赖 settings-to-db**：导入 Job 已就位；该分支合入后，把 `policy.requireImporter` 恢复为 true，并补上导入结果的冒烟断言。
 - **升级时的就绪窗口**：API 的就绪检查要求 schema 修订完全一致，schema 变化时会有不到一分钟的 API 不可用（见[升级](#升级)）。如果就绪检查能接受“当前修订或已知的下一个兼容修订”，这个窗口就可以消除。
 - **Redis 证书续期需要重启**：Redis 不会重新加载 TLS 文件，续期后要安排重启（会触发 60 秒限流恢复窗口）。

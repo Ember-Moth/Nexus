@@ -1,12 +1,12 @@
 {{- /*
 Release hooks, in order:
   pre-install / pre-upgrade
-    -20  hook ConfigMaps, relay-node ServiceAccount and RBAC
+    -20  hook ConfigMaps (migration settings, policy file), relay-node ServiceAccount and RBAC
     -10  provision-database   roles and grants (idempotent; reuses nexus.infrastructure.provisioning)
      -5  relay-nodes --phase pre   node logins and Secrets; registers them while the old API serves
       0  migrate              `nexus migrate` with the migration role, before any pod rolls
+      5  policy-import        `nexus settings import --file` (templates/policy.yaml)
   post-install / post-upgrade
-      0  policy-import        `nexus settings import --file` (templates/policy.yaml)
       5  relay-nodes --phase post  registers every node (waits for the API)
 */}}
 {{- $fullname := include "nexus.fullname" . }}

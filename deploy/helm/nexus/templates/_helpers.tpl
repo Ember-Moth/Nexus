@@ -137,9 +137,6 @@ Usage: include "nexus.databaseEnv" (list . "api" "NEXUS_DATABASE_URL")
 - name: NEXUS_ENCRYPTION_KEY
   valueFrom:
     secretKeyRef: {name: {{ $root.Values.secrets.encryption }}, key: encryption-key}
-- name: NEXUS_ENCRYPTION_KEY_VERSION
-  valueFrom:
-    secretKeyRef: {name: {{ $root.Values.secrets.encryption }}, key: encryption-key-version}
 - name: NEXUS_PREVIOUS_ENCRYPTION_KEYS
   valueFrom:
     secretKeyRef: {name: {{ $root.Values.secrets.encryption }}, key: previous-encryption-keys, optional: true}

@@ -47,8 +47,8 @@ ingress:
 # ---------------------------------------------------------------------------------------------
 secrets:
   # Application encryption key ring. Keys:
-  #   encryption-key            URL-safe base64 of 32 random bytes (current key)
-  #   encryption-key-version    integer version of the current key
+  #   encryption-key            URL-safe base64 of 32 random bytes (current key; its version is
+  #                             config.controlPlane.NEXUS_ENCRYPTION_KEY_VERSION)
   #   previous-encryption-keys  optional JSON {"<version>": "<key>"} of keys still needed to read
   #                             older ciphertexts
   encryption: nexus-encryption
@@ -137,7 +137,8 @@ config:
     NEXUS_ENVIRONMENT: production
     NEXUS_LOG_LEVEL: info
     NEXUS_REDIS_NAMESPACE: "nexus:v1"
-    NEXUS_BILLING_CURRENCY: USD
+    # Version of the key in secrets.encryption; change both in one release when rotating.
+    NEXUS_ENCRYPTION_KEY_VERSION: "1"
     NEXUS_DEPENDENCY_TIMEOUT: "3"
     NEXUS_SHUTDOWN_TIMEOUT: "10"
     # Identity mail transport (credentials are in secrets.integrations).
@@ -167,8 +168,7 @@ config:
     NEXUS_DB_MAX_OVERFLOW: "0"
     NEXUS_WORKER_INTERVAL: "5"
     NEXUS_WORKER_HEARTBEAT_TTL: "30"
-    NEXUS_AUTO_PUBLISH_QUIET_SECONDS: "3"
-    NEXUS_AUTO_PUBLISH_MAX_DELAY_SECONDS: "30"
+    # Fallback poll; the quiet window and maximum delay are publication.cluster_defaults policy.
     NEXUS_AUTO_PUBLISH_POLL_SECONDS: "30"
   migrate:
     # Fail on a busy table instead of queueing traffic behind the lock (docs/operations.md).
@@ -189,37 +189,38 @@ config:
     NEXUS_RELAY_STREAM_IDLE_MS: "30000"
     NEXUS_RELAY_WS_SESSIONS: "128"
     NEXUS_RELAY_PURGE_INTERVAL_MS: "60000"
+    # Per-node fairness caps (each node counts on its own; not cluster-wide quotas).
+    NEXUS_RELAY_REQUESTS_PER_TENANT: "32"
+    NEXUS_RELAY_STREAMS_PER_TENANT: "8"
+    NEXUS_RELAY_WS_SESSIONS_PER_TENANT: "16"
+    NEXUS_RELAY_WS_TURNS_PER_TENANT: "16"
 
 # ---------------------------------------------------------------------------------------------
-# Layer 3: business policy (database policy tables, imported with `nexus settings import`)
+# Layer 3: business policy. Lives in the module policy tables; the console (Platform -> Settings)
+# and the /api/v1/settings/* endpoints edit it. Groups listed here are written by
+# `nexus settings import --file` in a pre-install/pre-upgrade Job right after the migration
+# (docs/operations.md#策略文件导入). Each group's values have the shape of its PUT request body;
+# fields left out keep their database value. Groups not listed are untouched.
+#   initial  written only while the group was never changed (version 1); afterwards the console
+#            is authoritative and later deploys do not overwrite it. Also unlocks the group.
+#   managed  written on every deploy and locked: the console shows the group read-only and the
+#            API answers 409 policy_managed_externally.
+# Groups: identity.auth_policy, billing.policy, reporting.export_policy, catalog.quota_defaults,
+# publication.cluster_defaults. Per-cluster and per-organization overrides are runtime data and
+# are not part of the file.
 # ---------------------------------------------------------------------------------------------
 policy:
   enabled: true
-  # Validate and report without writing.
+  # Report the changes without writing them (the Job log shows the plan).
   dryRun: false
-  # Fail the release when the image has no `nexus settings import` (before the settings-to-db
-  # change ships). false: the Job reports that it skipped the import and succeeds.
-  requireImporter: true
-  # Each group is applied in one of two modes:
-  #   fill-missing  write only values that were never set; afterwards the console is
-  #                 authoritative and a later deploy does not overwrite console edits (default)
-  #   managed       GitOps owns the group: every deploy applies these values and the console
-  #                 shows the group read-only
-  groups:
-    authentication:
-      mode: fill-missing
-      values: {}
-    billing:
-      mode: fill-missing
-      values: {}
-    reporting:
-      mode: fill-missing
-      values: {}
-    resource-quotas:
-      mode: fill-missing
-      values: {}
-  # Per gateway cluster: "<cluster-uuid>": {mode: ..., values: {...}}
-  clusters: {}
+  groups: {}
+  # Example:
+  #   billing.policy:
+  #     mode: initial
+  #     values: {currency: USD}
+  #   publication.cluster_defaults:
+  #     mode: managed
+  #     values: {relay: {max_attempts: 3}}
 
 # ---------------------------------------------------------------------------------------------
 # Workloads
@@ -291,6 +292,8 @@ relay:
     - relay.provider-features.v1
     - relay.sse.v1
     - relay.responses-ws.v1
+    # Required once a cluster policy or resource limit differs from the relay's built-in values.
+    - relay.cluster-policy.v1
   # Optional ConfigMap with an extra PEM CA for upstreams behind a private CA; mounted as a file
   # and passed as NEXUS_RELAY_UPSTREAM_CA. It is added to, not substituted for, public roots.
   upstreamCA:

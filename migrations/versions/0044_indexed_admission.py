@@ -47,6 +47,7 @@ GATEWAY_PUBLIC = [
 GATEWAY_PRIVATE = [
     "admit(uuid,uuid,uuid,bigint,bigint,bigint,boolean,integer,integer,text,integer,uuid,integer,uuid,uuid)",
     "open_attempt(publication.gateway_principals,jsonb,uuid,integer,uuid,jsonb)",
+    "attempt_target(jsonb,uuid,integer,text,integer,integer,integer)",
     "reserve_with_execution(uuid,uuid,uuid,bigint,bigint,bigint,boolean,integer,integer,text,integer)",
 ]
 # Restored by the downgrade with the grants they had in 0043.

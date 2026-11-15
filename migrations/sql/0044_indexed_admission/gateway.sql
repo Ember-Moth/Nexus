@@ -11,6 +11,24 @@ DROP FUNCTION gateway_v1.reserve_with_execution(uuid,uuid,uuid,bigint,bigint,big
 DROP FUNCTION gateway_v1.reserve_with_guardrail(uuid,uuid,uuid,bigint,bigint,bigint,boolean,integer,integer,text,integer,uuid,integer);
 DROP FUNCTION gateway_v1.get_config_snapshot(bigint);
 
+-- The usage format and supplier of deployment `dep` for an attempt of a request with these
+-- frozen bounds, or no row when the deployment cannot serve it.
+CREATE FUNCTION gateway_v1.attempt_target(snap jsonb, dep uuid, guard_units integer, exec_mode text,
+ exec_bound integer, files integer, searches integer)
+ RETURNS TABLE(expected_format text, supplier uuid) LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
+ SELECT d->>'usage_format',(d->>'upstream_id')::uuid
+ FROM jsonb_array_elements(snap->'resources'->'deployments') d WHERE d->>'id'=dep::text
+ AND (CASE WHEN guard_units>0
+     THEN d#>>'{relay_profile,endpoint}'='bedrock_converse' AND
+       coalesce((d#>>'{relay_profile,bedrock_guardrail_unit_ceiling}')::integer,0) BETWEEN 1 AND guard_units
+     ELSE NOT(coalesce(jsonb_typeof(d#>'{relay_profile,bedrock_guardrail}')='object',false)
+          AND coalesce((d#>>'{relay_profile,bedrock_guardrail_unit_ceiling}')::integer,0)>0) END)
+ AND (exec_mode='none' OR (d#>>'{relay_profile,endpoint}'='anthropic_messages' AND (d#>>'{relay_profile,code_execution}'='true' OR (exec_mode='bundled' AND searches>0))
+       AND coalesce((d#>>'{relay_profile,execution_reserve_seconds}')::int,0)>=exec_bound))
+ AND coalesce((d#>>'{relay_profile,file_search_ceiling}')::int,0)>=files
+ AND coalesce((d#>>'{relay_profile,web_search_ceiling}')::int,0)>=searches
+$$;
+
 -- Register attempt `seq` of a reserved request on deployment `dep`. `adm` is the admission
 -- view of the request's revision when the caller already read it in this transaction.
 CREATE FUNCTION gateway_v1.open_attempt(p publication.gateway_principals, req jsonb, aid uuid,
@@ -18,7 +36,7 @@ CREATE FUNCTION gateway_v1.open_attempt(p publication.gateway_principals, req js
  RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
 DECLARE snap jsonb; model uuid:=(req->>'model_id')::uuid; org uuid:=(req->>'organization_id')::uuid;
  rev bigint:=(req->>'config_revision')::bigint; rid uuid:=(req->>'request_id')::uuid;
- expected_format text; supplier uuid; answer jsonb;
+ target record; answer jsonb;
 BEGIN
  IF adm IS NULL THEN adm=publication.v1_admission(p,rev,NULL,org,model,false); END IF;
  snap=adm->'manifest';
@@ -27,33 +45,27 @@ BEGIN
  THEN RAISE EXCEPTION 'configuration_not_applied'; END IF;
  PERFORM identity.v1_authorize((req->>'api_key_id')::uuid,model);
  PERFORM catalog.v1_eligible(model,dep,snap,org,(req->>'input_limit')::bigint,(req->>'output_limit')::bigint);
- SELECT d->>'usage_format',(d->>'upstream_id')::uuid INTO expected_format,supplier
- FROM jsonb_array_elements(snap->'resources'->'deployments') d WHERE d->>'id'=dep::text
- AND (CASE WHEN (req->>'guardrail_unit_limit')::integer>0
-     THEN d#>>'{relay_profile,endpoint}'='bedrock_converse' AND
-       coalesce((d#>>'{relay_profile,bedrock_guardrail_unit_ceiling}')::integer,0) BETWEEN 1 AND (req->>'guardrail_unit_limit')::integer
-     ELSE NOT(coalesce(jsonb_typeof(d#>'{relay_profile,bedrock_guardrail}')='object',false)
-          AND coalesce((d#>>'{relay_profile,bedrock_guardrail_unit_ceiling}')::integer,0)>0) END)
- AND (req->>'execution_mode'='none'  OR (d#>>'{relay_profile,endpoint}'='anthropic_messages' AND (d#>>'{relay_profile,code_execution}'='true' OR (req->>'execution_mode'='bundled' AND (req->>'web_search_limit')::int>0))
-       AND coalesce((d#>>'{relay_profile,execution_reserve_seconds}')::int,0)>=(req->>'execution_seconds_limit')::int))
- AND coalesce((d#>>'{relay_profile,file_search_ceiling}')::int,0)>=(req->>'file_search_limit')::int
- AND coalesce((d#>>'{relay_profile,web_search_ceiling}')::int,0)>=(req->>'web_search_limit')::int;
+ SELECT * INTO target FROM gateway_v1.attempt_target(snap,dep,(req->>'guardrail_unit_limit')::integer,
+  req->>'execution_mode',(req->>'execution_seconds_limit')::integer,(req->>'file_search_limit')::integer,
+  (req->>'web_search_limit')::integer);
  IF NOT FOUND THEN RAISE EXCEPTION 'deployment_unavailable'; END IF;
- answer=billing.v1_attempt(org,rid,aid,dep,model,seq,clock_timestamp(),p.node_id,expected_format);
- IF req->>'execution_mode' IN ('metered','preloaded') OR expected_format='aws.bedrock.converse.v1' THEN PERFORM billing.v1_execution_supplier(rid,aid,p.node_id,supplier); END IF;
+ answer=billing.v1_attempt(org,rid,aid,dep,model,seq,clock_timestamp(),p.node_id,target.expected_format);
+ IF req->>'execution_mode' IN ('metered','preloaded') OR target.expected_format='aws.bedrock.converse.v1' THEN PERFORM billing.v1_execution_supplier(rid,aid,p.node_id,target.supplier); END IF;
  RETURN answer;
 END $$;
 
 -- Reserve a request and, when `aid` and `dep` are given, register its first attempt in the same
 -- transaction: the organization's serial section is entered once and one commit covers both.
--- Any failure, including of the attempt, rolls back the reservation with it. A replay with the
--- same arguments returns the committed request and replays its first attempt.
+-- Everything the attempt checks is checked before billing takes the organization lock, so only
+-- the reservation, the attempt row and the commit run inside it. Any failure, including of the
+-- attempt, rolls back the reservation with it. A replay with the same arguments returns the
+-- committed request and replays its first attempt.
 CREATE FUNCTION gateway_v1.admit(rid uuid,kid uuid,model uuid,rev bigint,inputs bigint,outputs bigint,
  batch boolean,searches integer,files integer,exec_mode text,exec_bound integer,guard_dep uuid,
  guard_units integer,aid uuid,dep uuid)
  RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
 DECLARE p publication.gateway_principals; adm jsonb; snap jsonb; k jsonb; principal jsonb; dims jsonb;
- previous jsonb; org uuid; attempt jsonb;
+ previous jsonb; org uuid; attempt jsonb; target record;
 BEGIN
  IF (aid IS NULL)<>(dep IS NULL) THEN RAISE EXCEPTION 'invalid_attempt'; END IF;
  p=publication.v1_principal();
@@ -97,13 +109,27 @@ BEGIN
  ELSIF searches>0 THEN
   dims=catalog.v1_search_eligible(model,snap,org,inputs,outputs,searches);
  ELSE
-  dims=catalog.v1_eligible(model,NULL,snap,org,inputs,outputs);
+  -- With a first attempt this also checks its deployment.
+  dims=catalog.v1_eligible(model,dep,snap,org,inputs,outputs);
+ END IF;
+ IF aid IS NOT NULL THEN
+  -- The tool variants chose their dimensions from any deployment; check the attempt's own.
+  IF guard_units=0 AND (exec_mode<>'none' OR files>0 OR searches>0) THEN
+   PERFORM catalog.v1_eligible(model,dep,snap,org,inputs,outputs);
+  END IF;
+  SELECT * INTO target FROM gateway_v1.attempt_target(snap,dep,guard_units,exec_mode,exec_bound,files,searches);
+  IF NOT FOUND OR (guard_units>0 AND dep IS DISTINCT FROM guard_dep) THEN RAISE EXCEPTION 'deployment_unavailable'; END IF;
+  IF p.applied_revision<rev OR EXISTS(SELECT FROM jsonb_array_elements_text(adm->'required_capabilities') cap
+     WHERE NOT cap=ANY(p.capabilities)) THEN RAISE EXCEPTION 'configuration_not_applied'; END IF;
  END IF;
  PERFORM billing.v1_reserve_guarded_capacity(rid,org,(principal->>'project_id')::uuid,(principal->>'service_account_id')::uuid,kid,
  model,inputs,outputs,CASE WHEN batch THEN 90000 ELSE 900 END,encode(sha256(convert_to(jsonb_build_array(kid,model,rev,inputs,outputs,p.node_id)::text,'UTF8')),'hex'),
  dims,clock_timestamp(),p.node_id,p.cluster_id,rev,batch,searches,files,0,NULL,exec_mode,exec_bound,NULL,0,NULL,guard_units);
  IF aid IS NOT NULL THEN
-  attempt=gateway_v1.open_attempt(p,billing.v1_status(rid,p.node_id),aid,1,dep,adm);
+  attempt=billing.v1_attempt(org,rid,aid,dep,model,1,clock_timestamp(),p.node_id,target.expected_format);
+  IF exec_mode IN ('metered','preloaded') OR target.expected_format='aws.bedrock.converse.v1' THEN
+   PERFORM billing.v1_execution_supplier(rid,aid,p.node_id,target.supplier);
+  END IF;
  END IF;
  RETURN billing.v1_status(rid,p.node_id) || jsonb_build_object('replayed',false,'attempt',attempt);
 END $$;

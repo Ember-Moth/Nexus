@@ -548,6 +548,11 @@ async def test_pool_variants(http, admin, tls, binary, service_directory, tmp_pa
         ("pool-8-deadlock-10s", {}, "10s"),
         # Without the cluster-wide admission slots (NEXUS_RELAY_TENANT_ADMISSIONS default 32).
         ("pool-8-ungated", {"NEXUS_RELAY_TENANT_ADMISSIONS": "0"}, None),
+        (
+            "pool-2-ungated",
+            {"NEXUS_RELAY_POOL_SIZE": "2", "NEXUS_RELAY_TENANT_ADMISSIONS": "0"},
+            None,
+        ),
     ]
     variants = selected(variants)
     async with load_plane(
@@ -613,7 +618,27 @@ async def reconfigure(plane, env, deadlock):
     await plane.fleet.start(nodes, env)
 
 
+async def warm_pools(plane, per_node=8):
+    """Open each node's database pool before measuring, one node at a time.
+
+    Freshly started nodes open their pool connections on the first burst all at once. Beyond
+    kern.ipc.somaxconn (128 on macOS) simultaneous connects the kernel resets the excess before
+    PostgreSQL sees them, and those requests fail at their first SQL call with 503. A deployment
+    keeps warm pools; this keeps the measurement about admission, not connection setup.
+    """
+    import httpx
+
+    secret = plane.tenants[0]["secret"]
+    async with httpx.AsyncClient(timeout=30, trust_env=False) as c:
+        for relay in plane.fleet.relays:
+            url = f"http://127.0.0.1:{relay.port}/v1/models"
+            await asyncio.gather(
+                *(c.get(url, headers=plane.headers(secret)) for _ in range(per_node))
+            )
+
+
 async def control_profile(plane, round_no, active, hot, total, rate, variant=None):
+    await warm_pools(plane)
     name = f"{'steady' if rate else 'burst'}-{active}n-{'hot' if hot else 'uniform'}"
     scenario = "control"
     if variant:

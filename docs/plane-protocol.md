@@ -47,7 +47,7 @@ auto_publish 为 true 且集群 active 时，Worker 的 auto_publish 任务负�
 
 ## 数据库身份与权限
 
-节点权限从 PostgreSQL 的 `session_user` 和 `publication.gateway_principals` 取得。部署角色负责建立节点登录，平台管理员登记集群绑定；连接代理需保留各节点的认证身份。`nexus_gateway` 获授 `gateway_v1` 函数的执行权限，业务表读写由函数所属角色完成。
+节点权限从 PostgreSQL 的 `session_user` 和 `publication.gateway_principals` 取得。每次调用对集群行和节点行取 `FOR KEY SHARE`（确认取节点行的 `FOR NO KEY UPDATE`），发布和集群变更对集群行取 `FOR NO KEY UPDATE`：排队等企业锁的准入不会挡住发布、分发、确认或停用，停用后开始的调用都会被拒绝。部署角色负责建立节点登录，平台管理员登记集群绑定；连接代理需保留各节点的认证身份。`nexus_gateway` 获授 `gateway_v1` 函数的执行权限，业务表读写由函数所属角色完成。
 
 `reserve_request`、`start_attempt`、`append_usage_event`、`cancel_unstarted_request` 写 billing，`ack_config` 写 publication。身份与目录校验可以在同一短事务中取得必要的读锁。各函数的授权和所有者见[网关迁移](../migrations/versions/0008_gateway_protocol.py)与[按索引准入](../migrations/versions/0044_indexed_admission.py)。
 

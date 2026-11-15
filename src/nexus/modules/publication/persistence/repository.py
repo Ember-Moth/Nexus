@@ -7,6 +7,27 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from nexus.shared.errors import ServiceError
 from nexus.shared.reporting import key_cursor
 
+# Automation state shown with every cluster; the lease and probe bookkeeping stay private.
+STATUS = """a.pending_since,a.checked_at,a.published_revision,a.published_at,a.published_trigger,
+    a.failure_code,a.failure_message,a.failure_at,a.paused_revision,a.paused_at,
+    a.failed IS NOT NULL AS failing,a.content_digest,a.content_revision"""
+CLUSTER = (
+    "SELECT c.*," + STATUS + " FROM publication.gateway_clusters c "
+    "LEFT JOIN publication.cluster_automation a ON a.cluster_id=c.id "
+)
+# Columns the auto-publisher may write between claims; JSON documents are cast explicitly.
+TRACKED = {
+    "observed": True,
+    "changed_at": False,
+    "pending_since": False,
+    "retry_after": False,
+    "failed": True,
+    "checked_at": False,
+    "failure_code": False,
+    "failure_message": False,
+    "failure_at": False,
+}
+
 
 class PublicationRepository:
     def __init__(self, session):
@@ -41,14 +62,25 @@ class PublicationRepository:
             (SELECT count(*) FROM publication.gateway_principals n JOIN
             publication.gateway_clusters c ON c.id=n.cluster_id
              WHERE c.active AND n.active AND
-                n.applied_revision<c.desired_revision) lagging_nodes""")
+                n.applied_revision<c.desired_revision) lagging_nodes,
+            (SELECT count(*) FROM publication.cluster_automation a JOIN
+            publication.gateway_clusters c ON c.id=a.cluster_id WHERE c.active AND c.auto_publish
+             AND a.pending_since IS NOT NULL) auto_publish_pending,
+            (SELECT max(extract(epoch FROM clock_timestamp()-a.pending_since)) FROM
+            publication.cluster_automation a JOIN publication.gateway_clusters c
+             ON c.id=a.cluster_id WHERE c.active AND c.auto_publish) auto_publish_pending_seconds,
+            (SELECT count(*) FROM publication.cluster_automation a JOIN
+            publication.gateway_clusters c ON c.id=a.cluster_id WHERE c.active AND c.auto_publish
+             AND a.failed IS NOT NULL) auto_publish_failing,
+            (SELECT count(*) FROM publication.cluster_automation a JOIN
+            publication.gateway_clusters c ON c.id=a.cluster_id WHERE NOT c.auto_publish
+             AND a.paused_at IS NOT NULL) auto_publish_paused""")
             )[0]
         )
 
     async def cluster(self, cid, lock=False):
         rows = await self.rows(
-            "SELECT * FROM publication.gateway_clusters WHERE id=:cid"
-            + (" FOR UPDATE" if lock else ""),
+            CLUSTER + "WHERE c.id=:cid" + (" FOR UPDATE OF c" if lock else ""),
             cid=cid,
         )
         if not rows:
@@ -58,14 +90,20 @@ class PublicationRepository:
     async def create_cluster(self, cid, body, key):
         await self.execute(
             """INSERT INTO publication.gateway_clusters(
-            id,name,region,organization_ids,deployment_ids,public_key)
-        VALUES(:id,:name,:region,:orgs,:deps,:key)""",
+            id,name,region,organization_scope,organization_ids,deployment_ids,public_key,
+            auto_publish)
+        VALUES(:id,:name,:region,:scope,:orgs,:deps,:key,:auto)""",
             id=cid,
             name=body.name,
             region=body.region,
+            scope=body.organization_scope,
             orgs=body.organization_ids,
             deps=body.deployment_ids,
             key=key,
+            auto=body.auto_publish,
+        )
+        await self.execute(
+            "INSERT INTO publication.cluster_automation(cluster_id) VALUES(:cid)", cid=cid
         )
 
     async def register(self, cid, body):
@@ -107,16 +145,14 @@ class PublicationRepository:
 
     async def list_clusters(self, limit, cursor):
         rows = await self.rows(
-            "SELECT * FROM publication.gateway_clusters "
-            + ("WHERE id>:after " if cursor else "")
-            + "ORDER BY id LIMIT :limit",
+            CLUSTER + ("WHERE c.id>:after " if cursor else "") + "ORDER BY c.id LIMIT :limit",
             after=cursor and cursor[0],
             limit=limit + 1,
         )
         last = rows[limit - 1] if len(rows) > limit else None
         return rows[:limit], last and key_cursor(last["id"])
 
-    async def update_cluster(self, c, body, new_key, scope_changed):
+    async def update_cluster(self, c, body, new_key, scope_changed, scope, orgs):
         if new_key:
             await self.execute(
                 """INSERT INTO publication.previous_keys VALUES(
@@ -127,16 +163,26 @@ class PublicationRepository:
             )
         await self.execute(
             """UPDATE publication.gateway_clusters SET
-             organization_ids=:orgs,deployment_ids=:deps,active=:active,public_key=:key,
-             key_version=:kv,scope_generation=:generation,version=version+1 WHERE id=:cid""",
-            orgs=body.organization_ids or c["organization_ids"],
+             organization_scope=:scope,organization_ids=:orgs,deployment_ids=:deps,
+             active=:active,public_key=:key,key_version=:kv,scope_generation=:generation,
+             auto_publish=:auto,version=version+1 WHERE id=:cid""",
+            scope=scope,
+            orgs=orgs,
             deps=body.deployment_ids or c["deployment_ids"],
             active=c["active"] if body.active is None else body.active,
             key=new_key or c["public_key"],
             kv=c["key_version"] + int(bool(new_key)),
             generation=c["scope_generation"] + int(scope_changed),
+            auto=c["auto_publish"] if body.auto_publish is None else body.auto_publish,
             cid=c["id"],
         )
+        if body.auto_publish is not None:
+            # An explicit choice supersedes a pause left by a rollback.
+            await self.execute(
+                """UPDATE publication.cluster_automation SET paused_revision=NULL,
+                paused_at=NULL WHERE cluster_id=:cid""",
+                cid=c["id"],
+            )
 
     async def capabilities(self, cid):
         return await self.rows(
@@ -224,6 +270,7 @@ class PublicationRepository:
     async def publish(
         self, cid, rev, raw, sha, sources, envelopes, key_version, actor, key, parameters
     ):
+        """Store a release; automatic releases (key None) have no idempotency record."""
         await self.execute(
             """INSERT INTO publication.config_snapshots(
             cluster_id,revision,manifest,payload_bytes,sha256,source_revision)
@@ -256,13 +303,115 @@ class PublicationRepository:
             cid=cid,
             rev=rev,
         )
+        if key is not None:
+            await self.execute(
+                "INSERT INTO publication.release_commands "
+                "VALUES(:cid,:actor,:key,:parameters,:rev)",
+                cid=cid,
+                actor=actor,
+                key=key,
+                parameters=parameters,
+                rev=rev,
+            )
+
+    async def settle(self, cid, rev, sources, digest, models, trigger=None):
+        """Record what the desired snapshot represents; it ends any pending change."""
         await self.execute(
-            "INSERT INTO publication.release_commands VALUES(:cid,:actor,:key,:parameters,:rev)",
+            """INSERT INTO publication.cluster_automation(cluster_id) VALUES(:cid)
+            ON CONFLICT DO NOTHING""",
             cid=cid,
-            actor=actor,
-            key=key,
-            parameters=parameters,
+        )
+        await self.execute(
+            """UPDATE publication.cluster_automation SET settled=cast(:sources AS jsonb),
+            content_digest=:digest,content_revision=:rev,price_models=:models,observed=NULL,
+            changed_at=NULL,pending_since=NULL,retry_after=NULL,failed=NULL,
+            published_revision=CASE WHEN :automatic THEN :rev ELSE published_revision END,
+            published_at=CASE WHEN :automatic THEN clock_timestamp() ELSE published_at END,
+            published_trigger=CASE WHEN :automatic THEN cast(:trigger AS jsonb)
+             ELSE published_trigger END
+            WHERE cluster_id=:cid""",
+            cid=cid,
             rev=rev,
+            sources=None if sources is None else json.dumps(sources),
+            digest=digest,
+            models=models,
+            automatic=trigger is not None,
+            trigger=json.dumps(trigger),
+        )
+
+    async def pause(self, cid, rev):
+        """A rollback stops the auto-publisher until an administrator resumes it."""
+        await self.execute(
+            """UPDATE publication.gateway_clusters SET auto_publish=false,version=version+1
+            WHERE id=:cid""",
+            cid=cid,
+        )
+        await self.execute(
+            """UPDATE publication.cluster_automation SET paused_revision=:rev,
+            paused_at=clock_timestamp() WHERE cluster_id=:cid""",
+            cid=cid,
+            rev=rev,
+        )
+
+    async def automated_clusters(self):
+        return [
+            r["id"]
+            for r in await self.rows(
+                """SELECT id FROM publication.gateway_clusters WHERE active AND auto_publish
+                ORDER BY id"""
+            )
+        ]
+
+    async def claim_automation(self, cid, lease):
+        """Lease one cluster to this worker; another worker skips it until released."""
+        claimed = await self.rows(
+            """WITH candidate AS (
+            SELECT a.cluster_id FROM publication.cluster_automation a
+            JOIN publication.gateway_clusters c ON c.id=a.cluster_id
+            WHERE a.cluster_id=:cid AND c.active AND c.auto_publish
+            AND (a.lease_until IS NULL OR a.lease_until<clock_timestamp())
+            FOR UPDATE OF a SKIP LOCKED
+            ) UPDATE publication.cluster_automation a
+            SET lease_until=clock_timestamp()+make_interval(secs=>:lease) FROM candidate
+            WHERE a.cluster_id=candidate.cluster_id
+            RETURNING a.settled,a.price_models,a.observed,a.changed_at,a.pending_since,
+            a.retry_after,a.failed,clock_timestamp() AS now""",
+            cid=cid,
+            lease=lease,
+        )
+        if not claimed:
+            return None
+        cluster = await self.rows(
+            "SELECT * FROM publication.gateway_clusters WHERE id=:cid", cid=cid
+        )
+        return cluster[0], claimed[0]
+
+    async def defer(self, cid, code, message, seconds):
+        await self.execute(
+            """UPDATE publication.cluster_automation SET lease_until=NULL,failure_code=:code,
+            failure_message=:message,failure_at=clock_timestamp(),
+            retry_after=clock_timestamp()+make_interval(secs=>:seconds) WHERE cluster_id=:cid""",
+            cid=cid,
+            code=code,
+            message=message,
+            seconds=seconds,
+        )
+
+    async def track(self, cid, **values):
+        """Save probe bookkeeping and release this worker's lease."""
+        assignments = ["lease_until=NULL"]
+        params = {"cid": cid}
+        for column, value in values.items():
+            document = TRACKED[column]
+            assignments.append(
+                f"{column}=cast(:{column} AS jsonb)" if document else f"{column}=:{column}"
+            )
+            params[column] = json.dumps(value) if document and value is not None else value
+        await self.execute(
+            "UPDATE publication.cluster_automation SET "
+            + ",".join(assignments)
+            + " WHERE cluster_id=:cid",
+            **params,
         )
 
 

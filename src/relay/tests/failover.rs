@@ -22,6 +22,10 @@ struct Fixture {
 
 /// Build one route over `candidates`: (priority, weight, relay profile overrides).
 fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
+    build(candidates).unwrap()
+}
+
+fn build(candidates: &[(u32, u32, Value)]) -> Result<Fixture, nexus_relay::control::ControlError> {
     let (org, key, project, model, credential) = (
         Uuid::new_v4(),
         Uuid::new_v4(),
@@ -94,6 +98,7 @@ fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
             "relay.bedrock-converse.v1",
             "relay.bedrock-settings.v1",
             "relay.bedrock-guardrail-usage.v1",
+            "relay.bedrock-request-options.v1",
             "relay.prompt-cache.v1",
             "relay.web-search.v1",
             "relay.sse.v1",
@@ -105,10 +110,10 @@ fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
         .to_vec(),
         resources,
     };
-    Fixture {
-        index: Index::build(&mut snapshot).unwrap(),
+    Ok(Fixture {
+        index: Index::build(&mut snapshot)?,
         ids,
-    }
+    })
 }
 
 fn messages(extra: Value) -> Generate {
@@ -795,6 +800,30 @@ fn looping_requests_reserve_input_for_each_model_call() {
     // The prompt is read again after each of the two permitted searches.
     assert_eq!((looped.bounds.searches, looped.bounds.inputs), (2, 240));
     assert_eq!(looped.bounds.outputs, 6);
+}
+
+#[test]
+fn guardrail_profiles_require_a_unit_bound_in_both_directions() {
+    let guardrail = json!({"guardrailIdentifier":"guard","guardrailVersion":"1"});
+    for profile in [
+        json!({"endpoint":"bedrock_converse","bedrock_guardrail":guardrail}),
+        json!({"endpoint":"bedrock_converse","bedrock_guardrail":guardrail,
+            "bedrock_guardrail_unit_ceiling":0}),
+        json!({"endpoint":"bedrock_converse",
+            "bedrock_request_options":[{"guardrailConfig":guardrail}]}),
+        json!({"endpoint":"bedrock_converse","bedrock_guardrail_unit_ceiling":4}),
+    ] {
+        assert!(build(&[(0, 1, profile)]).is_err());
+    }
+    assert!(
+        build(&[(
+            0,
+            1,
+            json!({"endpoint":"bedrock_converse","bedrock_guardrail":guardrail,
+                "bedrock_guardrail_unit_ceiling":4})
+        )])
+        .is_ok()
+    );
 }
 
 #[test]

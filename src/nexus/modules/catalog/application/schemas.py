@@ -285,10 +285,14 @@ class RelayProfile(Schema):
             raise ValueError(
                 "Web Search requires a native tool-enabled Messages or Responses deployment"
             )
-        if self.bedrock_guardrail_unit_ceiling and not (
+        guarded = bool(
             self.bedrock_guardrail or any(o.guardrailConfig for o in self.bedrock_request_options)
-        ):
+        )
+        if self.bedrock_guardrail_unit_ceiling and not guarded:
             raise ValueError("Guardrail unit bounds require a configured Converse guardrail")
+        if guarded and not self.bedrock_guardrail_unit_ceiling:
+            # Every assessment is metered; a zero bound would send each request to review.
+            raise ValueError("A configured Converse guardrail requires a positive unit ceiling")
         if self.bedrock_invoke and self.endpoint != "bedrock_converse":
             raise ValueError("Bedrock Invoke uses a Bedrock upstream")
         if (

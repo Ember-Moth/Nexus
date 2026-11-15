@@ -6,11 +6,12 @@ import hmac
 import json
 import struct
 import zlib
+from decimal import Decimal
 from urllib.parse import quote
 
 import httpx
 import pytest
-from test_billing import account_amounts, headers, make_budget
+from test_billing import account_amounts, headers, make_budget, publish_price
 from test_identity_api import auth
 from test_plane import provision_plane
 from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F401
@@ -306,6 +307,25 @@ async def test_bedrock_converse_and_stream(http, admin, tls, relay_binary, sigv4
     ):
         peer, private, org, model, dep, _, key, cid = resources
         await make_budget(client, root, org, "100")
+        # A configured guardrail is metered, so the model prices its policy units.
+        guardrail_dims = [
+            "guardrail_content_units",
+            "guardrail_image_units",
+            "guardrail_topic_units",
+            "guardrail_sensitive_units",
+            "guardrail_grounding_units",
+            "guardrail_reasoning_units",
+        ]
+        priced = await client.patch(
+            f"/api/v1/models/{model['id']}",
+            headers=auth(root, model["version"]),
+            json={"tool_dimensions": guardrail_dims},
+        )
+        assert priced.status_code == 200, priced.text
+        rated = {"input_uncached_tokens": "1", "output_tokens": "1"}
+        rated.update(dict.fromkeys(guardrail_dims, "0.0001"))
+        await publish_price(client, root, "sale", model, dimensions=rated)
+        await publish_price(client, root, "cost", dep, "0.4", dimensions=rated)
         requested = {
             "guardrailConfig": {
                 "guardrailIdentifier": "wxyz",
@@ -323,6 +343,7 @@ async def test_bedrock_converse_and_stream(http, admin, tls, relay_binary, sigv4
             "output_ceiling": 6,
             "count_rule": "deployment_ceiling.v1",
             "bound_reference": "isolated-converse",
+            "bedrock_guardrail_unit_ceiling": 4,
             "bedrock_guardrail": {
                 "guardrailIdentifier": "abcd",
                 "guardrailVersion": "1",
@@ -530,9 +551,10 @@ async def test_bedrock_converse_and_stream(http, admin, tls, relay_binary, sigv4
                     await relay.post(urls[0], headers=hdrs[0], json={**bodies[0], "stream": True})
                 await wait_events(admin, 16 + 2 * n)
             await app.state.usage.process()
+            # Three unsettled requests also hold their four-unit bound on six guardrail policies.
             assert admin.execute(
                 "SELECT spent,reserved FROM billing.budget_periods"
-            ).fetchone() == (20, 30)
+            ).fetchone() == (20, Decimal("30.0072"))
             async with connect(
                 f"ws://127.0.0.1:{relay.base_url.port}/v1/responses",
                 additional_headers=hdrs[1],

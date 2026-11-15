@@ -473,6 +473,14 @@ impl Index {
                 return Err(ControlError::Invalid("deployment binding"));
             }
             if let Some(p) = &d.relay_profile {
+                let guarded = p.bedrock_guardrail.is_some()
+                    || p.bedrock_request_options
+                        .iter()
+                        .any(|o| o.guardrail_config.is_some());
+                // Every assessment is metered, so a guardrail without a unit bound cannot settle.
+                if guarded && p.bedrock_guardrail_unit_ceiling == 0 {
+                    return Err(ControlError::Invalid("Guardrail unit bounds"));
+                }
                 if p.bedrock_guardrail_unit_ceiling > 0
                     && (p.endpoint != UpstreamProtocol::BedrockConverse
                         || p.bedrock_invoke

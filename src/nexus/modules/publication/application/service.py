@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from nexus.shared.errors import ServiceError
 
+from .ports import OrganizationSource
 from .schemas import CAPABILITIES, FEATURE_CAPABILITIES
 
 # The audit identity of releases made by the auto-publisher. Request handlers always
@@ -178,8 +179,7 @@ class PublicationService:
         self.catalog = catalog
         self.prices = prices
         self.cache = cache
-        # Active organization identifiers of a rule-based scope ("all" or "personal").
-        self.organizations = organizations
+        self.organizations: OrganizationSource = organizations
 
     @staticmethod
     def public(cluster):
@@ -298,7 +298,8 @@ class PublicationService:
     async def _scope(self, c):
         if c["organization_scope"] == "listed":
             return list(c["organization_ids"])
-        return await self.organizations(personal=c["organization_scope"] == "personal")
+        personal = c["organization_scope"] == "personal"
+        return [o["id"] for o in await self.organizations() if o["personal"] or not personal]
 
     async def _sources(self, c):
         orgs = await self._scope(c)

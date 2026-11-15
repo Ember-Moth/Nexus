@@ -8,7 +8,6 @@ branch_labels = None
 depends_on = None
 SOURCES = ("identity", "catalog", "billing")
 CHANNEL = "nexus_source_revision"
-SCOPE = "identity.v1_scope_organizations(boolean)"
 
 
 def upgrade():
@@ -57,28 +56,12 @@ def upgrade():
         "ON publication.gateway_clusters FOR EACH STATEMENT "
         "EXECUTE FUNCTION publication.announce_cluster()"
     )
-    # Rule-based scopes resolve active organizations through identity's read contract.
-    op.execute("GRANT CREATE ON SCHEMA identity TO nexus_identity")
-    op.execute("SET LOCAL ROLE nexus_identity")
-    op.execute(f"""CREATE FUNCTION {SCOPE} RETURNS SETOF uuid
-        LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
-        SELECT id FROM identity.organizations WHERE status='active'
-        AND (NOT $1 OR personal_owner_id IS NOT NULL) ORDER BY id $$""")
-    op.execute("RESET ROLE")
-    op.execute("REVOKE CREATE ON SCHEMA identity FROM nexus_identity")
-    op.execute(f"REVOKE ALL ON FUNCTION {SCOPE} FROM PUBLIC")
-    op.execute("GRANT USAGE ON SCHEMA identity TO nexus_publication")
-    op.execute(f"GRANT EXECUTE ON FUNCTION {SCOPE} TO nexus_publication")
 
 
 def downgrade():
     op.execute("""DO $$ BEGIN IF EXISTS(SELECT FROM publication.gateway_clusters
         WHERE organization_scope<>'listed') THEN
         RAISE EXCEPTION 'rule-based cluster scopes are retained'; END IF; END $$""")
-    op.execute("REVOKE USAGE ON SCHEMA identity FROM nexus_publication")
-    op.execute("SET LOCAL ROLE nexus_identity")
-    op.execute(f"DROP FUNCTION {SCOPE}")
-    op.execute("RESET ROLE")
     op.execute("DROP TRIGGER announce_cluster ON publication.gateway_clusters")
     op.execute("DROP FUNCTION publication.announce_cluster()")
     for schema in SOURCES:

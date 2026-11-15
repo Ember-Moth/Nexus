@@ -556,3 +556,42 @@ async def test_superseded_snapshot_copies_expire(plane, http, admin):
     assert await peer.redis.get(prefix + ":current") == "2"
     assert 0 < await peer.redis.pttl(prefix + ":snapshot:1") <= 600_000
     assert (await peer.refresh())["revision"] == "2"
+
+
+async def test_organization_lifecycle_advances_the_identity_revision(http, admin):
+    client, root, app, _ = http
+    organizations = app.state.publication.organizations
+    await app.state.process_billing()  # settle organizations created by the fixture
+    baseline = {str(o["id"]): o["personal"] for o in await organizations()}
+
+    def revision():
+        return admin.execute("SELECT revision FROM identity.source_revision").fetchone()[0]
+
+    async def added():
+        current = {str(o["id"]): o["personal"] for o in await organizations()}
+        return {k: v for k, v in current.items() if k not in baseline}
+
+    async def status(org, value):
+        current = await client.get(f"/api/v1/organizations/{org['id']}", headers=auth(root))
+        response = await client.patch(
+            f"/api/v1/organizations/{org['id']}",
+            headers=auth(root, current.json()["version"]),
+            json={"status": value},
+        )
+        assert response.status_code == 200, response.text
+
+    seen = revision()
+    org = await create_org(client, root, "Lifecycle tenant")
+    assert revision() > seen and await added() == {}
+    seen = revision()
+    await app.state.process_billing()  # provisioning -> active once billing opens the account
+    assert revision() > seen and await added() == {org["id"]: False}
+    for value, expected in [("suspended", {}), ("active", {org["id"]: False}), ("archived", {})]:
+        seen = revision()
+        await status(org, value)
+        assert revision() > seen and await added() == expected
+    seen = revision()
+    user = await register(client, "lifecycle-" + uuid4().hex[:6])
+    await app.state.process_billing()
+    assert revision() > seen
+    assert await added() == {user["personal_organization_id"]: True}

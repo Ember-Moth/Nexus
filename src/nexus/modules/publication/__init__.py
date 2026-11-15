@@ -3,7 +3,6 @@ from nexus.shared.storage import ModuleName
 
 from .application.automation import AutoPublisher
 from .application.service import PublicationService
-from .persistence.organizations import create_organization_scope
 from .persistence.repository import transaction
 
 __all__ = [
@@ -17,7 +16,7 @@ __all__ = [
 SOURCE_CHANNEL = "nexus_source_revision"
 
 
-def create_service(database, administrator, identity, catalog, prices, cache):
+def create_service(database, administrator, identity, catalog, prices, cache, organizations):
     database.require_module(ModuleName.PUBLICATION)
     return PublicationService(
         lambda: transaction(database),
@@ -26,7 +25,7 @@ def create_service(database, administrator, identity, catalog, prices, cache):
         catalog,
         prices,
         cache,
-        create_organization_scope(database),
+        organizations,
     )
 
 

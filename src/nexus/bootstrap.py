@@ -176,6 +176,7 @@ class Application:
             ),
             billing.create_price_source(self._storage["billing"]),
             self.cache,
+            identity.create_organization_source(self._storage["identity"]),
         )
         self._notifications = self.database.notifications(publication.SOURCE_CHANNEL)
         self.auto_publisher = publication.create_auto_publisher(

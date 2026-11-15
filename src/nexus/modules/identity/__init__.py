@@ -11,6 +11,7 @@ from .application.projects import ProjectService
 from .application.schemas import BootstrapResult
 from .application.service import IdentityService
 from .domain.events import ORGANIZATION_CREATED, ORGANIZATION_CREATED_VERSION
+from .persistence.organizations import create_organization_source
 from .persistence.repository import IdentityUnitOfWork
 from .persistence.snapshots import create_identity_source
 from .providers.authentication import AuthProviders
@@ -18,6 +19,7 @@ from .providers.authentication import AuthProviders
 __all__ = [
     "create_audit_reader",
     "create_identity_source",
+    "create_organization_source",
     "BootstrapResult",
     "IdentityService",
     "ProjectService",

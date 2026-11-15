@@ -5182,6 +5182,7 @@
           "identity"
         ],
         "summary": "Register",
+        "description": "Start a registration; the response does not reveal whether the login is taken.",
         "operationId": "register_api_v1_auth_registrations_post",
         "requestBody": {
           "content": {
@@ -5194,18 +5195,8 @@
           "required": true
         },
         "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RegistrationCreated"
-                }
-              }
-            }
-          },
           "202": {
-            "description": "Accepted",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -5224,6 +5215,7 @@
               }
             },
             "x-error-codes": [
+              "registration_unavailable",
               "turnstile_rejected",
               "turnstile_required"
             ]
@@ -5238,9 +5230,7 @@
               }
             },
             "x-error-codes": [
-              "auth_policy_changed",
-              "conflict",
-              "login_in_use"
+              "auth_policy_changed"
             ]
           },
           "422": {
@@ -5307,7 +5297,6 @@
               "authentication_unavailable",
               "mail_unavailable",
               "storage_unavailable",
-              "turnstile_not_configured",
               "turnstile_unavailable"
             ]
           }
@@ -5443,7 +5432,6 @@
             "x-error-codes": [
               "authentication_unavailable",
               "storage_unavailable",
-              "turnstile_not_configured",
               "turnstile_unavailable"
             ]
           }
@@ -5643,7 +5631,6 @@
             "x-error-codes": [
               "authentication_unavailable",
               "storage_unavailable",
-              "turnstile_not_configured",
               "turnstile_unavailable"
             ]
           }
@@ -5880,6 +5867,7 @@
             "description": "Request is malformed or violates a business rule",
             "x-error-codes": [
               "invalid_version",
+              "registration_requires_email_verification",
               "validation_error"
             ],
             "content": {
@@ -5984,6 +5972,7 @@
               }
             },
             "x-error-codes": [
+              "registration_unavailable",
               "turnstile_rejected",
               "turnstile_required"
             ]
@@ -6065,7 +6054,6 @@
             "x-error-codes": [
               "authentication_unavailable",
               "storage_unavailable",
-              "turnstile_not_configured",
               "turnstile_unavailable"
             ]
           }
@@ -6203,7 +6191,6 @@
               "authentication_unavailable",
               "mail_unavailable",
               "storage_unavailable",
-              "turnstile_not_configured",
               "turnstile_unavailable"
             ]
           }
@@ -6339,7 +6326,6 @@
             "x-error-codes": [
               "authentication_unavailable",
               "storage_unavailable",
-              "turnstile_not_configured",
               "turnstile_unavailable"
             ]
           }
@@ -6468,7 +6454,6 @@
               "authentication_unavailable",
               "mail_unavailable",
               "storage_unavailable",
-              "turnstile_not_configured",
               "turnstile_unavailable"
             ]
           }
@@ -6597,7 +6582,6 @@
             "x-error-codes": [
               "authentication_unavailable",
               "storage_unavailable",
-              "turnstile_not_configured",
               "turnstile_unavailable"
             ]
           }
@@ -23295,6 +23279,12 @@
       },
       "AuthPolicy": {
         "properties": {
+          "registration": {
+            "type": "boolean",
+            "title": "Registration",
+            "description": "Self-service registration; requires email_verification. Omitted means closed.",
+            "default": false
+          },
           "email_verification": {
             "type": "boolean",
             "title": "Email Verification"
@@ -23314,6 +23304,10 @@
       },
       "AuthPolicyView": {
         "properties": {
+          "registration": {
+            "type": "boolean",
+            "title": "Registration"
+          },
           "email_verification": {
             "type": "boolean",
             "title": "Email Verification"
@@ -23330,6 +23324,7 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "registration",
           "email_verification",
           "turnstile",
           "version"
@@ -28929,6 +28924,10 @@
       },
       "PublicAuthOptions": {
         "properties": {
+          "registration": {
+            "type": "boolean",
+            "title": "Registration"
+          },
           "email_verification": {
             "type": "boolean",
             "title": "Email Verification"
@@ -28956,6 +28955,7 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "registration",
           "email_verification",
           "turnstile",
           "turnstile_site_key",
@@ -31870,6 +31870,13 @@
         "retry": "after_correction"
       }
     ],
+    "registration_unavailable": [
+      {
+        "status": 403,
+        "action": "contact_administrator",
+        "retry": "after_correction"
+      }
+    ],
     "turnstile_rejected": [
       {
         "status": 403,
@@ -32351,11 +32358,6 @@
         "status": 409,
         "action": "configure_provider",
         "retry": "after_correction"
-      },
-      {
-        "status": 503,
-        "action": "configure_provider",
-        "retry": "after_correction"
       }
     ],
     "account_frozen": [
@@ -32688,6 +32690,13 @@
       }
     ],
     "query_required": [
+      {
+        "status": 422,
+        "action": "correct_input",
+        "retry": "after_correction"
+      }
+    ],
+    "registration_requires_email_verification": [
       {
         "status": 422,
         "action": "correct_input",

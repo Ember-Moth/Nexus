@@ -96,7 +96,10 @@ export type paths = {
         };
         get?: never;
         put?: never;
-        /** Register */
+        /**
+         * Register
+         * @description Start a registration; the response does not reveal whether the login is taken.
+         */
         post: operations["register_api_v1_auth_registrations_post"];
         delete?: never;
         options?: never;
@@ -2151,6 +2154,12 @@ export type components = {
         AuthPolicy: {
             /** Email Verification */
             email_verification: boolean;
+            /**
+             * Registration
+             * @description Self-service registration; requires email_verification. Omitted means closed.
+             * @default false
+             */
+            registration: boolean;
             /** Turnstile */
             turnstile: boolean;
         };
@@ -2158,6 +2167,8 @@ export type components = {
         AuthPolicyView: {
             /** Email Verification */
             email_verification: boolean;
+            /** Registration */
+            registration: boolean;
             /** Turnstile */
             turnstile: boolean;
             /** Version */
@@ -4264,6 +4275,8 @@ export type components = {
             email_delivery_available: boolean;
             /** Email Verification */
             email_verification: boolean;
+            /** Registration */
+            registration: boolean;
             /** Turnstile */
             turnstile: boolean;
             /** Turnstile Site Key */
@@ -5760,15 +5773,6 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RegistrationCreated"];
-                };
-            };
-            /** @description Accepted */
             202: {
                 headers: {
                     [name: string]: unknown;

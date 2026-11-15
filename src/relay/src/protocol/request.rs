@@ -398,6 +398,12 @@ impl Generate {
                 }
                 match (endpoint, tool["type"].as_str()) {
                     (Endpoint::AnthropicMessages, _)
+                        if super::execution::dynamic_fetch(tool)
+                            && !super::hosted::public_domains(tool) =>
+                    {
+                        return Err(ProtocolError::Invalid("web fetch domain"));
+                    }
+                    (Endpoint::AnthropicMessages, _)
                         if super::execution::code_tool(tool)
                             || super::execution::dynamic_fetch(tool) =>
                     {
@@ -407,6 +413,9 @@ impl Generate {
                     (Endpoint::AnthropicMessages, Some("web_fetch_20250910"))
                         if tool["name"] == "web_fetch" =>
                     {
+                        if !super::hosted::public_domains(tool) {
+                            return Err(ProtocolError::Invalid("web fetch domain"));
+                        }
                         continue;
                     }
                     (Endpoint::OpenaiResponses, Some("mcp"))

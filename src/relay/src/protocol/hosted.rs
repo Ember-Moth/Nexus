@@ -3,15 +3,111 @@ use super::ProtocolError;
 use serde_json::Value;
 use std::collections::HashSet;
 
+/// A remote tool endpoint the provider calls on the tenant's behalf. Private, loopback,
+/// link-local and other non-public destinations are refused even though the provider,
+/// not the node, opens the connection.
 pub(super) fn https_url(value: &Value) -> bool {
     value
         .as_str()
         .and_then(|s| url::Url::parse(s).ok())
         .is_some_and(|url| {
             url.scheme() == "https"
-                && url.host().is_some()
+                && url.host().is_some_and(public_host)
                 && url.username().is_empty()
                 && url.password().is_none()
+        })
+}
+
+pub(crate) fn public_host(host: url::Host<&str>) -> bool {
+    match host {
+        url::Host::Ipv4(ip) => public_v4(ip),
+        url::Host::Ipv6(ip) => public_v6(ip),
+        url::Host::Domain(name) => public_name(name),
+    }
+}
+
+fn public_v4(ip: std::net::Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    !(ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_broadcast()
+        || ip.is_multicast()
+        || ip.is_documentation()
+        || a == 0
+        // Shared address space (CGNAT), IETF protocol assignments, benchmarking, reserved.
+        || a == 100 && (64..128).contains(&b)
+        || a == 192 && b == 0 && c == 0
+        || a == 198 && (b == 18 || b == 19)
+        || a >= 240)
+}
+
+fn public_v6(ip: std::net::Ipv6Addr) -> bool {
+    let s = ip.segments();
+    let embedded = |hi: u16, lo: u16| {
+        public_v4(std::net::Ipv4Addr::from(
+            (u32::from(hi) << 16) | u32::from(lo),
+        ))
+    };
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return public_v4(v4);
+    }
+    match s {
+        // NAT64 well-known prefix and 6to4 carry an IPv4 destination.
+        [0x64, 0xff9b, 0, 0, 0, 0, hi, lo] => embedded(hi, lo),
+        [0x2002, hi, lo, ..] => embedded(hi, lo),
+        // IPv4-compatible (deprecated) addresses, including :: and ::1.
+        [0, 0, 0, 0, 0, 0, _, _] => false,
+        _ => {
+            !(ip.is_multicast()
+                || s[0] & 0xfe00 == 0xfc00
+                || s[0] & 0xffc0 == 0xfe80
+                || s[0] & 0xffc0 == 0xfec0
+                || s[0] == 0x2001 && s[1] == 0x0db8)
+        }
+    }
+}
+
+fn public_name(name: &str) -> bool {
+    let name = name.strip_suffix('.').unwrap_or(name).to_ascii_lowercase();
+    let Some((_, tld)) = name.rsplit_once('.') else {
+        // Single-label names resolve through local search domains.
+        return false;
+    };
+    !name.split('.').any(str::is_empty)
+        && !matches!(
+            tld,
+            "localhost"
+                | "local"
+                | "localdomain"
+                | "internal"
+                | "intranet"
+                | "private"
+                | "corp"
+                | "home"
+                | "lan"
+                | "arpa"
+                | "test"
+                | "invalid"
+                | "example"
+                | "onion"
+        )
+}
+
+/// Domain filters of a provider fetch tool may only widen access to public hosts.
+pub(super) fn public_domains(tool: &Value) -> bool {
+    tool.get("allowed_domains")
+        .filter(|v| !v.is_null())
+        .is_none_or(|domains| {
+            domains.as_array().is_some_and(|domains| {
+                domains.iter().all(|d| {
+                    d.as_str()
+                        .map(|d| d.split(['/', '?', '#']).next().unwrap_or_default())
+                        .and_then(|d| url::Url::parse(&format!("https://{d}")).ok())
+                        .is_some_and(|u| u.host().is_some_and(public_host) && u.port().is_none())
+                })
+            })
         })
 }
 
@@ -267,4 +363,71 @@ pub(crate) fn resource_fields(value: &Value) -> Vec<(String, bool)> {
     let mut fields = Vec::new();
     visit(value, "", &mut fields);
     fields
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn remote_tool_urls_require_a_public_https_host() {
+        for url in [
+            "https://mcp.example.com/sse",
+            "https://203.0.114.7/mcp",
+            "https://[2606:4700::1111]/mcp",
+            "https://tools.example.org.:8443/v1",
+        ] {
+            assert!(https_url(&json!(url)), "{url}");
+        }
+        for url in [
+            "http://mcp.example.com/sse",
+            "https://user@mcp.example.com/",
+            "https://localhost/mcp",
+            "https://api.localhost/mcp",
+            "https://metadata.google.internal/",
+            "https://printer.local/",
+            "https://intranet/",
+            "https://127.0.0.1/",
+            "https://127.1/",
+            "https://0x7f000001/",
+            "https://10.1.2.3/",
+            "https://172.16.0.9/",
+            "https://192.168.1.1/",
+            "https://169.254.169.254/latest/meta-data",
+            "https://100.64.0.1/",
+            "https://0.0.0.0/",
+            "https://[::1]/",
+            "https://[::]/",
+            "https://[fe80::1]/",
+            "https://[fd00::1]/",
+            "https://[::ffff:10.0.0.1]/",
+            "https://[64:ff9b::a9fe:a9fe]/",
+            "https://[2002:c0a8:0101::1]/",
+            "https://[ff02::1]/",
+        ] {
+            assert!(!https_url(&json!(url)), "{url}");
+        }
+    }
+
+    #[test]
+    fn fetch_domain_filters_cannot_allow_private_hosts() {
+        assert!(public_domains(&json!({"type":"web_fetch_20250910"})));
+        assert!(public_domains(
+            &json!({"allowed_domains":["example.com","docs.example.com/guide"]})
+        ));
+        assert!(public_domains(
+            &json!({"blocked_domains":["localhost","10.0.0.1"]})
+        ));
+        for domains in [
+            json!(["localhost"]),
+            json!(["169.254.169.254"]),
+            json!(["svc.internal"]),
+            json!(["example.com:8080"]),
+            json!("example.com"),
+            json!([1]),
+        ] {
+            assert!(!public_domains(&json!({ "allowed_domains": domains })));
+        }
+    }
 }

@@ -70,7 +70,7 @@ Chat 流会请求 `stream_options.include_usage`，并在收到结束原因和 `
 
 Messages 使用工具定义中的 `max_uses`，Responses 使用请求级 `max_tool_calls`。省略时 Relay 写入部署上限；显式上限超过部署能力时会在预留前拒绝。上游返回后，Messages 按 `usage.server_tool_use.web_search_requests` 结算，Responses 按终态输出中已完成的 `web_search_call` 的 `search` 动作结算。同一动作可以包含多个查询。搜索内容的 token 按供应商回执和模型定价处理；涉及固定检索 token 费用的模型，配置采购价时须核对供应商账单与回执覆盖范围。[Anthropic Web Search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) · [OpenAI Web Search](https://developers.openai.com/api/docs/guides/tools-web-search) · [OpenAI 工具定价](https://developers.openai.com/api/docs/pricing)
 
-搜索费与 token 费分别预留和结算。支持的动态过滤组合按供应商免执行附加费规则处理，未知费用维度会进入核对。Anthropic 批处理的 token 享受批量折扣，搜索次数按常规单价，客户组织折扣同时适用。用量缺失或含无法核实的搜索动作时进入核对。
+搜索费与 token 费分别预留和结算。支持的动态过滤组合按供应商免执行附加费规则处理，未知费用维度会进入核对。Anthropic 批处理的 token 享受批量折扣，搜索次数按常规单价，客户组织折扣同时适用。每次搜索后模型都会重新读取上下文，输入预留按 1 + 搜索上限次调用计算，规则见[多次模型调用](relay-design.md#首期协议与计量细则)。用量缺失或含无法核实的搜索动作时进入核对。
 
 ### File Search 和向量存储
 
@@ -112,7 +112,7 @@ Messages 使用工具定义中的 `max_uses`，Responses 使用请求级 `max_to
 
 ### Anthropic Message Batches
 
-向 `POST /v1/messages/batches` 提交 `requests`，每项带唯一的 `custom_id` 和非流式 Messages 参数。同一批可使用多个模型，须通过同一个原生 Anthropic 上游账户提交，各项分别使用选中部署的采购价和模型售价。请求体沿用节点大小上限，各项合计占用 RPM、TPM，一次批提交占用一个并发名额。所有项目在同一数据库事务中获得资金预留后，Relay 才向上游提交。
+向 `POST /v1/messages/batches` 提交 `requests`，每项带唯一的 `custom_id` 和非流式 Messages 参数。同一批可使用多个模型，须通过同一个原生 Anthropic 上游账户提交，各项分别使用选中部署的采购价和模型售价。请求体沿用节点大小上限，各项合计占用 RPM、TPM，一次批提交占用一个并发名额。所有项目在同一数据库事务中获得资金预留后，Relay 才向上游提交。批任务的服务端循环上限未公开，含代码执行、MCP、带动态过滤的搜索或抓取等无次数参数工具的项目无法确定输入上界，整批在预留前以 400 拒绝；`web_search_20250305` 按 `max_uses` 预留。
 
 用创建批任务的企业 Key 调用 `GET /v1/messages/batches` 分页，或用返回的句柄查询、取消及读取 JSONL 结果。批状态的 `results_url` 指向当前 Relay 的相对路径。Worker 按 `custom_id` 对应结果，成功项的 token 采购成本和客户售价按冻结单价的 50% 计算，客户折扣继续生效。终态为 canceled、expired 或 errored 的项目按零结算。数据库只保存批元数据、每项标识与计费事实。接单节点重启后会继续轮询。提交结果未知时转入核对；完成结果核对后可删除批资源。[Anthropic Message Batches](https://platform.claude.com/docs/en/build-with-claude/batch-processing)
 

@@ -1126,7 +1126,7 @@ async def test_payment_migration_cannot_erase_retained_remote_intents(
         await asyncio.to_thread(command.downgrade, config, "0006_pricing_reservations")
     assert (
         admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchone()[0]
-        == "0030_chat_upstream"
+        == "0031_model_call_bounds"
     )
     assert (
         admin.execute(

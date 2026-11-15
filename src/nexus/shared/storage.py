@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0030_chat_upstream"
+SCHEMA_REVISION = "0031_model_call_bounds"

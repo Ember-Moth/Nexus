@@ -4,7 +4,10 @@ use nexus_relay::protocol::{
     request::{Generate, Route, route},
     sse::Decoder,
     stream::{Observer, Terminal},
-    tokens::{Encoding, ReservationBounds, TextEstimate},
+    tokens::{
+        CallLoop, DEFAULT_TOOL_CALLS, Encoding, ReservationBounds, SERVER_LOOP_LIMIT, TextEstimate,
+        model_calls,
+    },
     usage::UsageEvidence,
     websocket::{ClientEvent, parse_event, validate_upgrade},
 };
@@ -586,4 +589,89 @@ fn claude_iteration_usage_checks_cache_tariffs_models_and_message_totals() {
         .unwrap()
         .remove("output_tokens");
     assert!(parse(&msg).unwrap().usage.raw_usage.is_none());
+}
+
+#[test]
+fn every_model_call_of_a_tool_loop_or_compaction_is_reserved() {
+    let interactive = CallLoop::Messages { batch: false };
+    let batch = CallLoop::Messages { batch: true };
+    let calls = |kind, mut body: Value| model_calls(kind, false, &mut body);
+    let search = |n: u64| json!({"type":"web_search_20250305","name":"web_search","max_uses":n});
+    let compact = json!({"edits":[{"type":"compact_20260112"}]});
+    // Client tools return to the caller: one call.
+    let client =
+        json!({"tools":[{"name":"f","input_schema":{}},{"type":"bash_20250124","name":"bash"}]});
+    assert_eq!(calls(interactive, client).unwrap(), 1);
+    // Each permitted search can add one sampling iteration that re-reads the prompt.
+    assert_eq!(calls(interactive, json!({"tools":[search(2)]})).unwrap(), 3);
+    assert_eq!(
+        calls(
+            interactive,
+            json!({"tools":[search(2)],"context_management":compact})
+        )
+        .unwrap(),
+        6
+    );
+    // Anthropic stops an interactive server loop after its documented iteration limit.
+    assert_eq!(
+        calls(interactive, json!({"tools":[search(40)]})).unwrap(),
+        SERVER_LOOP_LIMIT
+    );
+    assert_eq!(calls(batch, json!({"tools":[search(40)]})).unwrap(), 41);
+    for tool in [
+        json!({"type":"code_execution_20250825","name":"code_execution"}),
+        json!({"type":"web_fetch_20260209","name":"web_fetch","max_uses":2}),
+        json!({"type":"web_search_20260209","name":"web_search","max_uses":2}),
+    ] {
+        let body = json!({"tools":[search(1), tool]});
+        assert_eq!(calls(interactive, body.clone()).unwrap(), SERVER_LOOP_LIMIT);
+        // A batch has no documented loop limit, so an uncapped loop is rejected.
+        assert!(calls(batch, body).is_err());
+    }
+    assert!(calls(batch, json!({"mcp_servers":[{"type":"url"}]})).is_err());
+    assert_eq!(
+        calls(interactive, json!({"context_management":compact})).unwrap(),
+        2
+    );
+
+    let mut open = json!({"tools":[{"type":"code_interpreter","container":{"type":"auto"}}]});
+    assert_eq!(
+        model_calls(CallLoop::Responses, false, &mut open).unwrap(),
+        DEFAULT_TOOL_CALLS + 1
+    );
+    assert_eq!(open["max_tool_calls"], DEFAULT_TOOL_CALLS);
+    let mut functions = json!({"tools":[{"type":"function","name":"f"}]});
+    assert_eq!(
+        model_calls(CallLoop::Responses, false, &mut functions).unwrap(),
+        1
+    );
+    assert!(functions.get("max_tool_calls").is_none());
+    let capped = json!({"tools":[{"type":"web_search"}],"max_tool_calls":3,
+        "context_management":[{"type":"compaction","compact_threshold":1000}]});
+    assert_eq!(calls(CallLoop::Responses, capped).unwrap(), 8);
+    assert!(
+        calls(
+            CallLoop::Responses,
+            json!({"tools":[{"type":"file_search"}],"max_tool_calls":64})
+        )
+        .is_err()
+    );
+    assert_eq!(
+        calls(CallLoop::Single, json!({"tools":[search(5)]})).unwrap(),
+        1
+    );
+    assert_eq!(
+        model_calls(
+            interactive,
+            true,
+            &mut json!({"context_management":compact})
+        )
+        .unwrap(),
+        1
+    );
+
+    let mut bounds = ReservationBounds::for_deployment(200_000, 8, None).unwrap();
+    bounds.cover_model_calls(6).unwrap();
+    assert_eq!(bounds.inputs, 1_200_000);
+    assert!(bounds.cover_model_calls(1_000).is_err());
 }

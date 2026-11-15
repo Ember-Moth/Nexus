@@ -97,9 +97,11 @@ async def test_search_to_ledger(http, admin, tls, relay_binary, family, variant,
             body = json.loads(await reader.readexactly(int(hdr["content-length"])))
             sent.append(body)
             n = 3 if mode == "over" else 1
+            # After two searches the prompt has been read three times.
+            prompt = 11 if mode == "loop" else 2
             if messages:
                 usage = {
-                    "input_tokens": 2,
+                    "input_tokens": prompt,
                     "output_tokens": 1,
                     "cache_read_input_tokens": 0,
                     "cache_creation_input_tokens": 0,
@@ -172,7 +174,7 @@ async def test_search_to_ledger(http, admin, tls, relay_binary, family, variant,
                     "status": "completed",
                     "output": items,
                     "usage": {
-                        "input_tokens": 2,
+                        "input_tokens": prompt,
                         "output_tokens": 1,
                         "input_tokens_details": {"cached_tokens": 0},
                     },
@@ -308,7 +310,7 @@ async def test_search_to_ledger(http, admin, tls, relay_binary, family, variant,
                 assert admin.execute(
                     "SELECT web_search_limit,reserved_amount,charged_amount "
                     "FROM billing.request_runs ORDER BY created_at DESC LIMIT 1"
-                ).fetchone() == (2, 14, 6)
+                ).fetchone() == (2, 22, 6)
                 assert admin.execute(
                     "SELECT cost_amount FROM billing.request_attempts "
                     "ORDER BY created_at DESC LIMIT 1"
@@ -330,7 +332,7 @@ async def test_search_to_ledger(http, admin, tls, relay_binary, family, variant,
             admin.execute(
                 "SELECT web_search_limit,reserved_amount,charged_amount FROM billing.request_runs"
             ).fetchall()
-            == ([(2, 18, 8)] if variant == "preview" else [(2, 14, 6)]) * 2
+            == ([(2, 26, 8)] if variant == "preview" else [(2, 22, 6)]) * 2
         )
         assert (
             admin.execute("SELECT cost_amount FROM billing.request_attempts").fetchall()
@@ -352,6 +354,21 @@ async def test_search_to_ledger(http, admin, tls, relay_binary, family, variant,
         assert admin.execute(
             "SELECT review_reason FROM billing.request_runs ORDER BY created_at DESC LIMIT 1"
         ).fetchone() == ("authorized_bound_exceeded",)
+        # The extra search is held for review, yet the hold covers it: the wallet stays open.
+        org_id = plane[2]["id"]
+        assert admin.execute(
+            "SELECT status FROM billing.accounts WHERE organization_id=%s", (org_id,)
+        ).fetchone() == ("active",)
+        mode = "loop"
+        looped = await relay.post(path, headers=h, json=request)
+        assert looped.status_code == 200, looped.text
+        await wait_events(admin, 10)
+        assert await http[2].state.usage.process() == 1
+        price = 5 if variant == "preview" else 3
+        assert admin.execute(
+            "SELECT state,input_limit,charged_amount FROM billing.request_runs "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone() == ("settled", 12, 11 + 1 + price)
 
 
 async def test_batch_search_price_is_independent_of_token_discount(http, admin, tls, relay_binary):  # noqa: F811
@@ -443,7 +460,7 @@ async def test_batch_search_price_is_independent_of_token_discount(http, admin, 
         assert await http[2].state.usage.process() == 1
         assert admin.execute(
             "SELECT web_search_limit,reserved_amount,charged_amount FROM billing.request_runs"
-        ).fetchone() == (1, Decimal("5.6"), Decimal("3.6"))
+        ).fetchone() == (1, Decimal("7.2"), Decimal("3.6"))
         assert admin.execute("SELECT cost_amount FROM billing.request_attempts").fetchone() == (
             Decimal("1.8"),
         )

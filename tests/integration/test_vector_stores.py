@@ -321,7 +321,7 @@ async def test_native_vector_store_search_and_storage(http, admin, tls, relay_bi
             admin.execute(
                 "SELECT reserved_amount,charged_amount,file_search_limit FROM billing.request_runs"
             ).fetchall()
-            == [(16, 6, 2)] * 2
+            == [(24, 6, 2)] * 2
         )
         both = await relay.post(
             "/v1/responses",
@@ -336,7 +336,7 @@ async def test_native_vector_store_search_and_storage(http, admin, tls, relay_bi
         assert admin.execute(
             "SELECT reserved_amount,charged_amount FROM billing.request_runs "
             "WHERE web_search_limit=2"
-        ).fetchone() == (20, 11)
+        ).fetchone() == (28, 11)
         store["usage_bytes"] = 2**29
         admin.execute("UPDATE publication.vector_stores SET next_poll=clock_timestamp()")
         async with asyncio.timeout(8):

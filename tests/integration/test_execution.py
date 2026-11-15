@@ -265,7 +265,7 @@ async def test_messages_execution_scope_and_financial_evidence(http, admin, tls,
             admin.execute(
                 "SELECT execution_mode,reserved_amount,charged_amount FROM billing.request_runs"
             ).fetchall()
-            == [("bundled", 8, 3)] * 2
+            == [("bundled", 44, 3)] * 2
         )
         paid = await relay.post("/v1/messages", headers=h, json=req | {"container": container})
         assert paid.status_code == 200, paid.text
@@ -276,7 +276,7 @@ async def test_messages_execution_scope_and_financial_evidence(http, admin, tls,
             "billing.request_runs r JOIN billing.request_attempts a ON a.request_id=r.id "
             "WHERE r.execution_mode='metered'"
         ).fetchone()
-        assert (reserved, charged, state) == (14, None, "review")
+        assert (reserved, charged, state) == (50, None, "review")
         api, token, _, _ = http
 
         async def resolve(rid, aid, kind, quantity, reference):
@@ -355,7 +355,15 @@ async def test_messages_execution_scope_and_financial_evidence(http, admin, tls,
         assert before == len(seen)
 
 
-async def test_batch_execution_artifacts_and_receipt(http, admin, tls, relay_binary):  # noqa: F811
+async def test_batch_code_execution_has_no_loop_bound_and_is_rejected(
+    http,
+    admin,
+    tls,  # noqa: F811
+    relay_binary,  # noqa: F811
+):
+    """Message Batches run server tool loops past the interactive limit of ten iterations,
+    and the batch limit is not documented. Code execution and dynamic fetch take no
+    max_uses, so their input has no upper bound and the batch is rejected before any hold."""
     root = "/v1/messages/batches"
     batch_id = "msgbatch_exec"
     result = {
@@ -446,31 +454,13 @@ async def test_batch_execution_artifacts_and_receipt(http, admin, tls, relay_bin
             "tools": [tool],
         }
         free = base | {"tools": [tool, {"type": "web_fetch_20260309", "name": "web_fetch"}]}
-        res = await relay.post(
-            root,
-            headers=h,
-            json={
-                "requests": [
-                    {"custom_id": "free", "params": free},
-                    {"custom_id": "paid", "params": base},
-                ]
-            },
-        )
-        assert res.status_code == 200, res.text
-        url = root + "/" + res.json()["id"] + "/results"
-        first = await relay.get(url, headers=h)
-        second = await relay.get(url, headers=h)
-        assert first.status_code == 200 and first.content == second.content
-        rows = [json.loads(line) for line in first.text.splitlines()]
-        for r in rows:
-            m = r["result"]["message"]
-            assert m["container"]["id"].startswith("cntr_nx_") and m["content"][0]["content"][
-                "content"
-            ][0]["file_id"].startswith("file_nx_")
-        assert "container_batch" not in first.text and "file_batch_artifact" not in first.text
-        await wait_events(admin, 4)
-        assert await http[2].state.usage.process() == 2
+        for params in (free, base):
+            res = await relay.post(
+                root, headers=h, json={"requests": [{"custom_id": "item", "params": params}]}
+            )
+            assert res.status_code == 400, res.text
+        assert admin.execute("SELECT count(*) FROM billing.request_runs").fetchone() == (0,)
         assert admin.execute(
-            "SELECT execution_mode,reserved_amount,charged_amount FROM "
-            "billing.request_runs ORDER BY execution_mode"
-        ).fetchall() == [("bundled", 4, Decimal("1.5")), ("metered", 10, None)]
+            "SELECT held_amount FROM billing.accounts WHERE organization_id=%s",
+            (plane[2]["id"],),
+        ).fetchone() == (Decimal(0),)

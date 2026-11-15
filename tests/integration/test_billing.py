@@ -773,6 +773,28 @@ async def test_usage_overrun_freezes_account_without_clipping_or_overdraft(http,
     assert error.value.code == "account_frozen"
 
 
+async def test_token_counts_above_the_basis_settle_within_the_hold(http, admin):
+    """A multi-call request may read more input than one call's ceiling. If the charge is
+    still covered by the held reservation, the supplier receipt settles and nothing freezes."""
+    client, root, app, _ = http
+    org, _, _ = await setup_wallet(http, "10")
+    _, deployment, _, _, admission = await setup_model(http, org)
+    await app.state.reservations.reserve(admission)
+    result, _, _ = await settle_success(
+        app, admission, deployment, {"input_uncached_tokens": 7, "output_tokens": 2}
+    )
+    assert result.state == "settled" and result.charged_amount == Decimal(9)
+    wallet = await balance(client, root, org)
+    assert wallet["status"] == "active" and wallet["held_amount"] == "0.000000000000"
+    assert wallet["balance"] == "1.000000000000"
+    details = admin.execute(
+        "SELECT details FROM billing.audit_events WHERE action='request.token_bound_exceeded' "
+        "AND resource_id=%s",
+        (admission.request_id,),
+    ).fetchone()[0]
+    assert (details["input_limit"], details["input_used"]) == (4, 7)
+
+
 async def test_reconciliation_reports_drift_without_rewriting_facts(http, admin):
     client, root, _, _ = http
     org, _, _ = await setup_wallet(http, "10")

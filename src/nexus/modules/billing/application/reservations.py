@@ -189,7 +189,10 @@ class ReservationService:
                 for dimension, value in facts.quantities.items()
                 if dimension.startswith("input_")
             )
-            if (
+            # Tool and metered units are capped by what the customer declared (max_uses,
+            # max_tool_calls, execution or container time). Exceeding one needs a decision,
+            # but the held funds still cover the request, so the account is not frozen.
+            units_exceeded = bool(
                 facts.quantities.get("web_search_requests", 0) > request.web_search_limit
                 or any(
                     q > request.guardrail_unit_limit
@@ -213,12 +216,7 @@ class ReservationService:
                     and facts.quantities.get(request.container_unit, 0)
                     > request.container_minutes_limit
                 )
-                or input_used > request.input_limit
-                or facts.quantities["output_tokens"] > request.output_limit
-            ):
-                return await self._review(
-                    repo, account, request, "authorized_bound_exceeded", facts, freeze=True
-                )
+            )
             try:
                 amount, lines = usage_amount(
                     price.rates,
@@ -228,9 +226,34 @@ class ReservationService:
                 )
             except ValueError, TypeError:
                 return await self._review(repo, account, request, "invalid_final_usage", facts)
+            # Only a charge above the held reservation is exposure the platform has not
+            # secured; stop that account from widening it until finance decides.
             if amount > request.reserved_amount:
                 return await self._review(
                     repo, account, request, "authorized_bound_exceeded", facts, freeze=True
+                )
+            if units_exceeded:
+                return await self._review(
+                    repo, account, request, "authorized_bound_exceeded", facts
+                )
+            # Token limits are the reservation basis, not a customer cap: the supplier's
+            # receipt is complete and the charge is within the hold. Settle it, and leave
+            # an audit fact so a too-narrow bound can be found and corrected.
+            if (
+                input_used > request.input_limit
+                or facts.quantities["output_tokens"] > request.output_limit
+            ):
+                await repo.audit(
+                    None,
+                    "request.token_bound_exceeded",
+                    request.id,
+                    account.organization_id,
+                    {
+                        "input_limit": request.input_limit,
+                        "input_used": input_used,
+                        "output_limit": request.output_limit,
+                        "output_used": facts.quantities["output_tokens"],
+                    },
                 )
         return await self.post_settlement(
             repo,

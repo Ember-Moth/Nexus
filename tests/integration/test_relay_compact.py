@@ -186,7 +186,14 @@ async def test_native_compact_to_ledger(http, admin, tls, relay_binary):  # noqa
         assert admin.execute(
             "SELECT state,review_reason,reservation_state FROM billing.request_runs WHERE id=%s",
             (excessive.headers["x-request-id"],),
-        ).fetchone() == ("review", "authorized_bound_exceeded", "held")
+        ).fetchone() == ("settled", None, "captured")
+        # The receipt exceeds the output basis, yet the hold covers the charge: it settles and
+        # leaves an audit fact for the too-narrow bound instead of freezing the wallet.
+        assert admin.execute(
+            "SELECT details->>'output_used' FROM billing.audit_events "
+            "WHERE action='request.token_bound_exceeded' AND resource_id=%s",
+            (excessive.headers["x-request-id"],),
+        ).fetchone() == ("7",)
         assert admin.execute(
             "SELECT count(*) FROM billing.ledger_entries WHERE kind='usage_debit'"
-        ).fetchone() == (2,)
+        ).fetchone() == (3,)

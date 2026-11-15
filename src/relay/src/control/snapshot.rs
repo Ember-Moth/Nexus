@@ -10,7 +10,7 @@ use super::{ControlError, credential::CredentialRef, database::Snapshot};
 use crate::protocol::{
     Endpoint, cache,
     request::{Generate, Operation},
-    tokens::ReservationBounds,
+    tokens::{CallLoop, ReservationBounds},
 };
 
 pub const CAPABILITIES: &[&str] = &[
@@ -754,7 +754,7 @@ impl Index {
         request: &Generate,
         account: Option<&Deployment>,
     ) -> Result<Selection<'_>, Rejection> {
-        self.choose(secret, request, false, None, None, |dep, profile| {
+        let mut s = self.choose(secret, request, false, None, None, |dep, profile| {
             profile.endpoint == UpstreamProtocol::AnthropicMessages
                 && account.is_none_or(|owner| {
                     owner.credential_id == dep.credential_id
@@ -762,7 +762,23 @@ impl Index {
                         && owner.base_url == dep.base_url
                         && owner.upstream_version == dep.upstream_version
                 })
-        })
+        })?;
+        // Batches have no documented server loop limit: only declared tool caps bound them.
+        if request.operation == Operation::Generate {
+            use crate::protocol::tokens::model_calls;
+            let interactive = CallLoop::Messages { batch: false };
+            let batch = CallLoop::Messages { batch: true };
+            let single = model_calls(interactive, false, &mut s.body);
+            let calls = model_calls(batch, false, &mut s.body);
+            let (Ok(single), Ok(calls)) = (single, calls) else {
+                return Err(Rejection::Unsupported);
+            };
+            s.bounds.inputs /= single;
+            s.bounds
+                .cover_model_calls(calls)
+                .map_err(|_| Rejection::Unsupported)?;
+        }
+        Ok(s)
     }
     pub fn route(
         &self,
@@ -1264,6 +1280,24 @@ impl Index {
         ) {
             body["additionalModelRequestFields"][k] = v.clone();
         }
+        // Server tool loops and compaction bill several model calls, each up to the
+        // per-call input ceiling: reserve input for all of them, or reject before admission.
+        let calls = crate::protocol::tokens::model_calls(
+            if dep.is_chat() || p.endpoint == UpstreamProtocol::BedrockConverse && !p.bedrock_invoke
+            {
+                CallLoop::Single
+            } else if p.endpoint.representation() == Endpoint::AnthropicMessages {
+                CallLoop::Messages { batch: false }
+            } else {
+                CallLoop::Responses
+            },
+            request.operation != Operation::Generate,
+            &mut body,
+        )
+        .map_err(|_| Rejection::Unsupported)?;
+        bounds
+            .cover_model_calls(calls)
+            .map_err(|_| Rejection::Unsupported)?;
         if p.auto_prompt_cache {
             match p.endpoint {
                 UpstreamProtocol::OpenaiResponses => {

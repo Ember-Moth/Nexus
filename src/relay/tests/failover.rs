@@ -786,6 +786,18 @@ fn search_failover_preserves_the_frozen_call_limit() {
 }
 
 #[test]
+fn looping_requests_reserve_input_for_each_model_call() {
+    let f = fixture(&[(0, 1, json!({"web_search_ceiling":2}))]);
+    let plain = f.index.select("enterprise", &messages(json!({}))).unwrap();
+    assert_eq!(plain.bounds.inputs, 80);
+    let search = messages(json!({"tools":[{"type":"web_search_20250305","name":"web_search"}]}));
+    let looped = f.index.select("enterprise", &search).unwrap();
+    // The prompt is read again after each of the two permitted searches.
+    assert_eq!((looped.bounds.searches, looped.bounds.inputs), (2, 240));
+    assert_eq!(looped.bounds.outputs, 6);
+}
+
+#[test]
 fn guardrail_backup_cannot_raise_the_frozen_policy_exposure() {
     let profile = |units| {
         json!({"endpoint":"bedrock_converse","bedrock_guardrail_unit_ceiling":units,

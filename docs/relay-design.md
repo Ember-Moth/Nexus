@@ -103,6 +103,17 @@ new-api 的控制器在 Upgrade 后为每轮创建独立请求上下文，Relay 
 
 **上界。** Messages 强制执行 `max_tokens`，Responses 强制执行 `max_output_tokens`；对可省略参数由部署能力给出显式上限。预留前按最终模型、工具定义、序列化规则与实际转换内容核算输入。可使用部署已验证的硬上界（包括模型接受的输入上限）保守预留；其代价是更高的资金和 TPM 占用。预估 token 数本身不足以证明上界。不能覆盖的模型版本或参数组合继续留在联调范围。
 
+**多次模型调用。** 服务端工具循环和上下文压缩会在一个请求内多次调用模型，每次都重新读取上下文；供应商的 usage 是各次调用之和。部署的 `input_ceiling` 只约束单次调用，因此输入预留按“单次上界 × 可能的调用次数”计算，调用次数由最终上游请求决定：
+
+| 上游请求 | 可能的调用次数 |
+| --- | --- |
+| 无服务端工具，或 Chat Completions、Bedrock Converse | 1；Responses `compact` 和 count tokens 也为 1 |
+| Messages 服务端工具 | 只有 `web_search_20250305` 的 `max_uses` 能约束采样轮数：1 + 各工具 `max_uses` 之和。代码执行、MCP、带动态过滤的搜索和抓取没有次数参数。交互请求最多 10 轮，即 Anthropic 文档规定的服务端循环默认上限；Message Batches 的上限未公开，无法确定上界的批任务在预留前拒绝 |
+| Responses 内置工具 | 1 + `max_tool_calls`，它限制整个响应的内置工具调用总数。请求未给出时，搜索沿用部署上限；其余内置工具由 Relay 写入 10 |
+| 启用压缩（Messages `compact_*` 编辑或 Responses `context_management`） | 上述次数 × 2，每轮采样前最多一次压缩 |
+
+调用次数超过 64 或输入上界超过 10 亿时，请求在预留前以 400 拒绝。`catalog.v1_eligible` 接受不超过模型输入上限 64 倍的输入上界，单次调用仍受部署 `input_ceiling` 约束。输出上界不变：`max_tokens`、`max_output_tokens` 按响应生效。[服务端循环上限](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons) · [Web Search `max_uses`](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) · [Responses `max_tool_calls`](https://developers.openai.com/api/reference/resources/responses/methods/create) · [Claude 压缩](https://platform.claude.com/docs/en/build-with-claude/compaction)
+
 ### 分词器与输入上界
 
 首期由 Nexus 实现用量采集与统计，文本编码复用与目标部署匹配的成熟分词器。本地计数用于估算，资金预留使用已验证的上界，最终扣费依据上游实际 usage。

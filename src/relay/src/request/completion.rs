@@ -209,7 +209,13 @@ pub fn confirmed_tokens(endpoint: Endpoint, usage: &UsageEvidence) -> Option<u64
     match endpoint {
         Endpoint::OpenaiResponses => {
             let writes = n("cache_write_tokens").unwrap_or(0);
-            if n("cached_input_tokens")? + writes > input
+            // The Chat totals include cache hits even when the optional split is absent.
+            let cached = if usage.usage_format == crate::protocol::chat_upstream::FORMAT {
+                n("cached_input_tokens").unwrap_or(0)
+            } else {
+                n("cached_input_tokens")?
+            };
+            if cached + writes > input
                 || n("reasoning_tokens").unwrap_or(0) > output
                 || (writes > 0
                     && (n("cache_write_30m_tokens")? + n("cache_write_12h_tokens")? != writes))

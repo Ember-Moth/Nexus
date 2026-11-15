@@ -74,7 +74,7 @@ HTTP POST 路径延迟写出响应头，直到拿到可交付的上游响应。W
 | `POST /v1/messages` | OpenAI Responses | 将 Messages 请求转换为 Responses，返回 Messages 响应或 SSE。逐项核对工具往返、停止语义和客户端可见内容。 |
 | `POST /v1/responses` | Anthropic Messages | 将 Responses 请求转换为 Messages，返回 Responses 输出项或 SSE。核对调用 ID、参数增量、终止状态及不可映射字段的错误行为。 |
 
-入口路由使用明确的 HTTP 方法和路径。OpenAI Chat Completions、Gemini 和其他协议均在首期范围外，也不能作为中转协议或失败后的回退目标。每个启用组合分别记录文本、SSE、工具能力、真实用量格式和输入输出上界。WS 续接按下一节校验同一连接内的前序响应。需要跨连接持久会话或额外计价的托管工具，依各自的归属、恢复和计量能力另行启用。[目录当前字段](../src/nexus/modules/catalog/application/schemas.py)
+入口路由使用明确的 HTTP 方法和路径。Chat Completions 客户端通过 Responses 表示接入现有路由。Gemini 暂无客户端入口。每个启用组合分别记录文本、SSE、工具能力、真实用量格式和输入输出上界。WS 续接按下一节校验同一连接内的前序响应。需要跨连接持久会话或额外计价的托管工具，依各自的归属、恢复和计量能力另行启用。[目录当前字段](../src/nexus/modules/catalog/application/schemas.py)
 
 ## Responses WebSocket 会话
 
@@ -91,13 +91,13 @@ new-api 的控制器在 Upgrade 后为每轮创建独立请求上下文，Relay 
 
 **续接与重连。** 首期采用 `store=false`。同一活连接上保存已完成响应 ID、租户/Key、模型、部署、上游连接代次和上界依据等有界元数据；仅接受该会话可确认的 `previous_response_id`，所有权或父上下文不可确认时在准入前返回 `previous_response_not_found`。工具结果可作为下一轮增量输入。预留和 TPM 覆盖本轮**含前序上下文的完整输入上界**；无法从可信元数据推导时采用经验证的部署硬上界，仍无法覆盖则在准入前拒绝。每轮使用自己的实际 usage。客户端 event_id、上游 response ID 和 Nexus 资金幂等键各自独立。
 
-上游给出 `previous_response_not_found`、任一侧重连或节点更换时，失效的前序绑定不跨连接复用。返回协议错误，由客户端清空引用并显式提交完整历史；新请求重新选路和预留。已知上游错误按普通尝试事实收尾；写出结果未知的原请求保留核对。整个过程中避免缓存客户完整历史以重建上游会话。[OpenAI Docs：续接与连接本地状态](https://developers.openai.com/api/docs/guides/websocket-mode#continue-with-incremental-inputs)
+依赖连接内历史的上游给出 `previous_response_not_found` 时，客户端须重发历史；显式存储的 Nexus 响应句柄可跨连接重新校验。返回协议错误，由客户端清空引用并显式提交完整历史；新请求重新选路和预留。已知上游错误按普通尝试事实收尾；写出结果未知的原请求保留核对。整个过程中避免缓存客户完整历史以重建上游会话。[OpenAI Docs：续接与连接本地状态](https://developers.openai.com/api/docs/guides/websocket-mode#continue-with-incremental-inputs)
 
 **部署与运维。** catalog 在 Responses 部署上单独声明允许的传输（HTTP、WebSocket）和已验证的续接/取消能力，publication 发布给具备相应能力的节点。只有 HTTP 能力的部署不进入原生双端 WS 候选。跨协议转换的首期验收沿用 HTTP/SSE；Messages 入口继续使用 HTTP。负载均衡支持 Upgrade、长连接和排空。分别限制每租户/节点的空闲连接与活跃轮数、每条消息的重组大小、写队列、握手/首事件/空闲时限和连接寿命。长轮独立续租；背压超限时取消并核对。记录两端握手、连接复用、首事件、逐轮错误、取消、断线和积压，日志保留关联 ID，清除两端认证头和消息正文。
 
 ## 首期协议与计量细则
 
-**文本与工具。** 两种入口都从公开模型名解析模型 ID，由部署决定出站模型名。原生转发保留已启用字段，转换只覆盖可证明等价的显式文本上下文和自定义函数工具。Messages 的 `tool_use.id` 与 `tool_result.tool_use_id`、Responses 的 `function_call.call_id` 与 `function_call_output.call_id` 在同一对话中保持对应关系；Responses 的输出项 ID 单独处理。参数增量按工具索引或项 ID 归集，完整后解析 JSON。重复或失配 ID、无等价停止条件、依赖厂商私有思考签名的跨协议历史，在预留前返回参数错误。Responses 的 HTTP POST 路径采用显式输入历史、同步生成和 `store=false`；显式请求持久会话、后台运行或托管工具的调用在准入阶段拒绝。[OpenAI Docs：创建 Responses](https://developers.openai.com/api/reference/resources/responses/methods/create) · [工具调用与输出项](https://developers.openai.com/api/docs/guides/migrate-to-responses)
+**文本与工具。** 两种入口都从公开模型名解析模型 ID，由部署决定出站模型名。原生转发保留已启用字段，转换只覆盖可证明等价的显式文本上下文和自定义函数工具。Messages 的 `tool_use.id` 与 `tool_result.tool_use_id`、Responses 的 `function_call.call_id` 与 `function_call_output.call_id` 在同一对话中保持对应关系；Responses 的输出项 ID 单独处理。参数增量按工具索引或项 ID 归集，完整后解析 JSON。重复或失配 ID、无等价停止条件、依赖厂商私有思考签名的跨协议历史，在预留前返回参数错误。Responses 默认使用显式输入历史及 `store=false`。启用 `store=true` 的原生请求以企业 Key 绑定 Nexus 句柄；读取、删除和继续生成时重新核对授权及原上游绑定。后台运行和托管工具有各自的生命周期与计量要求。[OpenAI Docs：创建 Responses](https://developers.openai.com/api/reference/resources/responses/methods/create) · [工具调用与输出项](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 
 **SSE 与交付。** Messages 跟踪消息和各内容块的开始、增量、结束，并识别流内错误；`message_delta` 的累计计数覆盖此前值。Responses 按事件类型、输出项和内容索引处理文本与函数参数，保留 completed、failed、incomplete 的区别。合法达到输出上限、已完成协议交付且有完整用量时，可按实际用量结算；未知原因的中断保留实际证据供核对。对上游新字段，原生路径可保留明确无关的可选字段；会影响计量、终态或工具语义的未知字段须进入显式处理。转换不得把 EOF 合成为成功结束。[Anthropic 流事件](https://platform.claude.com/docs/en/build-with-claude/streaming) · [OpenAI Docs：流式响应](https://developers.openai.com/api/docs/guides/streaming-responses)
 

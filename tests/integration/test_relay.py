@@ -137,7 +137,7 @@ async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
         "NEXUS_RELAY_LEASE_MS": "600",
     }
     secrets = [env["NEXUS_RELAY_PRIVATE_KEY"], info.password, urlsplit(redis_url).password]
-    inherited = {k: v for k, v in os.environ.items() if not k.startswith("RELAY_ACCEPTANCE_WS_")}
+    inherited = {k: v for k, v in os.environ.items() if not k.startswith("RELAY_ACCEPTANCE_")}
     log_dir = Path(tempfile.mkdtemp(prefix="relay-"))
     log_path = log_dir / "stderr.jsonl"
     # Append mode: tests read the file while the relay keeps writing to it.

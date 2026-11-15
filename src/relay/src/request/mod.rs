@@ -34,10 +34,12 @@ pub enum Response {
         status: StatusCode,
         body: Vec<u8>,
         receipt: oneshot::Sender<()>,
+        applied: crate::protocol::approximation::Choices,
     },
     Stream {
         body: mpsc::Receiver<Result<axum::body::Bytes, std::io::Error>>,
         receipt: oneshot::Sender<()>,
+        applied: crate::protocol::approximation::Choices,
     },
 }
 #[derive(Clone, Copy)]
@@ -63,6 +65,8 @@ impl From<Rejection> for Failure {
 impl From<ControlError> for Failure {
     fn from(e: ControlError) -> Self {
         match e.database_message() {
+            Some("response_pending") => Self(StatusCode::CONFLICT, "response_pending"),
+            Some("resource_not_found") => Self(StatusCode::NOT_FOUND, "response_not_found"),
             Some("key_inactive") => Self(StatusCode::UNAUTHORIZED, "invalid_api_key"),
             Some(
                 "model_forbidden" | "snapshot_forbidden" | "key_outside_cluster" | "account_frozen",
@@ -215,10 +219,11 @@ async fn open(
     selected: &Selection<'_>,
     exchange: Exchange<'_>,
     credential: &str,
-    stream: bool,
+    request: &Generate,
     sender: &mut Channel,
     timer: &mut UpstreamTimer,
 ) -> Opened {
+    let stream = request.stream;
     let (dep, body) = (selected.deployment, &selected.body);
     let trace = Trace {
         request: run.reservation.id,
@@ -232,6 +237,8 @@ async fn open(
     };
     let ep = exchange.upstream;
     let bedrock = dep.is_bedrock();
+    let converted_headers = (exchange.converts() && ep == Endpoint::AnthropicMessages)
+        .then(|| crate::protocol::request::AnthropicHeaders::for_converted(body));
     let call = async {
         if bedrock {
             crate::bedrock::transport::open(&node.upstream.client, dep, credential, body, stream)
@@ -239,12 +246,16 @@ async fn open(
         } else {
             node.upstream
                 .open(
-                    &dep.base_url,
+                    if dep.is_chat() {
+                        crate::upstream::Upstream::resource(&dep.base_url, "chat/completions")
+                    } else {
+                        crate::upstream::Upstream::endpoint(&dep.base_url, ep, selected.operation)
+                    },
                     ep,
-                    selected.operation,
                     credential,
                     body,
                     stream,
+                    converted_headers.as_ref().unwrap_or(&request.anthropic),
                 )
                 .await
         }
@@ -253,15 +264,22 @@ async fn open(
         .reservation
         .guarded(async {
             tokio::select! {biased;
-                _ = sender.closed() => None,
+                _ = sender.closed(), if !request.background() => None,
                 result = call => Some(result),
             }
         })
         .await;
     // Classify ambiguous replies even when there is no retry budget.
-    let failover = node.max_attempts > 1;
+    let failover = node.max_attempts > 1 && !request.background() && request.interpreter.is_none();
     let response = match opened {
         Ok(Some(Ok(response))) => response,
+        Ok(Some(Err(error))) if request.interpreter.is_some() && error.unsent() => {
+            let _ = node
+                .db
+                .unused_container(run.reservation.id, selected.key.id, true)
+                .await;
+            return Opened::Lost;
+        }
         Ok(Some(Err(error))) if failover && error.unsent() => {
             let reason = match error {
                 UpstreamError::Signing => FailoverReason::Signing,
@@ -299,12 +317,26 @@ async fn open(
     let reply = run
         .reservation
         .guarded(timeout(node.stream_idle, async {
-            if bedrock {
-                crate::bedrock::transport::buffered(response, exchange.public_model, &rid, limit)
-                    .await
+            if dep.is_chat() {
+                crate::protocol::chat_upstream::buffered(
+                    response,
+                    exchange.public_model,
+                    request.body(),
+                    limit,
+                )
+                .await
+            } else if bedrock && !dep.invoke() {
+                crate::bedrock::transport::buffered(
+                    response,
+                    exchange.public_model,
+                    &rid,
+                    limit,
+                    selected.body.get("guardrailConfig").is_some(),
+                )
+                .await
             } else {
                 node.upstream
-                    .buffered(response, ep, selected.operation)
+                    .buffered(response, ep, selected.operation, selected.bounds.into())
                     .await
             }
         }))
@@ -321,6 +353,12 @@ async fn open(
                     .is_none_or(|counts| counts.values().all(|n| *n == 0)) =>
         {
             reply.outcome = "failed";
+            if request.interpreter.is_some() {
+                let _ = node
+                    .db
+                    .unused_container(run.reservation.id, selected.key.id, true)
+                    .await;
+            }
             if failover {
                 Opened::Declined(Some(reply), reason)
             } else {
@@ -340,10 +378,17 @@ pub async fn run(
     node: Arc<Node>,
     index: Arc<Index>,
     secret: String,
-    request: Generate,
+    mut request: Generate,
     mut sender: Channel,
     mut tally: RequestTally,
 ) {
+    if let Some(parent) = request.previous_response_id().and_then(Generate::handle)
+        && let Err(error) =
+            crate::control::stored::bind_parent(&node, &index, &secret, &mut request, parent).await
+    {
+        let _ = sender.send(Err(error));
+        return;
+    }
     let mut selected = match index.select(&secret, &request) {
         Ok(s) => s,
         Err(e) => {
@@ -396,12 +441,38 @@ pub async fn run(
             upstream: selected.upstream.representation(),
             public_model: &request.model,
         };
+        run.approximation = selected.approximation.clone();
+        run.history = exchange.converts().then(|| {
+            let mut writer = crate::protocol::history::Writer::new(
+                node.history.clone(),
+                selected.key.id,
+                selected.model,
+                dep,
+                request.endpoint,
+            );
+            writer.hide_summary = match request.endpoint {
+                Endpoint::OpenaiResponses => {
+                    request.body().get("reasoning").is_some()
+                        && request.body()["reasoning"]["summary"].is_null()
+                }
+                Endpoint::AnthropicMessages => {
+                    request.body()["thinking"]["display"] == "omitted"
+                        || request.body()["thinking"]["type"] == "disabled"
+                }
+            };
+            writer
+        });
         let trace = Trace {
             request: run.reservation.id,
             deployment: dep.id,
             endpoint: request.endpoint,
             transport,
         };
+        if run.approximation.applied.active() {
+            let (rules, billing) = run.approximation.applied.labels();
+            tracing::info!(request_id=%run.reservation.id,attempt_id=%run.attempt_id(),deployment_id=%dep.id,
+                approximation=%rules,billing_basis=%billing,"request approximation applied");
+        }
         let mut timer = UpstreamTimer::start(request.endpoint, transport);
         let opened = open(
             &node,
@@ -409,7 +480,7 @@ pub async fn run(
             &selected,
             exchange,
             &credential,
-            request.stream,
+            &request,
             &mut sender,
             &mut timer,
         )
@@ -417,7 +488,16 @@ pub async fn run(
         let answer = match opened {
             Opened::Answer(answer) => answer,
             Opened::Buffered(reply) => {
-                deliver(run, sender, reply, exchange, limit, trace).await;
+                deliver(
+                    run,
+                    sender,
+                    reply,
+                    exchange,
+                    limit,
+                    trace,
+                    request.chat.is_some(),
+                )
+                .await;
                 return;
             }
             Opened::Lost => {
@@ -453,7 +533,7 @@ pub async fn run(
                     let target = lifecycle::Target {
                         deployment: next.deployment.id,
                         endpoint: next.upstream.representation(),
-                        usage_format: next.upstream.usage_format(),
+                        usage_format: next.usage_format(),
                     };
                     let evidence = reply.as_ref().map_or(
                         UsageEvidence {
@@ -472,7 +552,16 @@ pub async fn run(
                                 trace.failover(attempt, candidate, reason, stop);
                                 let respond = async {
                                     if let Some(reply) = reply {
-                                        let _ = write_reply(sender, reply, exchange, limit).await;
+                                        let _ = write_reply(
+                                            sender,
+                                            reply,
+                                            exchange,
+                                            limit,
+                                            request.chat.is_some(),
+                                            None,
+                                            &selected.approximation,
+                                        )
+                                        .await;
                                     } else {
                                         let _ = sender.send(Err(Failure::upstream()));
                                     }
@@ -502,7 +591,18 @@ pub async fn run(
                 trace.failover(attempt, candidate, reason, result);
                 // The last declined attempt is the client's answer; nothing was executed.
                 match reply {
-                    Some(reply) => deliver(run, sender, reply, exchange, limit, trace).await,
+                    Some(reply) => {
+                        deliver(
+                            run,
+                            sender,
+                            reply,
+                            exchange,
+                            limit,
+                            trace,
+                            request.chat.is_some(),
+                        )
+                        .await
+                    }
                     None => {
                         let _ = sender.send(Err(Failure::upstream()));
                         let format = run.usage_format();
@@ -521,29 +621,187 @@ pub async fn run(
                 return;
             }
         };
+        let mut resources = (!dep.is_bedrock()).then(|| {
+            crate::control::resources::ResourceScope::new(
+                &node.db,
+                selected.key.id,
+                index.revision,
+                selected.model,
+                dep.id,
+            )
+            .execution(
+                exchange.upstream,
+                (selected.bounds.execution_mode != crate::protocol::execution::ExecutionMode::None)
+                    .then_some(id),
+                request.container_provider(),
+            )
+            .interpreter(request.interpreter.is_some().then_some(id))
+        });
         if request.stream {
-            sse::forward(node, run, dep, exchange, answer, sender, timer).await;
+            sse::forward(
+                node,
+                run,
+                dep,
+                exchange,
+                answer,
+                sender,
+                timer,
+                request.chat,
+                request.body(),
+                request.stored(),
+                request.conversation.clone(),
+                selected.bounds.into(),
+                selected.body.get("guardrailConfig").is_some(),
+                request.background(),
+                resources,
+            )
+            .await;
             return;
         }
         let rid = run.reservation.id.to_string();
         let reading = async {
-            if dep.is_bedrock() {
-                crate::bedrock::transport::buffered(answer, &request.model, &rid, limit).await
+            if dep.is_chat() {
+                crate::protocol::chat_upstream::buffered(
+                    answer,
+                    exchange.public_model,
+                    request.body(),
+                    limit,
+                )
+                .await
+            } else if dep.is_bedrock() && !dep.invoke() {
+                crate::bedrock::transport::buffered(
+                    answer,
+                    &request.model,
+                    &rid,
+                    limit,
+                    selected.body.get("guardrailConfig").is_some(),
+                )
+                .await
             } else {
                 node.upstream
-                    .buffered(answer, exchange.upstream, request.operation)
+                    .buffered(
+                        answer,
+                        exchange.upstream,
+                        request.operation,
+                        selected.bounds.into(),
+                    )
                     .await
             }
         };
         let result = run
             .reservation
             .guarded(async {
-                tokio::select! {_=sender.closed()=>None,r=reading=>Some(r)}
+                tokio::select! {_=sender.closed(),if !request.background()=>None,r=reading=>Some(r)}
             })
             .await;
         drop(timer);
-        if let Ok(Some(Ok(reply))) = result {
-            deliver(run, sender, reply, exchange, limit, trace).await;
+        if let Ok(Some(Ok(mut reply))) = result {
+            if reply.outcome == "pending" && !request.background() {
+                let _ = sender.send(Err(Failure::upstream()));
+                run.ended(None, false).await;
+                return;
+            }
+            let mut background_register_started = false;
+            if (resources.is_some() || request.stored() || request.conversation.is_some())
+                && reply.status.is_success()
+            {
+                let handle = Uuid::new_v4();
+                let persisted = async {
+                    let mut body: serde_json::Value =
+                        serde_json::from_slice(&reply.body).map_err(|_| Failure::upstream())?;
+                    if let Some(scope) = &mut resources {
+                        let changed = scope
+                            .rewrite(&mut body)
+                            .await
+                            .map_err(|_| Failure::upstream())?;
+                        if !changed && !request.stored() && request.conversation.is_none() {
+                            return Ok(std::mem::take(&mut reply.body));
+                        }
+                    }
+                    if let Some(conversation) = &request.conversation {
+                        conversation
+                            .rewrite(&mut body)
+                            .map_err(|_| Failure::upstream())?;
+                    }
+                    if request.stored() {
+                        body["id"] = format!("resp_nx_{handle}").into();
+                    }
+                    let bytes = serde_json::to_vec(&body).map_err(|_| Failure::upstream())?;
+                    if bytes.len() > limit {
+                        return Err(Failure::upstream());
+                    }
+                    let provider = reply.response_id.as_deref();
+                    if request.background() {
+                        let provider = provider.ok_or_else(Failure::upstream)?;
+                        background_register_started = true;
+                        node.db
+                            .register_background(handle, id, run.attempt_id(), provider)
+                            .await
+                            .map_err(|e| {
+                                if !e.retryable() {
+                                    background_register_started = false;
+                                }
+                                Failure::from(e)
+                            })?;
+                    } else if request.stored() {
+                        node.db
+                            .save_response(
+                                handle,
+                                id,
+                                run.attempt_id(),
+                                provider.ok_or_else(Failure::upstream)?,
+                            )
+                            .await?;
+                    }
+                    Ok::<_, Failure>(bytes)
+                }
+                .await;
+                match persisted {
+                    Ok(bytes) => reply.body = bytes,
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                        if background_register_started {
+                            run.background_submitted(None).await;
+                        } else if reply.outcome == "pending" {
+                            run.ended(None, false).await;
+                        } else {
+                            run.finish(
+                                reply.outcome,
+                                "unknown",
+                                reply.response_id.as_deref(),
+                                reply.usage,
+                            )
+                            .await;
+                        }
+                        return;
+                    }
+                }
+            }
+            if background_register_started {
+                let terminal_usage = (reply.outcome != "pending").then(|| reply.usage.clone());
+                let _ = write_reply(
+                    sender,
+                    reply,
+                    exchange,
+                    limit,
+                    false,
+                    None,
+                    &run.approximation,
+                )
+                .await;
+                run.background_submitted(terminal_usage.as_ref()).await;
+                return;
+            }
+            deliver(
+                run,
+                sender,
+                reply,
+                exchange,
+                limit,
+                trace,
+                request.chat.is_some(),
+            )
+            .await;
         } else {
             trace.not_answered(&result);
             let _ = sender.send(Err(Failure::upstream()));
@@ -560,8 +818,18 @@ async fn deliver(
     exchange: Exchange<'_>,
     limit: usize,
     trace: Trace,
+    chat: bool,
 ) {
-    let delivered = write_reply(sender, reply, exchange, limit).await;
+    let delivered = write_reply(
+        sender,
+        reply,
+        exchange,
+        limit,
+        chat,
+        run.history.as_ref(),
+        &run.approximation,
+    )
+    .await;
     let (reply, written) = match delivered {
         Ok(pair) => pair,
         Err(reply) => {
@@ -601,11 +869,54 @@ async fn write_reply(
     mut reply: Reply,
     exchange: Exchange<'_>,
     limit: usize,
+    chat: bool,
+    history: Option<&crate::protocol::history::Writer>,
+    policy: &crate::protocol::approximation::Delivery,
 ) -> Result<(Reply, bool), Reply> {
-    if exchange.converts() {
-        let converted = serde_json::from_slice(&reply.body).ok().and_then(|body| {
-            convert::response::convert(exchange, &body, &reply.usage, reply.status.as_u16()).ok()
-        });
+    if exchange.converts() || chat {
+        let converted = serde_json::from_slice(&reply.body)
+            .ok()
+            .and_then(|mut body| {
+                let stopped = if let Some(stops) = &policy.stops
+                    && reply.status.is_success()
+                {
+                    stops.clip(&mut body).ok()?
+                } else {
+                    None
+                };
+                let (mut value, status) = if exchange.converts() {
+                    convert::response::with_history(
+                        exchange,
+                        &body,
+                        &reply.usage,
+                        reply.status.as_u16(),
+                        history,
+                    )
+                    .ok()?
+                } else {
+                    (body, reply.status.as_u16())
+                };
+                if chat && status < 400 {
+                    if value["status"] == "failed"
+                        || value.get("error").is_some_and(serde_json::Value::is_object)
+                    {
+                        return Some((serde_json::json!({"error":value["error"]}), 502));
+                    }
+                    let mut projected =
+                        crate::protocol::chat::response(&value, exchange.public_model).ok()?;
+                    if stopped.is_some() {
+                        projected["choices"][0]["finish_reason"] = "stop".into();
+                    }
+                    return Some((projected, status));
+                }
+                if let Some(marker) = stopped
+                    && exchange.client == Endpoint::AnthropicMessages
+                {
+                    value["stop_reason"] = "stop_sequence".into();
+                    value["stop_sequence"] = marker.into();
+                }
+                Some((value, status))
+            });
         let converted = converted
             .map(|(body, status)| (body.to_string().into_bytes(), status))
             .filter(|(wire, _)| wire.len() <= limit);
@@ -619,6 +930,7 @@ async fn write_reply(
     let (receipt, received) = oneshot::channel();
     let sent = sender
         .send(Ok(Response::Buffered {
+            applied: policy.applied,
             status: reply.status,
             body: std::mem::take(&mut reply.body),
             receipt,

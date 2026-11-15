@@ -40,7 +40,7 @@ pub enum ClientEvent {
     Create {
         event_id: Option<String>,
         stream_id: Option<String>,
-        request: Generate,
+        request: Box<Generate>,
     },
     Cancel {
         event_id: Option<String>,
@@ -91,7 +91,7 @@ pub fn parse_event(bytes: &[u8], limit: usize) -> Result<ClientEvent, ProtocolEr
             Ok(ClientEvent::Create {
                 event_id,
                 stream_id,
-                request: Generate::parse(Endpoint::OpenaiResponses, value, true)?,
+                request: Box::new(Generate::parse(Endpoint::OpenaiResponses, value, true)?),
             })
         }
         Some("response.cancel") => {

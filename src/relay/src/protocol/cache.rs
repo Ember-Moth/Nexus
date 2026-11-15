@@ -1,6 +1,6 @@
 //! Request-local cache hints and stable routing for an authorized deployment.
-use super::{Endpoint, ProtocolError, convert};
-use serde_json::{Value, json};
+use super::{Endpoint, convert};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -103,43 +103,6 @@ pub fn provider_key(seed: [u8; 32]) -> String {
 
 pub fn scoped_key(org: Uuid, model: Uuid, value: &str) -> String {
     provider_key(key_digest(org, model, value))
-}
-
-/// Translate only a boundary with the same location on both wire formats.
-pub(super) fn text_breakpoint(
-    source: Endpoint,
-    block: &Value,
-    translated: &mut Value,
-) -> convert::Result<()> {
-    match source {
-        Endpoint::AnthropicMessages => {
-            if let Some(marker) = block.get("cache_control") {
-                check_marker(marker, source)?;
-                translated["prompt_cache_breakpoint"] = json!({"mode":"explicit"});
-            }
-        }
-        Endpoint::OpenaiResponses => {
-            if let Some(marker) = block.get("prompt_cache_breakpoint") {
-                check_marker(marker, source)?;
-                translated["cache_control"] = json!({"type":"ephemeral"});
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn check_marker(marker: &Value, source: Endpoint) -> convert::Result<()> {
-    let (field, value) = match source {
-        Endpoint::AnthropicMessages => ("type", "ephemeral"),
-        Endpoint::OpenaiResponses => ("mode", "explicit"),
-    };
-    convert::fields(marker, &[field, "ttl"])?;
-    if marker[field] != value || marker.get("ttl").is_some() {
-        return Err(ProtocolError::Unsupported(
-            "nonportable cache lifetime or mode",
-        ));
-    }
-    Ok(())
 }
 
 pub fn to_responses(body: &Value) -> convert::Result<Value> {

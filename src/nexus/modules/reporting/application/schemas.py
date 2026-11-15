@@ -1,9 +1,10 @@
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from nexus.shared.views import DecimalString, Timestamp, View
+from nexus.shared.views import ByteSeconds, DecimalString, MeterCounts, Timestamp, View
 
 # Plain aliases: unlike ``type`` statements they do not become named OpenAPI components.
 TimeBasis = Literal["occurred_at", "posted_at"]
@@ -43,7 +44,7 @@ class ReportPage[T](Page[T]):
 
 class ChargeLine(View):
     dimension: str
-    quantity: int
+    quantity: int | Annotated[str, Field(pattern=r"^[0-9]+$")]
     unit_price: DecimalString
     unit_quantity: int
     discount_factor: DecimalString
@@ -62,6 +63,17 @@ class RequestRecord(View):
     billing_policy_version: str
     input_limit: int
     output_limit: int
+    web_search_limit: int = 0
+    guardrail_unit_limit: int = 0
+    file_search_limit: int = 0
+    execution_seconds_limit: int = 0
+    execution_mode: str = "none"
+    container_origin: UUID | None = None
+    container_handle: str | None = None
+    container_unit: str | None = None
+    container_minutes_limit: int = 0
+    container_tariff: str | None = None
+    storage_byte_seconds: ByteSeconds = 0
     currency: str
     reserved_amount: DecimalString
     charged_amount: DecimalString | None
@@ -132,7 +144,7 @@ class AttemptCostEntry(View):
     original_cost: DecimalString | None
     cost_lines: list[ChargeLine] | None
     correction_id: UUID | None
-    corrected_quantities: dict[str, int] | None
+    corrected_quantities: MeterCounts | None
     occurred_at: Timestamp
     posted_at: Timestamp | None
 
@@ -157,6 +169,26 @@ class LedgerRecord(View):
     model_id: UUID | None
 
 
+class VectorStorageDay(View):
+    id: UUID
+    vector_store_id: str
+    project_id: UUID
+    api_key_id: UUID
+    model_id: UUID
+    day: date
+    observed_byte_seconds: DecimalString
+    uncertain: bool
+    covered_until: Timestamp
+    request_id: UUID | None
+    posted_at: Timestamp | None
+    charged_amount: DecimalString | None
+    currency: str
+    sale_price_version_id: UUID
+    discount_version_id: UUID
+    reason: str | None
+    state: Literal["open", "pending", "review", "settled"]
+
+
 class CacheUsage(View):
     deployment_id: UUID
     model_id: UUID
@@ -172,7 +204,7 @@ class UsageBucket(View):
     group: str
     requests: int
     held_requests: int
-    quantities: dict[str, int]
+    quantities: MeterCounts
     held_amount: DecimalString
     charged_amount: DecimalString
     refund_amount: DecimalString

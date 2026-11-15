@@ -13,6 +13,22 @@ from pydantic import (
     model_validator,
 )
 
+type ToolDimension = Literal[
+    "guardrail_content_units",
+    "guardrail_image_units",
+    "guardrail_topic_units",
+    "guardrail_sensitive_units",
+    "guardrail_grounding_units",
+    "guardrail_reasoning_units",
+    "web_search_requests",
+    "file_search_calls",
+    "vector_storage_byte_seconds",
+    "code_execution_seconds",
+    "container_1g_minutes",
+    "container_4g_minutes",
+    "container_16g_minutes",
+    "container_64g_minutes",
+]
 type ProtocolFamily = Literal["openai_compatible", "anthropic", "gemini", "aws_bedrock"]
 type Status = Literal["active", "disabled", "archived"]
 type Dimension = Literal[
@@ -47,6 +63,7 @@ class ModelCreate(Schema):
     protocols: list[ProtocolFamily] = Field(min_length=1, max_length=4)
     capabilities: Capabilities = Field(default_factory=Capabilities)
     usage_schema: Literal["tokens.v1"] = "tokens.v1"
+    tool_dimensions: list[ToolDimension] = Field(default_factory=list, max_length=14)
     token_dimensions: list[Dimension] = Field(
         default_factory=lambda: ["input_uncached_tokens", "output_tokens"],
         min_length=2,
@@ -62,7 +79,7 @@ class ModelCreate(Schema):
             raise ValueError("name cannot be blank")
         return value.strip()
 
-    @field_validator("protocols", "token_dimensions")
+    @field_validator("protocols", "token_dimensions", "tool_dimensions")
     @classmethod
     def unique_values(cls, values):
         if len(values) != len(set(values)):
@@ -81,6 +98,7 @@ class ModelPatch(Schema):
     display_name: str | None = Field(default=None, min_length=1, max_length=200)
     capabilities: Capabilities | None = None
     protocols: list[ProtocolFamily] | None = Field(default=None, min_length=1, max_length=4)
+    tool_dimensions: list[ToolDimension] | None = Field(default=None, max_length=14)
     token_dimensions: list[Dimension] | None = Field(default=None, min_length=2, max_length=7)
     max_input_tokens: int | None = Field(default=None, ge=1, le=1_000_000_000, strict=True)
     max_output_tokens: int | None = Field(default=None, ge=1, le=1_000_000_000, strict=True)
@@ -185,10 +203,47 @@ def cache_dimensions(endpoint):
     return {"input_cache_read_tokens", write}
 
 
+class BedrockGuardrail(Schema):
+    guardrailIdentifier: str = Field(
+        min_length=1,
+        max_length=2048,
+        pattern=r"^([a-z0-9]+|arn:aws(-[^:]+)?:bedrock:[a-z0-9-]{1,20}:[0-9]{12}:guardrail/[a-z0-9]+)$",
+    )
+    guardrailVersion: str = Field(pattern=r"^([1-9][0-9]{0,7}|DRAFT)$")
+    trace: Literal["enabled", "disabled", "enabled_full"] = "disabled"
+
+
+class BedrockRequestOptions(Schema):
+    guardrailConfig: BedrockGuardrail | None = None
+    additionalModelRequestFields: dict = Field(default_factory=dict, max_length=32)
+
+    @model_validator(mode="after")
+    def nonempty(self):
+        if not self.guardrailConfig and not self.additionalModelRequestFields:
+            raise ValueError("A Converse option must configure a guardrail or model fields")
+        return self
+
+
 class RelayProfile(Schema):
+    bedrock_guardrail_unit_ceiling: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
+    bedrock_request_options: list[BedrockRequestOptions] = Field(
+        default_factory=list, max_length=32
+    )
+    container_tariff: Literal["session_20m", "minute_min_5"] = "session_20m"
+    container_reserve_minutes: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
+    code_execution: bool = False
+    execution_reserve_seconds: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
+    file_search_ceiling: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
+    web_search_variant: Literal["standard", "preview"] = "standard"
+    web_search_ceiling: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
+    bedrock_invoke: bool = False
+    bedrock_guardrail: BedrockGuardrail | None = None
+    bedrock_model_fields: dict = Field(default_factory=dict, max_length=32)
     auto_prompt_cache: bool = False
     convert_from: Literal["anthropic_messages", "openai_responses"] | None = None
-    endpoint: Literal["anthropic_messages", "openai_responses", "bedrock_converse"]
+    endpoint: Literal[
+        "anthropic_messages", "openai_responses", "bedrock_converse", "openai_chat_completions"
+    ]
     transports: list[Literal["http", "websocket"]] = Field(min_length=1, max_length=2)
     streaming: bool = False
     tools: bool = False
@@ -202,7 +257,74 @@ class RelayProfile(Schema):
 
     @model_validator(mode="after")
     def supported(self):
+        if self.container_reserve_minutes and (
+            self.endpoint != "openai_responses"
+            or not self.tools
+            or self.container_reserve_minutes
+            < (5 if self.container_tariff == "minute_min_5" else 20)
+        ):
+            raise ValueError(
+                "Container pricing requires native Responses tools and a hold "
+                "covering the session minimum"
+            )
+        if self.code_execution and (self.endpoint != "anthropic_messages" or not self.tools):
+            raise ValueError("Claude code execution requires a native Messages tool deployment")
+        if self.execution_reserve_seconds and (
+            not self.code_execution or self.execution_reserve_seconds < 300
+        ):
+            raise ValueError("A standalone execution hold must cover at least five minutes")
+        if self.file_search_ceiling and (self.endpoint != "openai_responses" or not self.tools):
+            raise ValueError("File Search requires native Responses with tools enabled")
+        if self.web_search_variant == "preview" and (
+            not self.web_search_ceiling or self.endpoint != "openai_responses"
+        ):
+            raise ValueError(
+                "Preview search pricing requires an enabled Responses Web Search deployment"
+            )
+        if self.web_search_ceiling and (not self.tools or self.endpoint == "bedrock_converse"):
+            raise ValueError(
+                "Web Search requires a native tool-enabled Messages or Responses deployment"
+            )
+        if self.bedrock_guardrail_unit_ceiling and not (
+            self.bedrock_guardrail or any(o.guardrailConfig for o in self.bedrock_request_options)
+        ):
+            raise ValueError("Guardrail unit bounds require a configured Converse guardrail")
+        if self.bedrock_invoke and self.endpoint != "bedrock_converse":
+            raise ValueError("Bedrock Invoke uses a Bedrock upstream")
+        if (
+            self.bedrock_guardrail or self.bedrock_model_fields or self.bedrock_request_options
+        ) and (self.endpoint != "bedrock_converse" or self.bedrock_invoke):
+            raise ValueError("Converse settings require a Converse deployment")
+        reserved = {
+            "model",
+            "messages",
+            "system",
+            "tools",
+            "tool_choice",
+            "max_tokens",
+            "maxTokens",
+            "inferenceConfig",
+            "guardrailConfig",
+            "additionalModelRequestFields",
+            "toolConfig",
+            "anthropic_version",
+            "anthropic_beta",
+            "stream",
+        }
+        model_fields = [
+            self.bedrock_model_fields,
+            *(v.additionalModelRequestFields for v in self.bedrock_request_options),
+        ]
+        if any(fields.keys() & reserved for fields in model_fields):
+            raise ValueError("Native model fields cannot override routing or inference bounds")
         ws = "websocket" in self.transports
+        if self.endpoint == "openai_chat_completions" and (
+            ws
+            or self.convert_from not in (None, "openai_responses")
+            or self.auto_prompt_cache
+            or self.web_search_ceiling
+        ):
+            raise ValueError("Chat Completions serves Responses over HTTP with explicit history")
         if self.endpoint == "bedrock_converse" and (
             ws or self.convert_from is not None or self.count_rule != "deployment_ceiling.v1"
         ):

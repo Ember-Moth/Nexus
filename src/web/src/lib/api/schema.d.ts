@@ -1222,6 +1222,23 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organizations/{organization_id}/vector-storage-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Vector Storage */
+        get: operations["list_vector_storage_api_v1_organizations__organization_id__vector_storage_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/payment-channels": {
         parameters: {
             query?: never;
@@ -1824,7 +1841,7 @@ export type components = {
             attempt_id: string;
             /** Corrected Quantities */
             corrected_quantities: {
-                [key: string]: number;
+                [key: string]: number | string;
             } | null;
             /** Correction Id */
             correction_id: string | null;
@@ -1904,6 +1921,27 @@ export type components = {
              * Format: uuid
              */
             resource_id: string;
+        };
+        /** BedrockGuardrail */
+        BedrockGuardrail: {
+            /** Guardrailidentifier */
+            guardrailIdentifier: string;
+            /** Guardrailversion */
+            guardrailVersion: string;
+            /**
+             * Trace
+             * @default disabled
+             * @enum {string}
+             */
+            trace: "enabled" | "disabled" | "enabled_full";
+        };
+        /** BedrockRequestOptions */
+        BedrockRequestOptions: {
+            /** Additionalmodelrequestfields */
+            additionalModelRequestFields?: {
+                [key: string]: unknown;
+            };
+            guardrailConfig?: components["schemas"]["BedrockGuardrail"] | null;
         };
         /** BudgetCreate */
         BudgetCreate: {
@@ -2280,7 +2318,7 @@ export type components = {
             dimension: string;
             discount_factor: components["schemas"]["DecimalString"];
             /** Quantity */
-            quantity: number;
+            quantity: number | string;
             unit_price: components["schemas"]["DecimalString"];
             /** Unit Quantity */
             unit_quantity: number;
@@ -2522,7 +2560,7 @@ export type components = {
             version: number;
         };
         /** @enum {string} */
-        Dimension: "input_uncached_tokens" | "input_cache_read_tokens" | "input_cache_write_5m_tokens" | "input_cache_write_1h_tokens" | "output_tokens";
+        Dimension: "input_uncached_tokens" | "input_cache_read_tokens" | "input_cache_write_5m_tokens" | "input_cache_write_1h_tokens" | "input_cache_write_30m_tokens" | "input_cache_write_12h_tokens" | "output_tokens";
         /** DiscountCreate */
         DiscountCreate: {
             /** Factor */
@@ -3092,6 +3130,8 @@ export type components = {
             public_name: string;
             /** Token Dimensions */
             token_dimensions?: components["schemas"]["Dimension"][];
+            /** Tool Dimensions */
+            tool_dimensions?: components["schemas"]["ToolDimension"][];
             /**
              * Usage Schema
              * @default tokens.v1
@@ -3113,6 +3153,8 @@ export type components = {
             status?: components["schemas"]["Status"] | null;
             /** Token Dimensions */
             token_dimensions?: components["schemas"]["Dimension"][] | null;
+            /** Tool Dimensions */
+            tool_dimensions?: components["schemas"]["ToolDimension"][] | null;
         };
         /** ModelView */
         ModelView: {
@@ -3142,6 +3184,8 @@ export type components = {
             status: components["schemas"]["Status"];
             /** Token Dimensions */
             token_dimensions?: components["schemas"]["Dimension"][];
+            /** Tool Dimensions */
+            tool_dimensions?: components["schemas"]["ToolDimension"][];
             /**
              * Usage Schema
              * @default tokens.v1
@@ -3786,6 +3830,9 @@ export type components = {
             /** Effective At */
             effective_at?: string | null;
         };
+        Quantities: {
+            [key: string]: number | string;
+        };
         /** Quota */
         Quota: {
             /**
@@ -3892,7 +3939,7 @@ export type components = {
              * Unit Quantity
              * @enum {integer}
              */
-            unit_quantity: 1 | 1000 | 1000000;
+            unit_quantity: 1 | 20 | 1000 | 3600 | 1000000 | 92771293593600;
         };
         /** ReceivingCreate */
         ReceivingCreate: {
@@ -4019,6 +4066,28 @@ export type components = {
         };
         /** RelayProfile */
         RelayProfile: {
+            /**
+             * Auto Prompt Cache
+             * @default false
+             */
+            auto_prompt_cache: boolean;
+            bedrock_guardrail?: components["schemas"]["BedrockGuardrail"] | null;
+            /**
+             * Bedrock Guardrail Unit Ceiling
+             * @default 0
+             */
+            bedrock_guardrail_unit_ceiling: number;
+            /**
+             * Bedrock Invoke
+             * @default false
+             */
+            bedrock_invoke: boolean;
+            /** Bedrock Model Fields */
+            bedrock_model_fields?: {
+                [key: string]: unknown;
+            };
+            /** Bedrock Request Options */
+            bedrock_request_options?: components["schemas"]["BedrockRequestOptions"][];
             /** Bound Reference */
             bound_reference: string;
             /**
@@ -4026,6 +4095,22 @@ export type components = {
              * @default false
              */
             cancellation: boolean;
+            /**
+             * Code Execution
+             * @default false
+             */
+            code_execution: boolean;
+            /**
+             * Container Reserve Minutes
+             * @default 0
+             */
+            container_reserve_minutes: number;
+            /**
+             * Container Tariff
+             * @default session_20m
+             * @enum {string}
+             */
+            container_tariff: "session_20m" | "minute_min_5";
             /**
              * Continuation
              * @default false
@@ -4042,7 +4127,17 @@ export type components = {
              * Endpoint
              * @enum {string}
              */
-            endpoint: "anthropic_messages" | "openai_responses" | "bedrock_converse";
+            endpoint: "anthropic_messages" | "openai_responses" | "bedrock_converse" | "openai_chat_completions";
+            /**
+             * Execution Reserve Seconds
+             * @default 0
+             */
+            execution_reserve_seconds: number;
+            /**
+             * File Search Ceiling
+             * @default 0
+             */
+            file_search_ceiling: number;
             /** Input Ceiling */
             input_ceiling: number;
             /** Output Ceiling */
@@ -4059,6 +4154,17 @@ export type components = {
             tools: boolean;
             /** Transports */
             transports: ("http" | "websocket")[];
+            /**
+             * Web Search Ceiling
+             * @default 0
+             */
+            web_search_ceiling: number;
+            /**
+             * Web Search Variant
+             * @default standard
+             * @enum {string}
+             */
+            web_search_variant: "standard" | "preview";
         };
         /** Release */
         Release: {
@@ -4159,6 +4265,18 @@ export type components = {
              */
             time_basis: "occurred_at" | "posted_at";
         };
+        /** ReportPage[VectorStorageDay] */
+        ReportPage_VectorStorageDay_: {
+            /** Items */
+            items: components["schemas"]["VectorStorageDay"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /**
+             * Time Basis
+             * @enum {string}
+             */
+            time_basis: "occurred_at" | "posted_at";
+        };
         /** RequestRecord */
         RequestRecord: {
             /**
@@ -4171,6 +4289,19 @@ export type components = {
             /** Charge Details */
             charge_details: components["schemas"]["ChargeLine"][] | null;
             charged_amount: components["schemas"]["DecimalString"] | null;
+            /** Container Handle */
+            container_handle?: string | null;
+            /**
+             * Container Minutes Limit
+             * @default 0
+             */
+            container_minutes_limit: number;
+            /** Container Origin */
+            container_origin?: string | null;
+            /** Container Tariff */
+            container_tariff?: string | null;
+            /** Container Unit */
+            container_unit?: string | null;
             created_at: components["schemas"]["Timestamp"];
             /** Currency */
             currency: string;
@@ -4179,8 +4310,28 @@ export type components = {
              * Format: uuid
              */
             discount_version_id: string;
+            /**
+             * Execution Mode
+             * @default none
+             */
+            execution_mode: string;
+            /**
+             * Execution Seconds Limit
+             * @default 0
+             */
+            execution_seconds_limit: number;
             expires_at: components["schemas"]["Timestamp"];
+            /**
+             * File Search Limit
+             * @default 0
+             */
+            file_search_limit: number;
             gross_amount: components["schemas"]["DecimalString"] | null;
+            /**
+             * Guardrail Unit Limit
+             * @default 0
+             */
+            guardrail_unit_limit: number;
             /**
              * Id
              * Format: uuid
@@ -4226,7 +4377,17 @@ export type components = {
             settled_at: components["schemas"]["Timestamp"] | null;
             /** State */
             state: string;
+            /**
+             * Storage Byte Seconds
+             * @default 0
+             */
+            storage_byte_seconds: string;
             waived_amount: components["schemas"]["DecimalString"];
+            /**
+             * Web Search Limit
+             * @default 0
+             */
+            web_search_limit: number;
         };
         /** Resolution */
         Resolution: {
@@ -4242,10 +4403,7 @@ export type components = {
             normalization_version?: string | null;
             /** Observation Id */
             observation_id?: string | null;
-            /** Quantities */
-            quantities?: {
-                [key: string]: number;
-            } | null;
+            quantities?: components["schemas"]["Quantities"] | null;
             reason: components["schemas"]["Nonblank"];
             /** Statement Id */
             statement_id?: string | null;
@@ -4506,6 +4664,8 @@ export type components = {
         Status: "active" | "disabled" | "archived";
         /** Format: date-time */
         Timestamp: string;
+        /** @enum {string} */
+        ToolDimension: "guardrail_content_units" | "guardrail_image_units" | "guardrail_topic_units" | "guardrail_sensitive_units" | "guardrail_grounding_units" | "guardrail_reasoning_units" | "web_search_requests" | "file_search_calls" | "vector_storage_byte_seconds" | "code_execution_seconds" | "container_1g_minutes" | "container_4g_minutes" | "container_16g_minutes" | "container_64g_minutes";
         /** UpstreamCreate */
         UpstreamCreate: {
             /** Base Url */
@@ -4558,7 +4718,7 @@ export type components = {
             provisional?: boolean | null;
             /** Quantities */
             quantities: {
-                [key: string]: number;
+                [key: string]: number | string;
             };
             refund_amount: components["schemas"]["DecimalString"];
             /** Requests */
@@ -4659,6 +4819,63 @@ export type components = {
         /** ValidationErrorResponse */
         ValidationErrorResponse: {
             error: components["schemas"]["ValidationErrorBody"];
+        };
+        /** VectorStorageDay */
+        VectorStorageDay: {
+            /**
+             * Api Key Id
+             * Format: uuid
+             */
+            api_key_id: string;
+            charged_amount: components["schemas"]["DecimalString"] | null;
+            covered_until: components["schemas"]["Timestamp"];
+            /** Currency */
+            currency: string;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /**
+             * Discount Version Id
+             * Format: uuid
+             */
+            discount_version_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Model Id
+             * Format: uuid
+             */
+            model_id: string;
+            observed_byte_seconds: components["schemas"]["DecimalString"];
+            posted_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Reason */
+            reason: string | null;
+            /** Request Id */
+            request_id: string | null;
+            /**
+             * Sale Price Version Id
+             * Format: uuid
+             */
+            sale_price_version_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "open" | "pending" | "review" | "settled";
+            /** Uncertain */
+            uncertain: boolean;
+            /** Vector Store Id */
+            vector_store_id: string;
         };
     };
     responses: never;
@@ -12419,6 +12636,91 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_vector_storage_api_v1_organizations__organization_id__vector_storage_usage_get: {
+        parameters: {
+            query?: {
+                api_key_id?: string | null;
+                cursor?: string | null;
+                end?: string | null;
+                limit?: number;
+                model_id?: string | null;
+                project_id?: string | null;
+                start?: string | null;
+                time_basis?: "occurred_at" | "posted_at";
+            };
+            header?: never;
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportPage_VectorStorageDay_"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description A storage or coordination dependency is unavailable */

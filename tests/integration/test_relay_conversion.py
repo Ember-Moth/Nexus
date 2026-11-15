@@ -282,9 +282,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
                     payload.pop("usage")
                 elif mode == "private_output":
                     if messages:
-                        payload["content"] = [
-                            {"type": "thinking", "thinking": "private", "signature": "fixture"}
-                        ]
+                        payload["content"] = [{"type": "unmapped_vendor_block", "value": "private"}]
                     else:
                         payload["output"] = [
                             {"type": "reasoning", "id": "private", "encrypted_content": "fixture"}
@@ -325,7 +323,9 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
         cross = 1 - native
         body = scenarios(model)
         # Unknown billing-affecting fields/private history must fail before reserving or sending.
-        unsupported = {"reasoning": {"effort": "high"}} if messages else {"stop_sequences": ["END"]}
+        unsupported = (
+            {"reasoning": {"effort": "minimal"}} if messages else {"stop_sequences": ["END"]}
+        )
         r = await public.post(
             paths[cross], headers=hdrs[cross], json={**body[cross], **unsupported}
         )

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from nexus.shared.errors import ServiceError
 
-from ..domain.money import usage_amount
+from ..domain.money import operation_factor, usage_amount
 from .common import digest, found, view
 from .schemas import RequestView
 
@@ -92,16 +92,16 @@ class ReservationService:
             raise ServiceError("invalid_evidence", "Cost evidence reference is required", 422)
         async with self._transactions() as repo:
             await repo.account(org_id)
-            found(await repo.get("request", request_id, org_id, lock=True))
+            request = found(await repo.get("request", request_id, org_id, lock=True))
             attempt = found(await repo.get("attempt", attempt_id, lock=True))
             if attempt.request_id != request_id:
                 found(None)
             cost = found(await repo.get("price", attempt.cost_price_version_id))
             return await self.record_cost_in(
-                repo, org_id, attempt, cost, quantities, evidence_reference
+                repo, request, attempt, cost, quantities, evidence_reference
             )
 
-    async def record_cost_in(self, repo, org_id, attempt, cost, quantities, evidence_reference):
+    async def record_cost_in(self, repo, request, attempt, cost, quantities, evidence_reference):
         fingerprint = digest({"quantities": quantities, "evidence_reference": evidence_reference})
         if attempt.usage_digest:
             if attempt.usage_digest != fingerprint:
@@ -113,7 +113,11 @@ class ReservationService:
                 "cost_amount": format(attempt.cost_amount, ".12f"),
             }
         try:
-            amount, lines = usage_amount(cost.rates, quantities)
+            amount, lines = usage_amount(
+                cost.rates,
+                quantities,
+                token_factor=operation_factor(request.billing_policy_version),
+            )
         except ValueError, TypeError:
             raise ServiceError(
                 "invalid_cost_usage", "Cost usage does not match its frozen price", 422
@@ -132,7 +136,7 @@ class ReservationService:
             None,
             "attempt.cost_confirmed",
             attempt.id,
-            org_id,
+            request.organization_id,
             {"evidence_reference": evidence_reference, "amount": str(amount)},
         )
         return {"attempt_id": attempt.id, "cost_amount": format(amount, ".12f")}
@@ -183,17 +187,45 @@ class ReservationService:
             input_used = sum(
                 value
                 for dimension, value in facts.quantities.items()
-                if dimension != "output_tokens"
+                if dimension.startswith("input_")
             )
             if (
-                input_used > request.input_limit
+                facts.quantities.get("web_search_requests", 0) > request.web_search_limit
+                or any(
+                    q > request.guardrail_unit_limit
+                    for k, q in facts.quantities.items()
+                    if k.startswith("guardrail_")
+                )
+                or facts.quantities.get("file_search_calls", 0) > request.file_search_limit
+                or (
+                    request.file_search_limit
+                    and request.web_search_limit
+                    and facts.quantities.get("web_search_requests", 0)
+                    + facts.quantities.get("file_search_calls", 0)
+                    > min(request.file_search_limit, request.web_search_limit)
+                )
+                or facts.quantities.get("vector_storage_byte_seconds", 0)
+                > request.storage_byte_seconds
+                or facts.quantities.get("code_execution_seconds", 0)
+                > request.execution_seconds_limit
+                or (
+                    request.container_unit
+                    and facts.quantities.get(request.container_unit, 0)
+                    > request.container_minutes_limit
+                )
+                or input_used > request.input_limit
                 or facts.quantities["output_tokens"] > request.output_limit
             ):
                 return await self._review(
                     repo, account, request, "authorized_bound_exceeded", facts, freeze=True
                 )
             try:
-                amount, lines = usage_amount(price.rates, facts.quantities, discount.factor)
+                amount, lines = usage_amount(
+                    price.rates,
+                    facts.quantities,
+                    discount.factor,
+                    token_factor=operation_factor(request.billing_policy_version),
+                )
             except ValueError, TypeError:
                 return await self._review(repo, account, request, "invalid_final_usage", facts)
             if amount > request.reserved_amount:

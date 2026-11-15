@@ -42,10 +42,11 @@ fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
             }
             let (family, format) = match profile["endpoint"].as_str().unwrap() {
                 "openai_responses" => ("openai_compatible", "openai.responses.v1"),
+                "bedrock_converse" => ("aws_bedrock","aws.bedrock.converse.v1"),
                 _ => ("anthropic", "anthropic.messages.v1"),
             };
             json!({"id":id,"model_id":model,"upstream_model":format!("actual-{id}"),
-                "base_url":"https://upstream.example/v1","credential_id":credential,
+                "base_url":"https://upstream.example/v1","region":"us-east-1","credential_id":credential,
                 "credential_version":1,"protocol_family":family,"usage_format":format,
                 "relay_profile":profile})
         })
@@ -57,7 +58,7 @@ fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
             json!({"deployment_id":id,"priority":priority,"weight":weight})
         })
         .collect();
-    let resources = json!({
+    let mut resources = json!({
         "key_verifiers":[{"id":key,"project_id":project,"organization_id":org,
             "digest":format!("{:x}",Sha256::digest(b"enterprise")),"expires_at":null}],
         "models":[{"id":model,"public_name":"public","token_dimensions":["input_cache_read_tokens","input_cache_write_30m_tokens","input_cache_write_5m_tokens"],"max_input_tokens":100,
@@ -70,6 +71,18 @@ fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
             "algorithm":"libsodium-sealed-box"}],
         "deployments":deployments,
     });
+    if candidates
+        .iter()
+        .any(|(_, _, p)| p.get("web_search_ceiling").is_some())
+    {
+        resources["models"][0]["tool_dimensions"] = json!(["web_search_requests"]);
+    }
+    if candidates
+        .iter()
+        .any(|(_, _, p)| p.get("bedrock_guardrail_unit_ceiling").is_some())
+    {
+        resources["models"][0]["tool_dimensions"] = json!(["guardrail_content_units"]);
+    }
     let mut snapshot = Snapshot {
         applied_revision: 0,
         node_id: Uuid::new_v4(),
@@ -78,7 +91,11 @@ fn fixture(candidates: &[(u32, u32, Value)]) -> Fixture {
         digest: String::new(),
         required_capabilities: [
             "relay.native.v1",
+            "relay.bedrock-converse.v1",
+            "relay.bedrock-settings.v1",
+            "relay.bedrock-guardrail-usage.v1",
             "relay.prompt-cache.v1",
+            "relay.web-search.v1",
             "relay.sse.v1",
             "relay.responses-ws.v1",
             "relay.messages-to-responses.v1",
@@ -104,6 +121,12 @@ fn messages(extra: Value) -> Generate {
 }
 
 const FROZEN: ReservationBounds = ReservationBounds {
+    guardrail_units: 0,
+    searches: 0,
+    file_searches: 0,
+    interpreter: None,
+    execution_mode: nexus_relay::protocol::execution::ExecutionMode::None,
+    execution_seconds: 0,
     inputs: 80,
     outputs: 6,
 };
@@ -187,6 +210,12 @@ fn a_fallback_must_fit_the_frozen_reservation() {
     assert_eq!(
         next.bounds,
         ReservationBounds {
+            guardrail_units: 0,
+            searches: 0,
+            file_searches: 0,
+            interpreter: None,
+            execution_mode: nexus_relay::protocol::execution::ExecutionMode::None,
+            execution_seconds: 0,
             inputs: 40,
             outputs: 6
         }
@@ -219,6 +248,12 @@ fn a_fallback_must_fit_the_frozen_reservation() {
     assert_eq!(next.body["max_output_tokens"], 6);
     assert_eq!(next.bounds.outputs, 6);
     let tighter = ReservationBounds {
+        guardrail_units: 0,
+        searches: 0,
+        file_searches: 0,
+        interpreter: None,
+        execution_mode: nexus_relay::protocol::execution::ExecutionMode::None,
+        execution_seconds: 0,
         inputs: 80,
         outputs: 4,
     };
@@ -527,4 +562,145 @@ fn compact_routes_only_to_native_http_responses_within_its_frozen_bounds() {
             .select("enterprise", &req)
             .is_err()
     );
+}
+
+#[test]
+fn search_failover_preserves_the_frozen_call_limit() {
+    let f = fixture(&[
+        (0, 1, json!({"web_search_ceiling":2})),
+        (1, 1, json!({"web_search_ceiling":1})),
+        (2, 1, json!({"web_search_ceiling":4})),
+    ]);
+    let req = messages(json!({"tools":[{"type":"web_search_20250305","name":"web_search"}]}));
+    let first = f.index.select("enterprise", &req).unwrap();
+    assert_eq!(first.bounds.searches, 2);
+    let second = f
+        .index
+        .fallback("enterprise", &req, &f.ids[..1], first.bounds)
+        .unwrap();
+    assert_eq!(second.deployment.id, f.ids[2]);
+    assert_eq!(second.body["tools"][0]["max_uses"], 2);
+    assert_eq!(second.bounds, first.bounds);
+}
+
+#[test]
+fn guardrail_backup_cannot_raise_the_frozen_policy_exposure() {
+    let profile = |units| {
+        json!({"endpoint":"bedrock_converse","bedrock_guardrail_unit_ceiling":units,
+            "bedrock_guardrail":{"guardrailIdentifier":"guard","guardrailVersion":"1","trace":"enabled"}})
+    };
+    let f = fixture(&[
+        (0, 1, profile(4)),
+        (1, 1, profile(6)),
+        (2, 1, json!({})),
+        (3, 1, profile(2)),
+    ]);
+    let req = messages(json!({}));
+    let first = f.index.select("enterprise", &req).unwrap();
+    assert_eq!(first.bounds.guardrail_units, 4);
+    let backup = f
+        .index
+        .fallback("enterprise", &req, &[first.deployment.id], first.bounds)
+        .unwrap();
+    assert_eq!(backup.deployment.id, f.ids[3]);
+    assert_eq!(backup.bounds.guardrail_units, 4);
+    assert!(
+        f.index
+            .fallback("enterprise", &req, &[f.ids[0], f.ids[3]], first.bounds)
+            .is_none()
+    );
+}
+
+#[test]
+fn exact_route_wins_over_preferred_approximation_and_retries_need_consent() {
+    use nexus_relay::protocol::approximation::Choices;
+    let f = fixture(&[
+        (
+            0,
+            1,
+            json!({"endpoint":"openai_responses","convert_from":"anthropic_messages","auto_prompt_cache":true}),
+        ),
+        (9, 1, json!({"endpoint":"anthropic_messages"})),
+    ]);
+    let mut req = messages(
+        json!({"stop_sequences":["END"],"messages":[{"role":"user","content":[{"type":"text","text":"go","cache_control":{"type":"ephemeral","ttl":"5m"}}]},{"role":"assistant","content":"Once"}]}),
+    );
+    let exact = f.index.select("enterprise", &req).unwrap();
+    assert_eq!(exact.deployment.id, f.ids[1]);
+    assert!(
+        f.index
+            .fallback("enterprise", &req, &[exact.deployment.id], exact.bounds)
+            .is_none()
+    );
+    let mut h = http::HeaderMap::new();
+    h.insert(
+        "x-nexus-allow-approximation",
+        "cache-5m=30m, stop=local, prefill=prompt".parse().unwrap(),
+    );
+    req.allow_approximation = Choices::parse(&h).unwrap();
+    let exact = f.index.select("enterprise", &req).unwrap();
+    assert_eq!(exact.deployment.id, f.ids[1]);
+    assert_eq!(exact.body["stop_sequences"], json!(["END"]));
+    assert_eq!(exact.body["messages"][1]["content"], "Once");
+    let backup = f
+        .index
+        .fallback("enterprise", &req, &[exact.deployment.id], exact.bounds)
+        .unwrap();
+    assert_eq!(backup.deployment.id, f.ids[0]);
+    assert_eq!(
+        backup.body["input"][0]["content"][0]["prompt_cache_breakpoint"]["ttl"],
+        "30m"
+    );
+    assert!(backup.body.get("stop_sequences").is_none());
+    assert_eq!(backup.body["input"][2]["role"], "user");
+}
+
+#[test]
+fn reverse_explicit_cache_lifetime_is_inherited_by_breakpoints_and_the_automatic_marker() {
+    use nexus_relay::protocol::approximation::Choices;
+    let mut h = http::HeaderMap::new();
+    h.insert(
+        "x-nexus-allow-approximation",
+        "cache-30m=5m, cache-12h=5m".parse().unwrap(),
+    );
+    let choice = Choices::parse(&h).unwrap();
+    for ep in ["anthropic_messages", "bedrock_converse"] {
+        let mut profile = json!({"endpoint":ep,"auto_prompt_cache":true});
+        if ep == "anthropic_messages" {
+            profile["convert_from"] = "openai_responses".into();
+        }
+        let f = fixture(&[(0, 1, profile)]);
+        let mut req=Generate::parse(Endpoint::OpenaiResponses,json!({"model":"public","input":[{"role":"user","content":[
+                {"type":"input_text","text":"a","prompt_cache_breakpoint":{"mode":"explicit"}},
+                {"type":"input_text","text":"b","prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}},
+                {"type":"input_text","text":"c"}]}],"prompt_cache_options":{"mode":"implicit","ttl":"30m"}}),false).unwrap();
+        assert!(f.index.select("enterprise", &req).is_err());
+        req.allow_approximation = choice;
+        let target = f.index.select("enterprise", &req).unwrap().body;
+        if ep == "anthropic_messages" {
+            assert_eq!(target["cache_control"]["ttl"], "5m");
+            assert_eq!(
+                target["messages"][0]["content"][0]["cache_control"]["ttl"],
+                "5m"
+            );
+            assert_eq!(
+                target["messages"][0]["content"][1]["cache_control"]["ttl"],
+                "5m"
+            );
+            assert!(
+                target["messages"][0]["content"][2]
+                    .get("cache_control")
+                    .is_none()
+            );
+        } else {
+            let markers = target["messages"][0]["content"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|p| p.get("cachePoint"))
+                .collect::<Vec<_>>();
+            assert_eq!(markers.len(), 3);
+            assert!(markers.iter().all(|p| p["ttl"] == "5m"));
+        }
+    }
 }

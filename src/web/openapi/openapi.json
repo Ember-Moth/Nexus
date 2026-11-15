@@ -16313,6 +16313,251 @@
           }
         }
       }
+    },
+    "/api/v1/organizations/{organization_id}/vector-storage-usage": {
+      "get": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "List Vector Storage",
+        "operationId": "list_vector_storage_api_v1_organizations__organization_id__vector_storage_usage_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "organization_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Organization Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "api_key_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api Key Id"
+            }
+          },
+          {
+            "name": "model_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model Id"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "name": "time_basis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "occurred_at",
+                "posted_at"
+              ],
+              "type": "string",
+              "default": "occurred_at",
+              "title": "Time Basis"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportPage_VectorStorageDay_"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource does not exist or is not visible to the caller",
+            "x-error-codes": [
+              "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "invalid_cursor",
+              "validation_error"
+            ]
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -16785,7 +17030,14 @@
             "anyOf": [
               {
                 "additionalProperties": {
-                  "type": "integer"
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
                 },
                 "type": "object"
               },
@@ -16925,6 +17177,62 @@
           "module"
         ],
         "title": "AuditEvent"
+      },
+      "BedrockGuardrail": {
+        "properties": {
+          "guardrailIdentifier": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "pattern": "^([a-z0-9]+|arn:aws(-[^:]+)?:bedrock:[a-z0-9-]{1,20}:[0-9]{12}:guardrail/[a-z0-9]+)$",
+            "title": "Guardrailidentifier"
+          },
+          "guardrailVersion": {
+            "type": "string",
+            "pattern": "^([1-9][0-9]{0,7}|DRAFT)$",
+            "title": "Guardrailversion"
+          },
+          "trace": {
+            "type": "string",
+            "enum": [
+              "enabled",
+              "disabled",
+              "enabled_full"
+            ],
+            "title": "Trace",
+            "default": "disabled"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "guardrailIdentifier",
+          "guardrailVersion"
+        ],
+        "title": "BedrockGuardrail"
+      },
+      "BedrockRequestOptions": {
+        "properties": {
+          "guardrailConfig": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BedrockGuardrail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "additionalModelRequestFields": {
+            "additionalProperties": true,
+            "type": "object",
+            "maxProperties": 32,
+            "title": "Additionalmodelrequestfields"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "BedrockRequestOptions"
       },
       "BudgetCreate": {
         "properties": {
@@ -17820,7 +18128,15 @@
             "title": "Dimension"
           },
           "quantity": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string",
+                "pattern": "^[0-9]+$"
+              }
+            ],
             "title": "Quantity"
           },
           "unit_price": {
@@ -18108,7 +18424,7 @@
               "$ref": "#/components/schemas/Rate"
             },
             "type": "object",
-            "maxProperties": 5,
+            "maxProperties": 21,
             "minProperties": 2,
             "title": "Rates"
           },
@@ -18487,6 +18803,8 @@
           "input_cache_read_tokens",
           "input_cache_write_5m_tokens",
           "input_cache_write_1h_tokens",
+          "input_cache_write_30m_tokens",
+          "input_cache_write_12h_tokens",
           "output_tokens"
         ]
       },
@@ -18842,6 +19160,34 @@
           "kind"
         ],
         "title": "ExportRequest"
+      },
+      "FieldError": {
+        "properties": {
+          "location": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "location",
+          "code"
+        ],
+        "title": "FieldError",
+        "type": "object"
       },
       "FundingCreate": {
         "properties": {
@@ -19851,25 +20197,33 @@
             "title": "Usage Schema",
             "default": "tokens.v1"
           },
+          "tool_dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/ToolDimension"
+            },
+            "type": "array",
+            "maxItems": 14,
+            "title": "Tool Dimensions"
+          },
           "token_dimensions": {
             "items": {
               "$ref": "#/components/schemas/Dimension"
             },
             "type": "array",
-            "maxItems": 5,
+            "maxItems": 7,
             "minItems": 2,
             "title": "Token Dimensions"
           },
           "max_input_tokens": {
             "type": "integer",
-            "maximum": 1000000000,
-            "minimum": 1,
+            "maximum": 1000000000.0,
+            "minimum": 1.0,
             "title": "Max Input Tokens"
           },
           "max_output_tokens": {
             "type": "integer",
-            "maximum": 1000000000,
-            "minimum": 1,
+            "maximum": 1000000000.0,
+            "minimum": 1.0,
             "title": "Max Output Tokens"
           }
         },
@@ -19925,6 +20279,21 @@
             ],
             "title": "Protocols"
           },
+          "tool_dimensions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolDimension"
+                },
+                "type": "array",
+                "maxItems": 14
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Dimensions"
+          },
           "token_dimensions": {
             "anyOf": [
               {
@@ -19932,7 +20301,7 @@
                   "$ref": "#/components/schemas/Dimension"
                 },
                 "type": "array",
-                "maxItems": 5,
+                "maxItems": 7,
                 "minItems": 2
               },
               {
@@ -19945,8 +20314,8 @@
             "anyOf": [
               {
                 "type": "integer",
-                "maximum": 1000000000,
-                "minimum": 1
+                "maximum": 1000000000.0,
+                "minimum": 1.0
               },
               {
                 "type": "null"
@@ -19958,8 +20327,8 @@
             "anyOf": [
               {
                 "type": "integer",
-                "maximum": 1000000000,
-                "minimum": 1
+                "maximum": 1000000000.0,
+                "minimum": 1.0
               },
               {
                 "type": "null"
@@ -20013,25 +20382,33 @@
             "title": "Usage Schema",
             "default": "tokens.v1"
           },
+          "tool_dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/ToolDimension"
+            },
+            "type": "array",
+            "maxItems": 14,
+            "title": "Tool Dimensions"
+          },
           "token_dimensions": {
             "items": {
               "$ref": "#/components/schemas/Dimension"
             },
             "type": "array",
-            "maxItems": 5,
+            "maxItems": 7,
             "minItems": 2,
             "title": "Token Dimensions"
           },
           "max_input_tokens": {
             "type": "integer",
-            "maximum": 1000000000,
-            "minimum": 1,
+            "maximum": 1000000000.0,
+            "minimum": 1.0,
             "title": "Max Input Tokens"
           },
           "max_output_tokens": {
             "type": "integer",
-            "maximum": 1000000000,
-            "minimum": 1,
+            "maximum": 1000000000.0,
+            "minimum": 1.0,
             "title": "Max Output Tokens"
           },
           "id": {
@@ -21633,7 +22010,7 @@
               "$ref": "#/components/schemas/Rate"
             },
             "type": "object",
-            "maxProperties": 5,
+            "maxProperties": 21,
             "minProperties": 2,
             "title": "Rates"
           },
@@ -21732,7 +22109,7 @@
               "$ref": "#/components/schemas/Rate"
             },
             "type": "object",
-            "maxProperties": 5,
+            "maxProperties": 21,
             "minProperties": 2,
             "title": "Rates"
           },
@@ -21905,6 +22282,19 @@
         "additionalProperties": false,
         "type": "object",
         "title": "Publish"
+      },
+      "Quantities": {
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "type": "object"
       },
       "Quota": {
         "properties": {
@@ -22122,8 +22512,11 @@
             "type": "integer",
             "enum": [
               1,
+              20,
               1000,
-              1000000
+              3600,
+              1000000,
+              92771293593600
             ],
             "title": "Unit Quantity"
           }
@@ -22451,6 +22844,98 @@
       },
       "RelayProfile": {
         "properties": {
+          "bedrock_guardrail_unit_ceiling": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": 0.0,
+            "title": "Bedrock Guardrail Unit Ceiling",
+            "default": 0
+          },
+          "bedrock_request_options": {
+            "items": {
+              "$ref": "#/components/schemas/BedrockRequestOptions"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Bedrock Request Options"
+          },
+          "container_tariff": {
+            "type": "string",
+            "enum": [
+              "session_20m",
+              "minute_min_5"
+            ],
+            "title": "Container Tariff",
+            "default": "session_20m"
+          },
+          "container_reserve_minutes": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": 0.0,
+            "title": "Container Reserve Minutes",
+            "default": 0
+          },
+          "code_execution": {
+            "type": "boolean",
+            "title": "Code Execution",
+            "default": false
+          },
+          "execution_reserve_seconds": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": 0.0,
+            "title": "Execution Reserve Seconds",
+            "default": 0
+          },
+          "file_search_ceiling": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": 0.0,
+            "title": "File Search Ceiling",
+            "default": 0
+          },
+          "web_search_variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "preview"
+            ],
+            "title": "Web Search Variant",
+            "default": "standard"
+          },
+          "web_search_ceiling": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": 0.0,
+            "title": "Web Search Ceiling",
+            "default": 0
+          },
+          "bedrock_invoke": {
+            "type": "boolean",
+            "title": "Bedrock Invoke",
+            "default": false
+          },
+          "bedrock_guardrail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BedrockGuardrail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bedrock_model_fields": {
+            "additionalProperties": true,
+            "type": "object",
+            "maxProperties": 32,
+            "title": "Bedrock Model Fields"
+          },
+          "auto_prompt_cache": {
+            "type": "boolean",
+            "title": "Auto Prompt Cache",
+            "default": false
+          },
           "convert_from": {
             "anyOf": [
               {
@@ -22471,7 +22956,8 @@
             "enum": [
               "anthropic_messages",
               "openai_responses",
-              "bedrock_converse"
+              "bedrock_converse",
+              "openai_chat_completions"
             ],
             "title": "Endpoint"
           },
@@ -22519,14 +23005,14 @@
           },
           "input_ceiling": {
             "type": "integer",
-            "maximum": 1000000000,
-            "minimum": 1,
+            "maximum": 1000000000.0,
+            "minimum": 1.0,
             "title": "Input Ceiling"
           },
           "output_ceiling": {
             "type": "integer",
-            "maximum": 1000000000,
-            "minimum": 1,
+            "maximum": 1000000000.0,
+            "minimum": 1.0,
             "title": "Output Ceiling"
           },
           "bound_reference": {
@@ -22885,6 +23371,44 @@
         ],
         "title": "ReportPage[RequestRecord]"
       },
+      "ReportPage_VectorStorageDay_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/VectorStorageDay"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "time_basis": {
+            "type": "string",
+            "enum": [
+              "occurred_at",
+              "posted_at"
+            ],
+            "title": "Time Basis"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor",
+          "time_basis"
+        ],
+        "title": "ReportPage[VectorStorageDay]"
+      },
       "RequestRecord": {
         "properties": {
           "id": {
@@ -22938,6 +23462,86 @@
           "output_limit": {
             "type": "integer",
             "title": "Output Limit"
+          },
+          "web_search_limit": {
+            "type": "integer",
+            "title": "Web Search Limit",
+            "default": 0
+          },
+          "guardrail_unit_limit": {
+            "type": "integer",
+            "title": "Guardrail Unit Limit",
+            "default": 0
+          },
+          "file_search_limit": {
+            "type": "integer",
+            "title": "File Search Limit",
+            "default": 0
+          },
+          "execution_seconds_limit": {
+            "type": "integer",
+            "title": "Execution Seconds Limit",
+            "default": 0
+          },
+          "execution_mode": {
+            "type": "string",
+            "title": "Execution Mode",
+            "default": "none"
+          },
+          "container_origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Origin"
+          },
+          "container_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Handle"
+          },
+          "container_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Unit"
+          },
+          "container_minutes_limit": {
+            "type": "integer",
+            "title": "Container Minutes Limit",
+            "default": 0
+          },
+          "container_tariff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Tariff"
+          },
+          "storage_byte_seconds": {
+            "type": "string",
+            "title": "Storage Byte Seconds",
+            "default": "0"
           },
           "currency": {
             "type": "string",
@@ -23102,18 +23706,12 @@
           "quantities": {
             "anyOf": [
               {
-                "additionalProperties": {
-                  "type": "integer",
-                  "maximum": 1000000000,
-                  "minimum": 0
-                },
-                "type": "object"
+                "$ref": "#/components/schemas/Quantities"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Quantities"
+            ]
           },
           "normalization_version": {
             "anyOf": [
@@ -23546,7 +24144,7 @@
               "$ref": "#/components/schemas/Rate"
             },
             "type": "object",
-            "maxProperties": 5,
+            "maxProperties": 21,
             "minProperties": 2,
             "title": "Rates"
           },
@@ -23797,6 +24395,25 @@
         "type": "string",
         "format": "date-time"
       },
+      "ToolDimension": {
+        "type": "string",
+        "enum": [
+          "guardrail_content_units",
+          "guardrail_image_units",
+          "guardrail_topic_units",
+          "guardrail_sensitive_units",
+          "guardrail_grounding_units",
+          "guardrail_reasoning_units",
+          "web_search_requests",
+          "file_search_calls",
+          "vector_storage_byte_seconds",
+          "code_execution_seconds",
+          "container_1g_minutes",
+          "container_4g_minutes",
+          "container_16g_minutes",
+          "container_64g_minutes"
+        ]
+      },
       "UpstreamCreate": {
         "properties": {
           "name": {
@@ -23931,7 +24548,14 @@
           },
           "quantities": {
             "additionalProperties": {
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
             },
             "type": "object",
             "title": "Quantities"
@@ -24196,34 +24820,6 @@
         ],
         "title": "UserView"
       },
-      "FieldError": {
-        "properties": {
-          "location": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "title": "Location",
-            "type": "array"
-          },
-          "code": {
-            "title": "Code",
-            "type": "string"
-          }
-        },
-        "required": [
-          "location",
-          "code"
-        ],
-        "title": "FieldError",
-        "type": "object"
-      },
       "ValidationErrorBody": {
         "properties": {
           "code": {
@@ -24276,6 +24872,138 @@
         ],
         "title": "ValidationErrorResponse",
         "type": "object"
+      },
+      "VectorStorageDay": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "vector_store_id": {
+            "type": "string",
+            "title": "Vector Store Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "api_key_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Api Key Id"
+          },
+          "model_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Model Id"
+          },
+          "day": {
+            "type": "string",
+            "format": "date",
+            "title": "Day"
+          },
+          "observed_byte_seconds": {
+            "$ref": "#/components/schemas/DecimalString"
+          },
+          "uncertain": {
+            "type": "boolean",
+            "title": "Uncertain"
+          },
+          "covered_until": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "charged_amount": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalString"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "sale_price_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Sale Price Version Id"
+          },
+          "discount_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Discount Version Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "pending",
+              "review",
+              "settled"
+            ],
+            "title": "State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "vector_store_id",
+          "project_id",
+          "api_key_id",
+          "model_id",
+          "day",
+          "observed_byte_seconds",
+          "uncertain",
+          "covered_until",
+          "request_id",
+          "posted_at",
+          "charged_amount",
+          "currency",
+          "sale_price_version_id",
+          "discount_version_id",
+          "reason",
+          "state"
+        ],
+        "title": "VectorStorageDay"
       }
     },
     "securitySchemes": {

@@ -118,6 +118,21 @@ pub fn reason(s: &str) -> Result<&'static str> {
         _ => Err(ProtocolError::Unsupported("Bedrock stop reason")),
     }
 }
+pub(super) fn stop_sequence<'a>(reason: &str, body: &'a Value) -> Result<Option<&'a str>> {
+    if reason != "stop_sequence" {
+        return Ok(None);
+    }
+    body["additionalModelResponseFields"]
+        .get("stop_sequence")
+        .filter(|v| !v.is_null())
+        .map(|s| {
+            s.as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or(ProtocolError::Invalid("matched stop sequence"))
+        })
+        .transpose()
+}
+
 pub fn message(body: &Value, rid: &str, model: &str, usage: &UsageEvidence) -> Result<Value> {
     let msg = &body["output"]["message"];
     if msg["role"] != "assistant" {
@@ -130,6 +145,24 @@ pub fn message(body: &Value, rid: &str, model: &str, usage: &UsageEvidence) -> R
         }
         if let Some(s) = block.get("text").and_then(Value::as_str) {
             content.push(json!({"type":"text","text":s}));
+        } else if let Some(cited) = block.get("citationsContent") {
+            content.push(super::citations::block(cited)?);
+        } else if let Some(reasoning) = block.get("reasoningContent") {
+            if reasoning.as_object().is_none_or(|o| o.len() != 1) {
+                return Err(ProtocolError::Invalid("reasoning union"));
+            }
+            if let Some(r) = reasoning.get("reasoningText") {
+                convert::fields(r, &["text", "signature"])?;
+                let mut thinking = json!({"type":"thinking","thinking":text(r,"text")?});
+                if r.get("signature").is_some() {
+                    thinking["signature"] = text(r, "signature")?.into();
+                }
+                content.push(thinking);
+            } else {
+                content.push(
+                    json!({"type":"redacted_thinking","data":text(reasoning,"redactedContent")?}),
+                );
+            }
         } else if let Some(tool) = block.get("toolUse") {
             convert::fields(tool, &["name", "toolUseId", "input"])?;
             if !tool["input"].is_object() {
@@ -140,8 +173,9 @@ pub fn message(body: &Value, rid: &str, model: &str, usage: &UsageEvidence) -> R
             return Err(ProtocolError::Unsupported("Bedrock output block"));
         }
     }
+    let reason = reason(text(body, "stopReason")?)?;
     Ok(
-        json!({"id":rid,"type":"message","role":"assistant","model":model,"content":content,"stop_reason":reason(text(body,"stopReason")?)?,
-        "stop_sequence":null,"usage":visible(usage)}),
+        json!({"id":rid,"type":"message","role":"assistant","model":model,"content":content,"stop_reason":reason,
+        "stop_sequence":stop_sequence(reason,body)?,"usage":visible(usage)}),
     )
 }

@@ -77,9 +77,54 @@ class CatalogService:
                     "Disable incompatible deployments before changing protocols",
                     409,
                 )
-            if "token_dimensions" in body.model_fields_set:
-                for endpoint in await repo.cache_endpoints(model_id):
-                    if not cache_dimensions(endpoint) <= set(values["token_dimensions"]):
+            if {"token_dimensions", "tool_dimensions"} & body.model_fields_set:
+                for profile in await repo.active_relay_profiles(model_id):
+                    if profile.get("bedrock_guardrail_unit_ceiling") and not any(
+                        k.startswith("guardrail_") for k in values["tool_dimensions"]
+                    ):
+                        raise ServiceError(
+                            "price_dimensions_mismatch",
+                            "Active Guardrail pricing requires policy units",
+                            422,
+                        )
+                    if profile.get("container_reserve_minutes") and not any(
+                        k.startswith("container_") for k in values["tool_dimensions"]
+                    ):
+                        raise ServiceError(
+                            "price_dimensions_mismatch",
+                            "Active containers require a priced memory tier",
+                            422,
+                        )
+                    if (
+                        profile.get("execution_reserve_seconds")
+                        and "code_execution_seconds" not in values["tool_dimensions"]
+                    ):
+                        raise ServiceError(
+                            "price_dimensions_mismatch",
+                            "Standalone code execution needs time pricing",
+                            422,
+                        )
+                    if profile.get("file_search_ceiling") and not {
+                        "file_search_calls",
+                        "vector_storage_byte_seconds",
+                    } <= set(values["tool_dimensions"]):
+                        raise ServiceError(
+                            "price_dimensions_mismatch",
+                            "Active File Search requires search and storage pricing",
+                            422,
+                        )
+                    if (
+                        profile.get("web_search_ceiling")
+                        and "web_search_requests" not in values["tool_dimensions"]
+                    ):
+                        raise ServiceError(
+                            "price_dimensions_mismatch",
+                            "Active Web Search deployments require search pricing",
+                            422,
+                        )
+                    if profile.get("auto_prompt_cache") and not cache_dimensions(
+                        profile["endpoint"]
+                    ) <= set(values["token_dimensions"]):
                         raise ServiceError(
                             "price_dimensions_mismatch",
                             "Active caching deployments require cache pricing dimensions",
@@ -242,6 +287,49 @@ class CatalogService:
                 "protocol_mismatch", "Upstream protocol is not supported by the public model", 409
             )
         if profile := values.get("relay_profile"):
+            if profile.get("bedrock_guardrail_unit_ceiling") and not any(
+                k.startswith("guardrail_") for k in model.tool_dimensions
+            ):
+                raise ServiceError(
+                    "price_dimensions_mismatch",
+                    "Configure Guardrail policy dimensions on the model",
+                    422,
+                )
+            if profile.get("container_reserve_minutes") and not any(
+                k.startswith("container_") for k in model.tool_dimensions
+            ):
+                raise ServiceError(
+                    "price_dimensions_mismatch",
+                    "Configure container memory-tier pricing before enabling the deployment",
+                    422,
+                )
+            if (
+                profile.get("execution_reserve_seconds")
+                and "code_execution_seconds" not in model.tool_dimensions
+            ):
+                raise ServiceError(
+                    "price_dimensions_mismatch",
+                    "Configure code_execution_seconds for standalone execution",
+                    422,
+                )
+            if profile.get("file_search_ceiling") and not {
+                "file_search_calls",
+                "vector_storage_byte_seconds",
+            } <= set(model.tool_dimensions):
+                raise ServiceError(
+                    "price_dimensions_mismatch",
+                    "Configure File Search call and storage pricing before enabling the deployment",
+                    422,
+                )
+            if (
+                profile.get("web_search_ceiling")
+                and "web_search_requests" not in model.tool_dimensions
+            ):
+                raise ServiceError(
+                    "price_dimensions_mismatch",
+                    "Configure web_search_requests before enabling Web Search",
+                    422,
+                )
             if profile.get("auto_prompt_cache") and not cache_dimensions(
                 profile["endpoint"]
             ) <= set(model.token_dimensions):
@@ -252,6 +340,7 @@ class CatalogService:
                 )
             family = {
                 "openai_responses": "openai_compatible",
+                "openai_chat_completions": "openai_compatible",
                 "anthropic_messages": "anthropic",
                 "bedrock_converse": "aws_bedrock",
             }

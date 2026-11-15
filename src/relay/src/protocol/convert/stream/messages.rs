@@ -20,6 +20,8 @@ struct Block {
     item: Value,
     buffer: String,
     closed: bool,
+    private: Option<super::private_message::PrivateMessage>,
+    citations: Vec<Value>,
 }
 
 impl Stream {
@@ -59,7 +61,41 @@ impl Stream {
                     return unexpected();
                 }
                 let content = &event["content_block"];
-                validate_message_block(content)?;
+                if self.history.is_some()
+                    && matches!(
+                        content["type"].as_str(),
+                        Some("thinking" | "redacted_thinking" | "compaction")
+                    )
+                {
+                    let (private, events) = super::private_message::PrivateMessage::start(
+                        content,
+                        rid,
+                        n,
+                        self.history.as_ref().expect("history writer").hide_summary,
+                    )?;
+                    self.account(content.to_string().len())?;
+                    self.messages.blocks.push(Block {
+                        item: Value::Null,
+                        buffer: String::new(),
+                        closed: false,
+                        private: Some(private),
+                        citations: Vec::new(),
+                    });
+                    return Ok(events);
+                }
+                let citations = if self.history.is_some() && content["type"] == "text" {
+                    super::super::fields(content, &["type", "text", "citations"])?;
+                    content
+                        .get("citations")
+                        .filter(|v| !v.is_null())
+                        .map(|v| super::super::array(v, "citations").cloned())
+                        .transpose()?
+                        .unwrap_or_default()
+                } else {
+                    validate_message_block(content)?;
+                    Vec::new()
+                };
+
                 let tool = content["type"] == "tool_use";
                 let item_id = item_id(rid, n, tool);
                 let mut events = Vec::new();
@@ -85,7 +121,11 @@ impl Stream {
                     }
                     _ => return Err(ProtocolError::Unsupported("Messages stream block")),
                 };
-                self.account(initial.len() + item.to_string().len())?;
+                self.account(
+                    initial.len()
+                        + item.to_string().len()
+                        + citations.iter().map(|v| v.to_string().len()).sum::<usize>(),
+                )?;
                 events.push(
                     json!({"type":"response.output_item.added","output_index":n,"item":item}),
                 );
@@ -99,12 +139,40 @@ impl Stream {
                     item,
                     buffer: initial,
                     closed: false,
+                    private: None,
+                    citations,
                 });
                 Ok(events)
             }
             "content_block_delta" => {
                 let n = position(event, "index")?;
                 let delta = &event["delta"];
+                if self
+                    .messages
+                    .blocks
+                    .get(n)
+                    .is_some_and(|b| b.private.is_some())
+                {
+                    self.account(delta.to_string().len())?;
+                    return self.messages.blocks[n]
+                        .private
+                        .as_mut()
+                        .expect("private block")
+                        .delta(delta);
+                }
+                if self.history.is_some() && delta["type"] == "citations_delta" {
+                    self.account(delta["citation"].to_string().len())?;
+                    let b = self
+                        .messages
+                        .blocks
+                        .get_mut(n)
+                        .ok_or(ProtocolError::UnexpectedEvent)?;
+                    if b.closed || b.item["type"] != "message" {
+                        return unexpected();
+                    }
+                    b.citations.push(delta["citation"].clone());
+                    return Ok(vec![]);
+                }
                 let (kind, s) = match delta["type"].as_str() {
                     Some("input_json_delta") => ("function_call", text(delta, "partial_json")?),
                     Some("text_delta") => ("message", text(delta, "text")?),
@@ -133,6 +201,18 @@ impl Stream {
                     return unexpected();
                 }
                 b.closed = true;
+                if let Some(private) = b.private.take() {
+                    let (item, events) = private.finish(
+                        self.history
+                            .as_ref()
+                            .ok_or(ProtocolError::UnexpectedEvent)?,
+                        rid,
+                    )?;
+                    b.item = item;
+                    let size = b.item.to_string().len();
+                    self.account(size)?;
+                    return Ok(events);
+                }
                 let mut events = Vec::new();
                 if b.item["type"] == "function_call" {
                     let args = if b.buffer.is_empty() {
@@ -146,7 +226,27 @@ impl Stream {
                     b.item["arguments"] = args.into();
                     events.push(json!({"type":"response.function_call_arguments.done","item_id":b.item["id"],"output_index":n,"name":b.item["name"],"arguments":b.item["arguments"]}));
                 } else {
-                    let part = json!({"type":"output_text","text":std::mem::take(&mut b.buffer),"annotations":[]});
+                    let value = std::mem::take(&mut b.buffer);
+                    let part = if b.citations.is_empty() {
+                        json!({"type":"output_text","text":value,"annotations":[]})
+                    } else {
+                        let original = json!({"type":"text","text":value,"citations":std::mem::take(&mut b.citations)});
+                        b.item = self
+                            .history
+                            .as_ref()
+                            .ok_or(ProtocolError::UnexpectedEvent)?
+                            .project(&original, rid, n)?;
+                        for (index, a) in b.item["content"][0]["annotations"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .enumerate()
+                        {
+                            events.push(json!({"type":"response.output_text.annotation.added","output_index":n,"content_index":0,
+                                "item_id":b.item["id"],"annotation_index":index,"annotation":a}));
+                        }
+                        b.item["content"][0].clone()
+                    };
                     events.push(json!({"type":"response.output_text.done","output_index":n,"content_index":0,"item_id":b.item["id"],"text":part["text"],"logprobs":[]}));
                     events.push(json!({"type":"response.content_part.done","output_index":n,"content_index":0,"item_id":b.item["id"],"part":part}));
                     b.item["content"] = json!([part]);
@@ -155,6 +255,10 @@ impl Stream {
                 events.push(
                     json!({"type":"response.output_item.done","output_index":n,"item":b.item}),
                 );
+                if b.item.get("nexus_history").is_some() {
+                    let size = b.item.to_string().len();
+                    self.account(size)?;
+                }
                 Ok(events)
             }
             "message_delta" => Ok(vec![]),

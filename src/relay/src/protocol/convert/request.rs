@@ -70,12 +70,16 @@ fn plain_text(v: &Value, kind: &str) -> Result<Vec<String>> {
 }
 
 pub fn convert(source: Endpoint, body: &Value) -> Result<Value> {
-    translate(source, body, false)
+    with_history(source, body, false, false, &Default::default())
 }
 
 pub(crate) fn convert_cached(source: Endpoint, body: &Value) -> Result<Value> {
-    translate(source, body, true)
+    with_history(source, body, true, false, &Default::default())
 }
+
+use crate::protocol::approximation::{Choices, Lifetime, Policy};
+
+type MediaMapper = fn(&Value) -> Result<Value>;
 
 // Tool results with block-level cache hints need their block boundaries preserved.
 fn result_parts(
@@ -83,6 +87,8 @@ fn result_parts(
     parts: &Value,
     cache: bool,
     marks: &mut usize,
+    media: MediaMapper,
+    policy: &mut Policy,
 ) -> Result<Vec<Value>> {
     let (from, to, hint) = match source {
         Endpoint::AnthropicMessages => ("text", "input_text", "cache_control"),
@@ -91,6 +97,15 @@ fn result_parts(
     array(parts, "tool result content")?
         .iter()
         .map(|part| {
+            match (source, part["type"].as_str()) {
+                (Endpoint::AnthropicMessages, Some("image" | "document")) => {
+                    return media(part);
+                }
+                (Endpoint::OpenaiResponses, Some("input_image" | "input_file")) => {
+                    return media(part);
+                }
+                _ => {}
+            }
             if cache {
                 fields(part, &["type", "text", "annotations", hint])?;
             } else {
@@ -105,7 +120,7 @@ fn result_parts(
             }
             let mut out = json!({"type":to,"text":text(part,"text")?});
             if cache {
-                crate::protocol::cache::text_breakpoint(source, part, &mut out)?;
+                policy.breakpoint(source, part, &mut out)?;
                 *marks += usize::from(part.get(hint).is_some());
             }
             Ok(out)
@@ -113,10 +128,32 @@ fn result_parts(
         .collect()
 }
 
-fn translate(source: Endpoint, body: &Value, cache: bool) -> Result<Value> {
+pub(crate) fn with_history(
+    source: Endpoint,
+    body: &Value,
+    cache: bool,
+    converse: bool,
+    history: &crate::protocol::history::Restored,
+) -> Result<Value> {
+    with_options(source, body, cache, converse, history, Choices::default()).map(|(v, _)| v)
+}
+pub(crate) fn with_options(
+    source: Endpoint,
+    body: &Value,
+    cache: bool,
+    converse: bool,
+    history: &crate::protocol::history::Restored,
+    allow: Choices,
+) -> Result<(Value, Choices)> {
+    let mut policy = Policy::new(allow);
+    let media: MediaMapper = if converse {
+        crate::protocol::media::converse_file
+    } else {
+        crate::protocol::media::to_messages
+    };
     let mut out = match source {
-        Endpoint::AnthropicMessages => messages(body, cache)?,
-        Endpoint::OpenaiResponses => responses(body, cache)?,
+        Endpoint::AnthropicMessages => messages(body, cache, history, &mut policy)?,
+        Endpoint::OpenaiResponses => responses(body, cache, media, history, &mut policy)?,
     };
     if let Some(stream) = body.get("stream") {
         out["stream"] = stream.clone();
@@ -133,11 +170,145 @@ fn translate(source: Endpoint, body: &Value, cache: bool) -> Result<Value> {
         }
         out["temperature"] = temp.clone();
     }
+    reasoning(source, body, &mut out, history)?;
     tools(source, body, &mut out)?;
-    Ok(out)
+    if policy.applied.mapped_cache() {
+        crate::protocol::approximation::check_messages_order(
+            if source == Endpoint::AnthropicMessages {
+                body
+            } else {
+                &out
+            },
+        )?;
+    }
+    Ok((out, policy.applied))
 }
 
-fn messages(body: &Value, cache: bool) -> Result<Value> {
+fn reasoning(
+    source: Endpoint,
+    body: &Value,
+    out: &mut Value,
+    history: &crate::protocol::history::Restored,
+) -> Result<()> {
+    let shared_effort = |v: &Value| {
+        matches!(
+            v.as_str(),
+            Some("low" | "medium" | "high" | "xhigh" | "max")
+        )
+    };
+    match source {
+        Endpoint::AnthropicMessages => {
+            if let Some(management) = body.get("context_management") {
+                fields(management, &["edits"])?;
+                let edits = array(&management["edits"], "context edits")?;
+                if edits.len() != 1 || edits[0]["type"] != "compact_20260112" {
+                    return Err(ProtocolError::Unsupported("context management"));
+                }
+                let edit = &edits[0];
+                fields(edit, &["type", "trigger", "pause_after_compaction"])?;
+                if edit
+                    .get("pause_after_compaction")
+                    .is_some_and(|v| v != false)
+                {
+                    return Err(ProtocolError::Unsupported("pause after compaction"));
+                }
+                let trigger = &edit["trigger"];
+                fields(trigger, &["type", "value"])?;
+                if trigger["type"] != "input_tokens" {
+                    return Err(ProtocolError::Unsupported("compaction trigger"));
+                }
+                let n = trigger["value"]
+                    .as_u64()
+                    .filter(|&n| n > 0)
+                    .ok_or(ProtocolError::Invalid("compact threshold"))?;
+                out["context_management"] = json!([{"type":"compaction","compact_threshold":n}]);
+            }
+            if let Some(config) = body.get("output_config") {
+                fields(config, &["effort"])?;
+                if !shared_effort(&config["effort"]) {
+                    return Err(ProtocolError::Unsupported("reasoning effort"));
+                }
+                out["reasoning"]["effort"] = config["effort"].clone();
+            }
+            if let Some(thinking) = body.get("thinking") {
+                fields(thinking, &["type", "display"])?;
+                match text(thinking, "type")? {
+                    "adaptive" => match thinking.get("display").and_then(Value::as_str) {
+                        None | Some("summarized")
+                            if thinking.get("display").is_none_or(Value::is_string) =>
+                        {
+                            out["reasoning"]["summary"] = "auto".into()
+                        }
+                        Some("omitted") => {}
+                        _ => return Err(ProtocolError::Unsupported("thinking display")),
+                    },
+                    "disabled"
+                        if thinking.get("display").is_none() && out.get("reasoning").is_none() =>
+                    {
+                        out["reasoning"] = json!({"effort":"none"})
+                    }
+                    _ => return Err(ProtocolError::Unsupported("thinking configuration")),
+                }
+            }
+            if body["thinking"]["type"] == "adaptive"
+                || body.get("output_config").is_some()
+                || !history.is_empty()
+            {
+                out["include"] = json!(["reasoning.encrypted_content"]);
+            }
+        }
+        Endpoint::OpenaiResponses => {
+            if let Some(include) = body.get("include")
+                && array(include, "include")?
+                    .iter()
+                    .any(|v| v != "reasoning.encrypted_content")
+            {
+                return Err(ProtocolError::Unsupported("Responses include"));
+            }
+            if let Some(reasoning) = body.get("reasoning") {
+                fields(reasoning, &["effort", "summary"])?;
+                if let Some(effort) = reasoning.get("effort").filter(|v| !v.is_null()) {
+                    if effort == "none" {
+                        out["thinking"] = json!({"type":"disabled"});
+                    } else if shared_effort(effort) {
+                        out["thinking"] = json!({"type":"adaptive"});
+                        out["output_config"] = json!({"effort":effort});
+                    } else {
+                        return Err(ProtocolError::Unsupported("reasoning effort"));
+                    }
+                }
+                if let Some(summary) = reasoning.get("summary").filter(|v| !v.is_null()) {
+                    if summary != "auto" || out["thinking"]["type"] == "disabled" {
+                        return Err(ProtocolError::Unsupported("reasoning summary"));
+                    }
+                    out["thinking"] = json!({"type":"adaptive","display":"summarized"});
+                } else if out["thinking"]["type"] == "adaptive" {
+                    out["thinking"]["display"] = "omitted".into();
+                }
+            }
+            if let Some(management) = body.get("context_management") {
+                let edits = array(management, "context_management")?;
+                if edits.len() != 1 || edits[0]["type"] != "compaction" {
+                    return Err(ProtocolError::Unsupported("context management"));
+                }
+                fields(&edits[0], &["type", "compact_threshold"])?;
+                let n = edits[0]["compact_threshold"]
+                    .as_u64()
+                    .filter(|&n| n > 0)
+                    .ok_or(ProtocolError::Invalid("compact threshold"))?;
+                out["context_management"] = json!({"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":n}}]});
+            }
+        }
+    }
+    Ok(())
+}
+
+fn messages(
+    body: &Value,
+    cache: bool,
+    history: &crate::protocol::history::Restored,
+    policy: &mut Policy,
+) -> Result<Value> {
     fields(
         body,
         &[
@@ -151,28 +322,45 @@ fn messages(body: &Value, cache: bool) -> Result<Value> {
             "temperature",
             "top_p",
             "stop_sequences",
+            "context_management",
+            "thinking",
+            "output_config",
             "cache_control",
         ],
     )?;
     let automatic = body.get("cache_control");
-    if let Some(marker) = automatic {
+    let automatic_target = if let Some(marker) = automatic {
         if !cache {
             return Err(ProtocolError::Unsupported("cache_control"));
         }
-        crate::protocol::cache::check_marker(marker, Endpoint::AnthropicMessages)?;
-    }
-    if body
-        .get("stop_sequences")
-        .is_some_and(|v| v.as_array().is_none_or(|a| !a.is_empty()))
-    {
-        return Err(ProtocolError::Unsupported("stop_sequences"));
+        let target = policy.marker(Endpoint::AnthropicMessages, marker, false)?;
+        policy.default_ttl = marker
+            .get("ttl")
+            .map(|_| Lifetime::parse(text(marker, "ttl")?))
+            .transpose()?;
+        Some(target)
+    } else {
+        None
+    };
+    if let Some(stops) = body.get("stop_sequences") {
+        crate::protocol::approximation::validate_stops(stops)?;
+        if stops.as_array().is_some_and(|v| !v.is_empty()) {
+            if !policy.allow.stop {
+                return Err(ProtocolError::Unsupported("stop_sequences"));
+            }
+            policy.applied.stop = true;
+        }
     }
     if body["messages"]
         .as_array()
         .and_then(|m| m.last())
         .is_some_and(|m| m["role"] == "assistant")
     {
-        return Err(ProtocolError::Unsupported("assistant prefill"));
+        if !policy.allow.prefill {
+            return Err(ProtocolError::Unsupported("assistant prefill"));
+        }
+        crate::protocol::approximation::prefill(body)?;
+        policy.applied.prefill = true;
     }
     let mut out = json!({"store":false});
     let mut input = Vec::new();
@@ -190,11 +378,7 @@ fn messages(body: &Value, cache: bool) -> Result<Value> {
                     return Err(ProtocolError::Unsupported("system block"));
                 }
                 let mut block = json!({"type":"input_text","text":text(part,"text")?});
-                crate::protocol::cache::text_breakpoint(
-                    Endpoint::AnthropicMessages,
-                    part,
-                    &mut block,
-                )?;
+                policy.breakpoint(Endpoint::AnthropicMessages, part, &mut block)?;
                 marks += usize::from(part.get("cache_control").is_some());
                 content.push(block);
             }
@@ -204,7 +388,7 @@ fn messages(body: &Value, cache: bool) -> Result<Value> {
         }
     }
     let mut calls = Calls::default();
-    for m in array(&body["messages"], "messages")? {
+    for (turn, m) in array(&body["messages"], "messages")?.iter().enumerate() {
         fields(m, &["role", "content"])?;
         let role = text(m, "role")?;
         if !matches!(role, "assistant" | "user") {
@@ -223,7 +407,27 @@ fn messages(body: &Value, cache: bool) -> Result<Value> {
             return Err(ProtocolError::Invalid("empty content"));
         }
         let mut text_parts = Vec::new();
-        for p in parts {
+        let mut next = 0;
+        for (index, p) in parts.iter().enumerate() {
+            if index < next {
+                continue;
+            }
+            if let Some((original, span)) = history.get(turn, index) {
+                if role != "assistant" {
+                    return Err(ProtocolError::Invalid("private history role"));
+                }
+                if !text_parts.is_empty() {
+                    input.push(json!({"role":role,"content":std::mem::take(&mut text_parts)}));
+                }
+                input.push(original.clone());
+                next = index + span;
+                continue;
+            }
+            if role == "user" && matches!(p["type"].as_str(), Some("image" | "document")) {
+                calls.resolved()?;
+                text_parts.push(crate::protocol::media::from_messages(p)?);
+                continue;
+            }
             if p["type"] == "text" {
                 fields(
                     p,
@@ -239,11 +443,7 @@ fn messages(body: &Value, cache: bool) -> Result<Value> {
                 // EasyInputMessage accepts input_text for explicit user and assistant history.
                 let mut part = json!({"type":"input_text","text":text(p,"text")?});
                 if cache {
-                    crate::protocol::cache::text_breakpoint(
-                        Endpoint::AnthropicMessages,
-                        p,
-                        &mut part,
-                    )?;
+                    policy.breakpoint(Endpoint::AnthropicMessages, p, &mut part)?;
                     marks += usize::from(p.get("cache_control").is_some());
                 }
                 text_parts.push(part);
@@ -298,20 +498,21 @@ fn messages(body: &Value, cache: bool) -> Result<Value> {
                                 &p["content"],
                                 cache,
                                 &mut marks,
+                                crate::protocol::media::from_messages,
+                                policy,
                             )?
                         };
                         if boundary.is_some() {
                             let last = parts
                                 .last_mut()
                                 .ok_or(ProtocolError::Unsupported("empty cache breakpoint"))?;
+                            if last["type"] != "input_text" {
+                                return Err(ProtocolError::Unsupported("media cache breakpoint"));
+                            }
                             if last.get("prompt_cache_breakpoint").is_none() {
                                 marks += 1;
                             }
-                            crate::protocol::cache::text_breakpoint(
-                                Endpoint::AnthropicMessages,
-                                p,
-                                last,
-                            )?;
+                            policy.breakpoint(Endpoint::AnthropicMessages, p, last)?;
                         }
                         Value::Array(parts)
                     };
@@ -334,11 +535,23 @@ fn messages(body: &Value, cache: bool) -> Result<Value> {
                 json!({"mode":if automatic.is_some() {"implicit"} else {"explicit"}});
         }
     }
+    if let Some(ttl) = automatic_target.as_ref().and_then(|m| m.get("ttl")) {
+        out["prompt_cache_options"]["ttl"] = ttl.clone();
+    }
+    if policy.applied.prefill {
+        input.push(json!({"role":"user","content":"Continue the preceding assistant message from its last character. Return only the continuation."}));
+    }
     out["input"] = input.into();
     Ok(out)
 }
 
-fn responses(body: &Value, cache: bool) -> Result<Value> {
+fn responses(
+    body: &Value,
+    cache: bool,
+    media: MediaMapper,
+    history: &crate::protocol::history::Restored,
+    policy: &mut Policy,
+) -> Result<Value> {
     fields(
         body,
         &[
@@ -355,6 +568,9 @@ fn responses(body: &Value, cache: bool) -> Result<Value> {
             "store",
             "background",
             "previous_response_id",
+            "reasoning",
+            "include",
+            "context_management",
             "prompt_cache_options",
             "prompt_cache_key",
         ],
@@ -371,9 +587,18 @@ fn responses(body: &Value, cache: bool) -> Result<Value> {
     }
     if let Some(v) = opts {
         fields(v, &["mode", "ttl"])?;
-        if v.get("ttl").is_some()
-            || v.get("mode")
-                .is_some_and(|v| v != "implicit" && v != "explicit")
+        if let Some(ttl) = v.get("ttl") {
+            let ttl = Lifetime::parse(
+                ttl.as_str()
+                    .ok_or(ProtocolError::Invalid("cache lifetime"))?,
+            )?;
+            if ttl.endpoint() != Endpoint::OpenaiResponses {
+                return Err(ProtocolError::Invalid("Responses cache lifetime"));
+            }
+            policy.default_ttl = Some(ttl);
+        }
+        if v.get("mode")
+            .is_some_and(|v| v != "implicit" && v != "explicit")
         {
             return Err(ProtocolError::Unsupported("nonportable cache options"));
         }
@@ -396,7 +621,7 @@ fn responses(body: &Value, cache: bool) -> Result<Value> {
     if let Some(s) = body["input"].as_str() {
         msgs.push(json!({"role":"user","content":s}));
     } else {
-        for item in array(&body["input"], "input")? {
+        for (index, item) in array(&body["input"], "input")?.iter().enumerate() {
             if !item.is_object() {
                 return Err(ProtocolError::Invalid("input item"));
             }
@@ -408,6 +633,13 @@ fn responses(body: &Value, cache: bool) -> Result<Value> {
                 )
             {
                 return Err(ProtocolError::Invalid("duplicate item ID"));
+            }
+            if let Some((original, _)) = history.get(0, index) {
+                if calls.answering {
+                    calls.resolved()?;
+                }
+                message_block(&mut msgs, "assistant", original.clone());
+                continue;
             }
             if item.get("status").is_some_and(|v| v != "completed") {
                 return Err(ProtocolError::Unsupported("unfinished history"));
@@ -436,11 +668,7 @@ fn responses(body: &Value, cache: bool) -> Result<Value> {
                                     return Err(ProtocolError::Unsupported("developer content"));
                                 }
                                 let mut block = json!({"type":"text","text":text(p,"text")?});
-                                crate::protocol::cache::text_breakpoint(
-                                    Endpoint::OpenaiResponses,
-                                    p,
-                                    &mut block,
-                                )?;
+                                policy.breakpoint(Endpoint::OpenaiResponses, p, &mut block)?;
                                 marks += usize::from(p.get("prompt_cache_breakpoint").is_some());
                                 blocks.push(block);
                             }
@@ -462,6 +690,16 @@ fn responses(body: &Value, cache: bool) -> Result<Value> {
                             return Err(ProtocolError::Invalid("empty content"));
                         }
                         for part in parts {
+                            if role == "user"
+                                && matches!(
+                                    part["type"].as_str(),
+                                    Some("input_image" | "input_file")
+                                )
+                            {
+                                message_block(&mut msgs, role, media(part)?);
+                                continue;
+                            }
+
                             fields(
                                 part,
                                 if cache {
@@ -488,11 +726,7 @@ fn responses(body: &Value, cache: bool) -> Result<Value> {
                             }
                             let mut block = json!({"type":"text","text":text(part,"text")?});
                             if cache {
-                                crate::protocol::cache::text_breakpoint(
-                                    Endpoint::OpenaiResponses,
-                                    part,
-                                    &mut block,
-                                )?;
+                                policy.breakpoint(Endpoint::OpenaiResponses, part, &mut block)?;
                                 marks += usize::from(part.get("prompt_cache_breakpoint").is_some());
                             }
                             message_block(&mut msgs, role, block);
@@ -523,6 +757,8 @@ fn responses(body: &Value, cache: bool) -> Result<Value> {
                             &item["output"],
                             cache,
                             &mut marks,
+                            media,
+                            policy,
                         )?;
                         // Messages can express the result boundary on the outer tool_result.
                         if let Some(last) = parts.last_mut()
@@ -562,6 +798,12 @@ fn responses(body: &Value, cache: bool) -> Result<Value> {
     }
     if automatic {
         out["cache_control"] = json!({"type":"ephemeral"});
+        if let Some(ttl) = policy.default_ttl {
+            out["cache_control"]["ttl"] = policy
+                .lifetime(Endpoint::OpenaiResponses, ttl)?
+                .name()
+                .into();
+        }
     }
     out["messages"] = msgs.into();
     Ok(out)
@@ -603,7 +845,7 @@ fn tools(source: Endpoint, body: &Value, out: &mut Value) -> Result<()> {
                 return Err(ProtocolError::Invalid("tool schema"));
             }
             t[if m { "parameters" } else { "input_schema" }] = schema.clone();
-            if let Some(strict) = tool.get("strict") {
+            if let Some(strict) = tool.get("strict").filter(|v| !v.is_null()) {
                 t["strict"] = strict
                     .as_bool()
                     .ok_or(ProtocolError::Invalid("strict tool"))?
@@ -611,8 +853,16 @@ fn tools(source: Endpoint, body: &Value, out: &mut Value) -> Result<()> {
             } else if !m {
                 // Responses closes objects when normalizing a compatible schema. For
                 // fully required properties we can reproduce that without changing optionality.
-                normalize_implicit(&mut t["input_schema"])?;
-                t["strict"] = true.into();
+                // Keep the original schema on best-effort fallback, including nested
+                // objects already visited by the attempted normalization.
+                match normalize_implicit(&mut t["input_schema"]) {
+                    Ok(()) => t["strict"] = true.into(),
+                    Err(ProtocolError::Unsupported(_)) => {
+                        t["input_schema"] = schema.clone();
+                        t["strict"] = false.into();
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             if let Some(desc) = tool.get("description") {
                 t["description"] = desc
@@ -688,8 +938,8 @@ fn tools(source: Endpoint, body: &Value, out: &mut Value) -> Result<()> {
     Ok(())
 }
 
-// Leave more complex or optional schemas to an explicit strict setting.
-fn normalize_implicit(schema: &mut Value) -> Result<()> {
+// Schemas outside this normalizable subset retain their constraints in non-strict mode.
+pub(crate) fn normalize_implicit(schema: &mut Value) -> Result<()> {
     let bad = ProtocolError::Unsupported("implicit tool schema normalization");
     let obj = schema
         .as_object_mut()

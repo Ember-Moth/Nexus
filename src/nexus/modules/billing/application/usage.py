@@ -13,6 +13,24 @@ class UsageProcessor:
         self._transactions = transactions
         self._reservations = reservations
 
+    async def stage_storage(self, limit=16):
+        count = 0
+        for _ in range(limit):
+            async with self._transactions() as repo:
+                if not await repo.stage_storage():
+                    break
+            count += 1
+        return count
+
+    async def review_containers(self, limit=16):
+        count = 0
+        for _ in range(limit):
+            async with self._transactions() as repo:
+                if not await repo.review_container():
+                    break
+            count += 1
+        return count
+
     async def process(self, limit=16):
         count = 0
         for _ in range(limit):
@@ -50,7 +68,22 @@ class UsageProcessor:
             attempt, price = priced[event.attempt_id]
             payload = event.envelope["payload"]
             try:
-                rule, counts = normalize(payload, price.rates, attempt.expected_usage_format)
+                rule, counts = normalize(
+                    payload,
+                    price.rates,
+                    attempt.expected_usage_format,
+                    search_limit=request.web_search_limit,
+                    file_limit=request.file_search_limit,
+                    guardrail_limit=request.guardrail_unit_limit,
+                    container_unit=request.container_unit,
+                    execution_mode=(
+                        "none"
+                        if request.billing_policy_version == "anthropic_message_batch_v1"
+                        and payload["outcome"] == "failed"
+                        and (payload["raw_usage"] or {}).get("code_execution_requests") == 0
+                        else request.execution_mode
+                    ),
+                )
                 reason = None
             except ValueError as error:
                 rule, counts, reason = "usage-normalizer/1", None, str(error)
@@ -58,7 +91,7 @@ class UsageProcessor:
                 try:
                     await self._reservations.record_cost_in(
                         repo,
-                        request.organization_id,
+                        request,
                         attempt,
                         price,
                         counts,

@@ -78,10 +78,7 @@ impl Reservation {
                 LimitError::Limited => Failure(StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
                 _ => Failure::unavailable(),
             })?;
-        let reserve = || {
-            node.db
-                .reserve(id, selected.key.id, selected.model, index.revision, bounds)
-        };
+        let reserve = || node.db.reserve_generation(id, index.revision, selected);
         let first = reserve().await;
         let retry = first.as_ref().is_err_and(|e| e.retryable());
         if let Err(e) = if retry { reserve().await } else { first } {
@@ -98,7 +95,7 @@ impl Reservation {
                 revision: index.revision,
                 endpoint,
                 deployment: dep.id,
-                usage_format: selected.upstream.usage_format(),
+                usage_format: selected.usage_format(),
                 lease,
                 tally: RequestTally::detached(),
             },
@@ -147,6 +144,8 @@ impl Reservation {
             return Err(e.into());
         }
         Ok(Run {
+            history: None,
+            approximation: Default::default(),
             reservation: self,
             attempt,
             spent: Some(0),
@@ -168,12 +167,25 @@ impl Reservation {
 }
 
 pub struct Run {
+    pub(super) approximation: crate::protocol::approximation::Delivery,
+    pub(super) history: Option<crate::protocol::history::Writer>,
     pub reservation: Reservation,
     attempt: Attempt,
     /// Confirmed physical tokens of earlier attempts, or None once any was unconfirmed.
     spent: Option<u64>,
 }
 impl Run {
+    pub fn stored_stream(&self) -> crate::control::stored::StoredStream {
+        crate::control::stored::StoredStream::new(
+            self.reservation.node.db.clone(),
+            self.reservation.id,
+            self.attempt.attempt,
+        )
+    }
+    pub fn attempt_id(&self) -> Uuid {
+        self.attempt.attempt
+    }
+
     pub fn attempts(&self) -> usize {
         self.attempt.others.len() + 1
     }
@@ -299,6 +311,12 @@ impl Run {
         self.spent
             .zip(confirmed_tokens(self.reservation.endpoint, usage))
             .map(|(a, b)| a + b)
+    }
+    pub async fn background_submitted(self, receipt: Option<&UsageEvidence>) {
+        // Only a terminal receipt can release the unused part of the reserved TPM.
+        let tokens = receipt.and_then(|usage| self.tokens(usage));
+        let r = self.reservation;
+        finish_lease(&r.node.limits, &r.lease, tokens, r.id).await;
     }
     pub async fn not_sent(self) {
         self.finish_unsent("cancelled", "client_cancelled").await;

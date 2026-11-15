@@ -1,5 +1,7 @@
 //! Each converter consumes the original provider event before the caller writes any translated frames.
 mod messages;
+mod private_message;
+mod private_response;
 mod responses;
 
 use super::Result;
@@ -15,6 +17,7 @@ pub struct Stream {
     pub(super) rid: Option<String>,
     sequence: u64,
     created: i64,
+    history: Option<crate::protocol::history::Writer>,
     messages: messages::Messages,
     responses: responses::Responses,
 }
@@ -29,9 +32,18 @@ impl Stream {
             rid: None,
             sequence: 0,
             created: chrono::Utc::now().timestamp(),
+            history: None,
             messages: Default::default(),
             responses: Default::default(),
         }
+    }
+
+    pub(crate) fn with_history(
+        mut self,
+        history: Option<crate::protocol::history::Writer>,
+    ) -> Self {
+        self.history = history;
+        self
     }
 
     pub fn event(&mut self, event: &Value, done: Option<&Completion>) -> Result<Vec<Value>> {

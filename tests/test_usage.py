@@ -176,3 +176,44 @@ def test_responses_cache_write_lifetimes_are_disjoint_and_priced():
         check(raw | {"input_tokens": 10000})
     with pytest.raises(ValueError, match="dimension_mismatch"):
         check(raw, set(expected) - {"input_cache_write_12h_tokens"})
+
+
+def test_guardrail_units_require_frozen_policy_prices_and_complete_evidence():
+    base = {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5}
+    dims = {"input_uncached_tokens", "output_tokens", "guardrail_content_units"}
+    fmt = "aws.bedrock.converse.v1"
+    for extra, reason in [
+        ({"guardrail_usage_unverified": 1}, "guardrail_usage_requires_evidence"),
+        ({}, "missing_guardrail_usage"),
+        (
+            {
+                f"guardrail_{k}_units": int(k == "topic")
+                for k in ("content", "image", "topic", "sensitive", "grounding", "reasoning")
+            },
+            "unpriced_guardrail_usage",
+        ),
+    ]:
+        with pytest.raises(ValueError, match=reason):
+            normalize(
+                {"usage_format": fmt, "raw_usage": base | extra}, dims, fmt, guardrail_limit=4
+            )
+    rule, counts = normalize(
+        {"usage_format": fmt, "raw_usage": base | {"guardrail_word_units": 5}}, dims, fmt
+    )
+    assert counts == {"input_uncached_tokens": 2, "output_tokens": 3, "guardrail_content_units": 0}
+
+
+def test_chat_receipt_splits_cached_tokens_only_with_evidence():
+    fmt = "openai.chat.v1"
+    raw = {"input_tokens": 8, "output_tokens": 3, "total_tokens": 11, "reasoning_tokens": 2}
+    receipt = {"raw_usage": raw, "usage_format": fmt}
+    base = {"input_uncached_tokens", "output_tokens"}
+    _, counts = normalize(receipt, base, fmt)
+    assert counts == {"input_uncached_tokens": 8, "output_tokens": 3}
+    priced = base | {"input_cache_read_tokens"}
+    with pytest.raises(ValueError, match="unsupported_usage_fields"):
+        normalize(receipt, priced, fmt)
+    _, counts = normalize(receipt | {"raw_usage": raw | {"cached_input_tokens": 5}}, priced, fmt)
+    assert counts == {"input_uncached_tokens": 3, "input_cache_read_tokens": 5, "output_tokens": 3}
+    with pytest.raises(ValueError, match="usage_format_mismatch"):
+        normalize(receipt, priced, "openai.responses.v1")

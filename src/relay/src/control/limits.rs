@@ -129,18 +129,27 @@ impl Limits {
     }
 
     pub async fn acquire(&self, a: Admission<'_>) -> Result<Lease, LimitError> {
+        let upper = u64::from(a.bounds.inputs) + u64::from(a.bounds.outputs);
+        self.acquire_weighted(a, 1, upper).await
+    }
+
+    pub(crate) async fn acquire_weighted(
+        &self,
+        a: Admission<'_>,
+        requests: usize,
+        upper: u64,
+    ) -> Result<Lease, LimitError> {
         if !(100..=60000).contains(&a.ttl_ms) {
             return Err(LimitError::Unavailable);
         }
         let org = a.key.organization_id;
-        let upper = u64::from(a.bounds.inputs) + u64::from(a.bounds.outputs);
         let mut policies: Vec<_> = a
             .quotas
             .iter()
             .filter(|p| p.organization_id == org && p.scope_id == a.key.scope(p.scope_type))
             .collect();
         policies.sort_by_key(|p| p.id);
-        let fp = fingerprint(json!([
+        let mut binding = json!([
             org,
             a.key.project_id,
             a.key.id,
@@ -154,7 +163,37 @@ impl Limits {
                 a.bounds.outputs,
                 a.revision.to_string()
             ]
-        ]));
+        ]);
+        if a.bounds.execution_mode != crate::protocol::execution::ExecutionMode::None {
+            binding.as_array_mut().unwrap().push(
+                json!({"execution":a.bounds.execution_mode,"seconds":a.bounds.execution_seconds}),
+            );
+        }
+        if let Some(t) = a.bounds.interpreter {
+            binding.as_array_mut().unwrap().push(json!({"container":t}));
+        }
+        if a.bounds.guardrail_units > 0 {
+            binding
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"guardrail_unit_limit":a.bounds.guardrail_units}));
+        }
+        if a.bounds.file_searches > 0 {
+            binding
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"file_search_limit":a.bounds.file_searches}));
+        }
+        if a.bounds.searches > 0 {
+            binding
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"web_search_limit":a.bounds.searches}));
+        }
+        if requests > 1 {
+            binding.as_array_mut().unwrap().push(json!(requests));
+        }
+        let fp = fingerprint(binding);
         let specs = serde_json::to_string(&policies).map_err(|_| LimitError::Unavailable)?;
         let owner = Uuid::new_v4();
         let mut conn = self.conn.clone();
@@ -184,7 +223,8 @@ impl Limits {
                 .arg(upper)
                 .arg(a.ttl_ms)
                 .arg(&specs)
-                .arg(owner.to_string());
+                .arg(owner.to_string())
+                .arg(requests);
             let result: String = match script.invoke_async(&mut conn).await {
                 Ok(v) => v,
                 Err(e) if e.is_io_error() => {

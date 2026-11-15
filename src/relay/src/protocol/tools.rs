@@ -25,7 +25,10 @@ impl ToolLimits {
             .ok_or(ProtocolError::UnexpectedEvent)?;
         match (self.endpoint, kind) {
             (Endpoint::AnthropicMessages, "content_block_start")
-                if event["content_block"]["type"] == "tool_use" =>
+                if matches!(
+                    event["content_block"]["type"].as_str(),
+                    Some("tool_use" | "server_tool_use" | "mcp_tool_use")
+                ) =>
             {
                 let id = index(event)?;
                 self.start(id)?;
@@ -44,11 +47,17 @@ impl ToolLimits {
             }
             (Endpoint::AnthropicMessages, "content_block_stop") => self.end(&index(event)?),
             (Endpoint::OpenaiResponses, "response.output_item.added")
-                if event["item"]["type"] == "function_call" =>
+                if matches!(
+                    event["item"]["type"].as_str(),
+                    Some("function_call" | "custom_tool_call")
+                ) =>
             {
                 self.start(item(&event["item"]["id"])?.to_owned())?;
             }
-            (Endpoint::OpenaiResponses, "response.function_call_arguments.delta") => {
+            (
+                Endpoint::OpenaiResponses,
+                "response.function_call_arguments.delta" | "response.custom_tool_call_input.delta",
+            ) => {
                 let id = item(&event["item_id"])?;
                 if !self.active.contains_key(id) {
                     self.start(id.to_owned())?;
@@ -61,11 +70,15 @@ impl ToolLimits {
                         .len(),
                 )?;
             }
-            (Endpoint::OpenaiResponses, "response.function_call_arguments.done") => {
-                self.end(item(&event["item_id"])?)
-            }
+            (
+                Endpoint::OpenaiResponses,
+                "response.function_call_arguments.done" | "response.custom_tool_call_input.done",
+            ) => self.end(item(&event["item_id"])?),
             (Endpoint::OpenaiResponses, "response.output_item.done")
-                if event["item"]["type"] == "function_call" =>
+                if matches!(
+                    event["item"]["type"].as_str(),
+                    Some("function_call" | "custom_tool_call")
+                ) =>
             {
                 self.end(item(&event["item"]["id"])?)
             }

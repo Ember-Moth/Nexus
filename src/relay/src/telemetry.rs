@@ -25,6 +25,8 @@ pub const LOG_FIELDS: &[&str] = &[
     "attempt",
     "attempts",
     "deployment_id",
+    "approximation",
+    "billing_basis",
     "next_deployment_id",
     "cluster_id",
     "node_id",

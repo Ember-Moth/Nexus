@@ -17,13 +17,13 @@ if prior then
 end
 local window=math.floor(now/60000)
 if window~=tonumber(ARGV[2]) then return 'retry_window' end
-local upper=tonumber(ARGV[3]); local ttl=tonumber(ARGV[4]);
+local requests=tonumber(ARGV[7]) or 1; local upper=tonumber(ARGV[3]); local ttl=tonumber(ARGV[4]);
 for i,s in ipairs(specs) do
  local key=KEYS[i+1]
  if s.metric=='concurrency' then
   redis.call('ZREMRANGEBYSCORE',key,'-inf',now)
   if redis.call('ZCARD',key)>=s.limit_value then return 'limited' end
- elseif tonumber(redis.call('GET',key) or '0')+(s.metric=='rpm' and 1 or upper)>s.limit_value then
+ elseif tonumber(redis.call('GET',key) or '0')+(s.metric=='rpm' and requests or upper)>s.limit_value then
   return 'limited'
  end
 end
@@ -33,7 +33,7 @@ for i,s in ipairs(specs) do
   redis.call('ZADD',key,now+ttl,ARGV[6])
   redis.call('PEXPIRE',key,120000)
  else
-  redis.call('INCRBY',key,s.metric=='rpm' and 1 or upper)
+  redis.call('INCRBY',key,s.metric=='rpm' and requests or upper)
   redis.call('PEXPIREAT',key,(window+1)*60000)
  end
 end

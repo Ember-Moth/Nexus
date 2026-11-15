@@ -1,4 +1,6 @@
 //! Amazon Bedrock Runtime is an upstream transport. Clients use Messages or Responses.
+pub(crate) mod citations;
+pub(crate) mod guardrail;
 pub(crate) mod stream;
 pub(crate) mod transport;
 pub mod wire;
@@ -8,6 +10,38 @@ use serde_json::{Value, json};
 
 pub const FORMAT: &str = "aws.bedrock.converse.v1";
 type Result<T> = std::result::Result<T, ProtocolError>;
+
+/// An explicit Converse selection on a Messages or Responses request. The deployment
+/// owns the permitted combinations, including which guardrails its credential may use.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub(crate) struct RequestOptions {
+    pub guardrail_config: Option<Value>,
+    pub additional_model_request_fields: serde_json::Map<String, Value>,
+}
+
+impl RequestOptions {
+    pub fn parse(mut value: Value) -> Result<Self> {
+        if !value.is_object() {
+            return Err(ProtocolError::Invalid("Bedrock options object"));
+        }
+        if let Some(guardrail) = value.get_mut("guardrailConfig") {
+            convert::fields(
+                guardrail,
+                &["guardrailIdentifier", "guardrailVersion", "trace"],
+            )?;
+            if convert::text(guardrail, "guardrailIdentifier")?.is_empty()
+                || convert::text(guardrail, "guardrailVersion")?.is_empty()
+            {
+                return Err(ProtocolError::Invalid("Bedrock guardrail"));
+            }
+            if guardrail.get("trace").is_none() {
+                guardrail["trace"] = "disabled".into();
+            }
+        }
+        serde_json::from_value(value).map_err(|_| ProtocolError::Invalid("Bedrock options"))
+    }
+}
 
 fn tool_label<'a>(value: &'a Value, key: &'static str, is_name: bool) -> Result<&'a str> {
     let label = convert::id(value, key)?;
@@ -41,15 +75,48 @@ fn text_blocks(v: &Value) -> Result<Vec<Value>> {
         .collect()
 }
 
+fn tool_result_parts(content: &Value) -> Result<Vec<Value>> {
+    let Some(parts) = content.as_array() else {
+        return text_blocks(content);
+    };
+    parts
+        .iter()
+        .map(|b| match b["type"].as_str() {
+            Some("image" | "document" | "video") => crate::protocol::media::bedrock(b),
+            Some("search_result") => citations::search_result(b),
+            Some("text") => {
+                convert::fields(b, &["type", "text"])?;
+                Ok(json!({"text":convert::text(b,"text")?}))
+            }
+            _ => Err(ProtocolError::Unsupported("Bedrock tool result block")),
+        })
+        .collect()
+}
+
 pub fn prepare(request: &Generate) -> Result<Value> {
     let converted;
     let src = if request.endpoint == Endpoint::OpenaiResponses {
-        converted = request.convert()?;
+        converted = request.convert_history(false, true)?;
         &converted
     } else {
         request.body()
     };
     prepare_messages(src)
+}
+
+fn thinking(value: &Value) -> Result<&Value> {
+    convert::fields(value, &["type", "budget_tokens", "display"])?;
+    if value
+        .get("display")
+        .is_some_and(|v| v != "summarized" && v != "omitted" || value["type"] == "disabled")
+    {
+        return Err(ProtocolError::Invalid("thinking display"));
+    }
+    match value["type"].as_str() {
+        Some("enabled") if value["budget_tokens"].as_u64().is_some_and(|v| v > 0) => Ok(value),
+        Some("adaptive" | "disabled") if value.get("budget_tokens").is_none() => Ok(value),
+        _ => Err(ProtocolError::Invalid("thinking configuration")),
+    }
 }
 
 fn prepare_messages(src: &Value) -> Result<Value> {
@@ -64,6 +131,9 @@ fn prepare_messages(src: &Value) -> Result<Value> {
             "temperature",
             "top_p",
             "stop_sequences",
+            "thinking",
+            "top_k",
+            "output_config",
             "tools",
             "tool_choice",
         ],
@@ -89,6 +159,26 @@ fn prepare_messages(src: &Value) -> Result<Value> {
         }
     }
     let mut result = json!({"inferenceConfig":config});
+    if result["inferenceConfig"]["stopSequences"].is_array() {
+        result["additionalModelResponseFieldPaths"] = json!(["/stop_sequence"]);
+    }
+    if let Some(v) = src.get("thinking") {
+        result["additionalModelRequestFields"]["thinking"] = thinking(v)?.clone();
+    }
+    if let Some(config) = src.get("output_config") {
+        convert::fields(config, &["effort"])?;
+        if !matches!(
+            config["effort"].as_str(),
+            Some("low" | "medium" | "high" | "xhigh" | "max")
+        ) {
+            return Err(ProtocolError::Unsupported("Bedrock reasoning effort"));
+        }
+        result["additionalModelRequestFields"]["output_config"] = config.clone();
+    }
+    if let Some(v) = src.get("top_k") {
+        result["additionalModelRequestFields"]["top_k"] =
+            v.as_u64().ok_or(ProtocolError::Invalid("top_k"))?.into();
+    }
     if let Some(v) = src.get("system") {
         result["system"] = text_blocks(v)?.into();
     }
@@ -110,12 +200,31 @@ fn prepare_messages(src: &Value) -> Result<Value> {
         } else {
             for b in convert::array(&m["content"], "content")? {
                 let block = match (role, b["type"].as_str()) {
-                    (_, Some("text")) => {
+                    ("user", Some("image" | "document" | "video")) => {
+                        calls.resolved()?;
+                        crate::protocol::media::bedrock(b)?
+                    }
+                    ("assistant", Some("text")) => citations::history(b)?,
+                    ("user", Some("search_result")) => {
+                        calls.resolved()?;
+                        citations::search_result(b)?
+                    }
+                    ("user", Some("text")) => {
                         convert::fields(b, &["type", "text"])?;
-                        if role == "user" {
-                            calls.resolved()?;
-                        }
+                        calls.resolved()?;
                         json!({"text":convert::text(b,"text")?})
+                    }
+                    ("assistant", Some("thinking")) => {
+                        convert::fields(b, &["type", "thinking", "signature"])?;
+                        let mut reasoning = json!({"text":convert::text(b,"thinking")?});
+                        if b.get("signature").is_some() {
+                            reasoning["signature"] = convert::text(b, "signature")?.into();
+                        }
+                        json!({"reasoningContent":{"reasoningText":reasoning}})
+                    }
+                    ("assistant", Some("redacted_thinking")) => {
+                        convert::fields(b, &["type", "data"])?;
+                        json!({"reasoningContent":{"redactedContent":convert::text(b,"data")?}})
                     }
                     ("assistant", Some("tool_use")) => {
                         convert::fields(b, &["type", "id", "name", "input", "caller"])?;
@@ -137,7 +246,7 @@ fn prepare_messages(src: &Value) -> Result<Value> {
                         let id = tool_label(b, "tool_use_id", false)?;
                         calls.result(id)?;
                         let mut tool =
-                            json!({"toolUseId":id,"content":text_blocks(&b["content"])?});
+                            json!({"toolUseId":id,"content":tool_result_parts(&b["content"])?});
                         if let Some(v) = b.get("is_error") {
                             tool["status"] = if v
                                 .as_bool()
@@ -162,10 +271,18 @@ fn prepare_messages(src: &Value) -> Result<Value> {
         messages.push(json!({"role":role,"content":parts}));
     }
     calls.resolved()?;
-    if messages.is_empty() || messages.last().is_some_and(|v| v["role"] == "assistant") {
-        return Err(ProtocolError::Unsupported(
-            "incomplete history or assistant prefill",
-        ));
+    if messages.is_empty() {
+        return Err(ProtocolError::Invalid("empty message history"));
+    }
+    // On compatible Claude models a final assistant text block is a prefill.
+    // The Responses converter independently rejects histories with different semantics.
+    if let Some(last) = messages.last()
+        && last["role"] == "assistant"
+        && last["content"]
+            .as_array()
+            .is_none_or(|parts| parts.iter().any(|p| !p["text"].is_string()))
+    {
+        return Err(ProtocolError::Unsupported("non-text assistant prefill"));
     }
     result["messages"] = messages.into();
     let mut tools = Vec::new();
@@ -222,11 +339,14 @@ fn prepare_messages(src: &Value) -> Result<Value> {
 
 /// Converse expresses cache boundaries as sibling blocks, including in system and tool lists.
 pub fn prepare_cached(request: &Generate) -> Result<Value> {
-    let mut src = if request.endpoint == Endpoint::OpenaiResponses {
-        crate::protocol::cache::to_messages(request.body())?
+    let src = if request.endpoint == Endpoint::OpenaiResponses {
+        request.convert_history(true, true)?
     } else {
         request.body().clone()
     };
+    cached_messages(request, src)
+}
+fn cached_messages(request: &Generate, mut src: Value) -> Result<Value> {
     let automatic = src.as_object_mut().unwrap().remove("cache_control");
     let mut marks = 0;
     let mut system = Vec::new();
@@ -326,4 +446,74 @@ pub fn prepare_cached(request: &Generate) -> Result<Value> {
         last["content"].as_array_mut().unwrap().push(p);
     }
     Ok(body)
+}
+
+/// InvokeModel has model-specific bodies. This profile implements AWS's Claude
+/// Messages contract, with AWS owning the target model, signing and stream selection.
+pub fn prepare_invoke(request: &Generate, cache: bool) -> Result<Value> {
+    let body = if request.endpoint == Endpoint::AnthropicMessages {
+        request.body().clone()
+    } else if cache {
+        request.convert_history(true, false)?
+    } else {
+        request.convert()?
+    };
+    invoke_messages(request, body, cache)
+}
+fn invoke_messages(request: &Generate, mut body: Value, cache: bool) -> Result<Value> {
+    if request.endpoint == Endpoint::OpenaiResponses
+        && (body.get("context_management").is_some() || request.restored.has_compaction())
+    {
+        return Err(ProtocolError::Unsupported("Invoke compaction negotiation"));
+    }
+    let obj = body
+        .as_object_mut()
+        .ok_or(ProtocolError::Invalid("Invoke body"))?;
+    if obj.contains_key("anthropic_version") || obj.contains_key("anthropic_beta") {
+        return Err(ProtocolError::Invalid("Invoke version metadata"));
+    }
+    for k in ["model", "stream", "max_tokens"] {
+        obj.remove(k);
+    }
+    body["anthropic_version"] = "bedrock-2023-05-31".into();
+    if cache
+        && request.endpoint == Endpoint::AnthropicMessages
+        && !crate::protocol::cache::has_messages_breakpoint(&body)
+    {
+        body["cache_control"] = json!({"type":"ephemeral"});
+    }
+    Ok(body)
+}
+
+pub(crate) fn prepare_options(
+    request: &Generate,
+    cache: bool,
+    invoke: bool,
+) -> Result<(Value, crate::protocol::approximation::Choices)> {
+    if request.endpoint == Endpoint::AnthropicMessages {
+        let body = if invoke {
+            prepare_invoke(request, cache)?
+        } else if cache {
+            prepare_cached(request)?
+        } else {
+            prepare(request)?
+        };
+        return Ok((body, Default::default()));
+    }
+    let (src, applied) = convert::request::with_options(
+        request.endpoint,
+        request.body(),
+        cache,
+        !invoke,
+        &request.restored,
+        request.allow_approximation,
+    )?;
+    let body = if invoke {
+        invoke_messages(request, src, cache)?
+    } else if cache {
+        cached_messages(request, src)?
+    } else {
+        prepare_messages(&src)?
+    };
+    Ok((body, applied))
 }

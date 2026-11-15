@@ -189,6 +189,72 @@ class OperationsRepository(PaymentRepository):
             id=attempt_id,
         )
 
+    async def bind_guardrail_receipt(self, attempt, evidence, quantities):
+        params = {
+            "aid": attempt.id,
+            "supplier": attempt.meter_supplier_id,
+            "ref": evidence,
+            "units": json.dumps(quantities),
+        }
+        await self.execute(
+            """
+            INSERT INTO billing.guardrail_usage_receipts
+                (attempt_id,supplier_id,reference_digest,quantities)
+            VALUES(:aid,:supplier,encode(sha256(convert_to(:ref,'UTF8')),'hex'),
+                   CAST(:units AS jsonb))
+            ON CONFLICT DO NOTHING""",
+            **params,
+        )
+        return (
+            await self.execute(
+                """SELECT EXISTS(SELECT FROM billing.guardrail_usage_receipts
+            WHERE attempt_id=:aid AND supplier_id=:supplier
+              AND reference_digest=encode(sha256(convert_to(:ref,'UTF8')),'hex')
+              AND quantities=CAST(:units AS jsonb))""",
+                **params,
+            )
+        ).scalar_one()
+
+    async def bind_execution_receipt(self, request_id, attempt, evidence, seconds):
+        # One supplier line can support procurement and sale for the same operation.
+        # It cannot be applied to a second request or silently change the duration.
+        row = await self._session.execute(
+            text("""
+            INSERT INTO billing.execution_usage_receipts(request_id,deployment_id,supplier_id,
+                reference_digest,confirmed_seconds)
+            VALUES(:rid,:dep,:supplier,encode(sha256(convert_to(:ref,'UTF8')),'hex'),:seconds)
+            ON CONFLICT DO NOTHING
+        """),
+            {
+                "rid": request_id,
+                "dep": attempt.deployment_id,
+                "supplier": attempt.meter_supplier_id,
+                "ref": evidence,
+                "seconds": seconds,
+            },
+        )
+        if row.rowcount == 1:
+            return True
+        return bool(
+            (
+                await self._session.execute(
+                    text("""
+            SELECT EXISTS(SELECT FROM billing.execution_usage_receipts WHERE request_id=:rid
+            AND supplier_id=:supplier AND deployment_id=:dep
+            AND reference_digest=encode(sha256(convert_to(:ref,'UTF8')),'hex')
+            AND confirmed_seconds=:seconds)
+        """),
+                    {
+                        "rid": request_id,
+                        "dep": attempt.deployment_id,
+                        "supplier": attempt.meter_supplier_id,
+                        "ref": evidence,
+                        "seconds": seconds,
+                    },
+                )
+            ).scalar_one()
+        )
+
     async def normalized_quantities(self, attempt_id):
         rows = await self.rows(
             "SELECT quantities FROM billing.normalized_usage WHERE attempt_id=:id", id=attempt_id

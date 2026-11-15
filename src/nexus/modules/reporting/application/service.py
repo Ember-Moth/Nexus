@@ -109,6 +109,7 @@ class Reports:
     async def page(self, token, org, kind, filters, limit, cursor, resource_id=None):
         operation = {
             "requests": "usage",
+            "vector_storage": "usage",
             "charges": "usage",
             "ledger": "financial",
             "attempt_costs": "finance",
@@ -120,6 +121,8 @@ class Reports:
         params = filters.model_dump()
         if kind == "requests":
             return await self.source.requests(org, projects, params, limit, cursor, resource_id)
+        if kind == "vector_storage":
+            return await self.source.vector_storage(org, projects, params, limit, cursor)
         if kind == "ledger":
             return await self.source.ledger(org, params, limit, cursor)
         return await self.source.detail_page(kind, org, projects, params, limit, cursor)

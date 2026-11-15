@@ -3,7 +3,8 @@ from uuid import UUID, uuid4
 
 from nexus.shared.errors import ServiceError
 
-from ..domain.money import usage_amount, wallet_value
+from ..domain.money import GUARDRAIL_DIMENSIONS, operation_factor, usage_amount, wallet_value
+from ..domain.usage import normalize
 from .common import digest, found, replay, versioned
 
 
@@ -107,6 +108,102 @@ class Operations:
             await repo.remember(actor, scope, kd, rd, "case_decision", decision)
             return result
 
+    async def _guardrail_evidence(self, repo, request, attempt, price, body):
+        raw = (
+            next(
+                (
+                    e.envelope["payload"]["raw_usage"]
+                    for e in await repo.usage_facts(request.id)
+                    if e.kind == "attempt.finished" and e.attempt_id == attempt.id
+                ),
+                None,
+            )
+            or {}
+        )
+        units = {k: q for k, q in body.quantities.items() if k in GUARDRAIL_DIMENSIONS}
+        if (
+            not request.guardrail_unit_limit
+            and not raw.get("guardrail_usage_unverified")
+            and not any(raw.get(k, 0) for k in GUARDRAIL_DIMENSIONS)
+        ):
+            if any(units.values()):
+                conflict("No Guardrail usage was authorized for this attempt")
+            return
+        tokens = {k: v for k, v in raw.items() if not k.startswith("guardrail_")}
+        rates = {k: v for k, v in price.rates.items() if k.endswith("_tokens")}
+        try:
+            _, known = normalize(
+                {"usage_format": attempt.expected_usage_format, "raw_usage": tokens},
+                rates,
+                attempt.expected_usage_format,
+            )
+        except ValueError:
+            known = {}
+        if any(body.quantities.get(k) != v for k, v in known.items()):
+            conflict("Use the token quantities from the Bedrock receipt")
+        if any(raw[k] != units.get(k, 0) for k in GUARDRAIL_DIMENSIONS if k in raw):
+            conflict("Guardrail correction contradicts observed policy units")
+        if not attempt.meter_supplier_id or not await repo.bind_guardrail_receipt(
+            attempt, body.evidence, body.quantities
+        ):
+            conflict("Guardrail evidence is already bound to another attempt or quantity")
+
+    async def _meter_evidence(self, repo, request, attempt, price, body):
+        if attempt.expected_usage_format == "aws.bedrock.converse.v1":
+            await self._guardrail_evidence(repo, request, attempt, price, body)
+        elif any(body.quantities.get(k, 0) for k in GUARDRAIL_DIMENSIONS):
+            conflict("Guardrail units require a Bedrock attempt")
+        if request.container_unit:
+            unit = request.container_unit
+            minutes = body.quantities.get(unit)
+            if minutes is None or any(v for k, v in body.quantities.items() if k != unit):
+                conflict("Only the recorded container memory tier can be reconciled")
+            if minutes and (
+                request.container_tariff == "session_20m"
+                and minutes % 20 != 0
+                or request.container_tariff == "minute_min_5"
+                and minutes < 5
+            ):
+                conflict("Billed minutes contradict the frozen container tariff")
+            if not await repo.bind_execution_receipt(
+                request.id, attempt, body.evidence, minutes * 60
+            ):
+                conflict("Container evidence is already bound to another period or duration")
+            return
+        if any(v for k, v in body.quantities.items() if k.startswith("container_")):
+            conflict("Container time belongs to its own billing operation")
+        seconds = body.quantities.get("code_execution_seconds", 0)
+        if request.execution_mode not in {"metered", "preloaded"}:
+            if seconds:
+                conflict("Execution time is not billable for this request")
+            return
+        for event in await repo.usage_facts(request.id):
+            if event.kind != "attempt.finished" or event.attempt_id != attempt.id:
+                continue
+            payload = event.envelope["payload"]
+            if payload["raw_usage"] is not None:
+                try:
+                    _, expected = normalize(
+                        payload,
+                        price.rates,
+                        attempt.expected_usage_format,
+                        search_limit=request.web_search_limit,
+                        file_limit=request.file_search_limit,
+                        guardrail_limit=request.guardrail_unit_limit,
+                        execution_mode=request.execution_mode,
+                        verified_seconds=seconds,
+                    )
+                except ValueError as e:
+                    if str(e) == "execution_time_conflicts_with_receipt":
+                        conflict("Execution time contradicts the supplier receipt")
+                else:
+                    if expected != body.quantities:
+                        conflict("Use the retained token and tool counters for this attempt")
+        if not await repo.bind_execution_receipt(request.id, attempt, body.evidence, seconds):
+            conflict(
+                "Execution time evidence is already bound to a different operation or duration"
+            )
+
     async def _request(self, repo, account, case, body, decision, result):
         r = found(await repo.get("request", case["request_id"], account.organization_id, lock=True))
         if r.reservation_state != "held":
@@ -141,9 +238,15 @@ class Operations:
             if known is not None and known != body.quantities:
                 conflict("Use the retained normalized evidence for this attempt")
             price = found(await repo.get("price", r.sale_price_version_id))
+            await self._meter_evidence(repo, r, attempt, price, body)
             discount = found(await repo.get("discount", r.discount_version_id))
             try:
-                gross, lines = usage_amount(price.rates, body.quantities, discount.factor)
+                gross, lines = usage_amount(
+                    price.rates,
+                    body.quantities,
+                    discount.factor,
+                    token_factor=operation_factor(r.billing_policy_version),
+                )
             except ValueError:
                 raise ServiceError("invalid_usage", "Invalid supplemental usage", 422) from None
             waiver = body.waiver if body.action == "waive" else Decimal(0)
@@ -189,8 +292,14 @@ class Operations:
             if amount is None or case["evidence"].get("statement_id") != str(body.statement_id):
                 conflict("Statement does not match this discrepancy")
         elif body.action == "supplement_usage" and body.attempt_id == attempt.id:
+            request = found(await repo.get("request", attempt.request_id, case["organization_id"]))
+            await self._meter_evidence(repo, request, attempt, price, body)
             try:
-                amount, _ = usage_amount(price.rates, body.quantities)
+                amount, _ = usage_amount(
+                    price.rates,
+                    body.quantities,
+                    token_factor=operation_factor(request.billing_policy_version),
+                )
             except ValueError:
                 raise ServiceError("invalid_usage", "Invalid cost dimensions", 422) from None
         else:

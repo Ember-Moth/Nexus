@@ -57,7 +57,7 @@ class BillingCatalog:
                 model.id,
                 model.status,
                 model.configured,
-                frozenset(model.token_dimensions),
+                frozenset(model.token_dimensions + model.tool_dimensions),
                 model.max_input_tokens,
                 model.max_output_tokens,
             )

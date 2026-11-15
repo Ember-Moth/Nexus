@@ -1,5 +1,8 @@
 use crate::protocol::{
-    Endpoint, ProtocolError, request::Operation, response, usage::UsageEvidence,
+    Endpoint, ProtocolError,
+    request::{AnthropicHeaders, Operation},
+    response,
+    usage::UsageEvidence,
 };
 use http::StatusCode;
 use reqwest::{Client, Url};
@@ -163,6 +166,17 @@ impl Upstream {
         Ok(ws)
     }
     pub(crate) fn endpoint(base: &Url, endpoint: Endpoint, operation: Operation) -> Url {
+        let resource = match endpoint {
+            Endpoint::AnthropicMessages if operation == Operation::CountTokens => {
+                "messages/count_tokens"
+            }
+            Endpoint::AnthropicMessages => "messages",
+            Endpoint::OpenaiResponses if operation == Operation::Compact => "responses/compact",
+            Endpoint::OpenaiResponses => "responses",
+        };
+        Self::resource(base, resource)
+    }
+    pub(crate) fn resource(base: &Url, resource: &str) -> Url {
         let mut url = base.clone();
         let path = url.path().trim_end_matches('/');
         let prefix = if path.ends_with("/v1") {
@@ -170,28 +184,22 @@ impl Upstream {
         } else {
             format!("{path}/v1")
         };
-        let resource = match endpoint {
-            Endpoint::AnthropicMessages => "messages",
-            Endpoint::OpenaiResponses if operation == Operation::Compact => "responses/compact",
-            Endpoint::OpenaiResponses => "responses",
-        };
         url.set_path(&format!("{prefix}/{resource}"));
         url
     }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn open(
         &self,
-        base: &Url,
+        url: Url,
         endpoint: Endpoint,
-        operation: Operation,
         secret: &str,
         body: &Value,
         stream: bool,
+        anthropic: &AnthropicHeaders,
     ) -> Result<reqwest::Response, UpstreamError> {
-        let mut call = self.client.post(Self::endpoint(base, endpoint, operation));
+        let mut call = self.client.post(url);
         call = match endpoint {
-            Endpoint::AnthropicMessages => call
-                .header("x-api-key", secret)
-                .header("anthropic-version", "2023-06-01"),
+            Endpoint::AnthropicMessages => anthropic.apply(call.header("x-api-key", secret)),
             Endpoint::OpenaiResponses => call.bearer_auth(secret),
         };
         if !stream {
@@ -222,25 +230,58 @@ impl Upstream {
         body: &Value,
     ) -> Result<Reply, UpstreamError> {
         let res = self
-            .open(base, endpoint, Operation::Generate, secret, body, false)
+            .open(
+                Self::endpoint(base, endpoint, Operation::Generate),
+                endpoint,
+                secret,
+                body,
+                false,
+                &AnthropicHeaders::default(),
+            )
             .await?;
-        self.buffered(res, endpoint, Operation::Generate).await
+        self.buffered(
+            res,
+            endpoint,
+            Operation::Generate,
+            crate::protocol::hosted::SearchMeters::for_body(body),
+        )
+        .await
     }
     pub(crate) async fn buffered(
         &self,
         res: reqwest::Response,
         endpoint: Endpoint,
         operation: Operation,
+        search_metered: crate::protocol::hosted::SearchMeters,
     ) -> Result<Reply, UpstreamError> {
         let status = res.status();
         let bytes = read_body(res, self.max_bytes).await?;
         let mut data: Value = serde_json::from_slice(&bytes)?;
+        if endpoint == Endpoint::OpenaiResponses
+            && operation == Operation::Generate
+            && status.is_success()
+            && data["object"] == "response"
+            && matches!(data["status"].as_str(), Some("queued" | "in_progress"))
+        {
+            let id = data["id"]
+                .as_str()
+                .filter(|s| !s.is_empty() && s.len() <= 200)
+                .ok_or(ProtocolError::Invalid("response ID"))?
+                .to_owned();
+            return Ok(Reply {
+                status,
+                body: bytes,
+                outcome: "pending",
+                response_id: Some(id),
+                usage: UsageEvidence::extract(endpoint, None)?,
+            });
+        }
         // Preserve the delivery fact even if a new or malformed meter cannot be billed.
-        let done = match response::observe_operation(endpoint, operation, &data) {
+        let done = match response::observe_operation(endpoint, operation, &data, search_metered) {
             Ok(done) => done,
             Err(error) if data.get("usage").is_some() => {
                 data.as_object_mut().ok_or(error)?.remove("usage");
-                response::observe_operation(endpoint, operation, &data)?
+                response::observe_operation(endpoint, operation, &data, search_metered)?
             }
             Err(error) => return Err(error.into()),
         };

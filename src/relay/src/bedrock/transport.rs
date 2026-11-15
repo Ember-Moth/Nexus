@@ -30,6 +30,60 @@ pub async fn open(
     body: &Value,
     stream: bool,
 ) -> Result<Response, UpstreamError> {
+    post(
+        client,
+        dep,
+        secret,
+        body,
+        match (dep.invoke(), stream) {
+            (true, true) => "invoke-with-response-stream",
+            (true, false) => "invoke",
+            (false, true) => "converse-stream",
+            (false, false) => "converse",
+        },
+        stream,
+    )
+    .await
+}
+
+pub(crate) async fn count(
+    client: &reqwest::Client,
+    dep: &Deployment,
+    secret: &str,
+    body: &Value,
+) -> Result<reqwest::Response, UpstreamError> {
+    let input = if dep.invoke() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        json!({"invokeModel":{"body":STANDARD.encode(serde_json::to_vec(body)?)}})
+    } else {
+        let mut input = body.clone();
+        input.as_object_mut().unwrap().retain(|k, _| {
+            matches!(
+                k.as_str(),
+                "system" | "messages" | "toolConfig" | "additionalModelRequestFields"
+            )
+        });
+        json!({"converse":input})
+    };
+    post(
+        client,
+        dep,
+        secret,
+        &serde_json::json!({"input":input}),
+        "count-tokens",
+        false,
+    )
+    .await
+}
+
+async fn post(
+    client: &reqwest::Client,
+    dep: &Deployment,
+    secret: &str,
+    body: &Value,
+    operation: &str,
+    stream: bool,
+) -> Result<reqwest::Response, UpstreamError> {
     let mut url = dep.base_url.clone();
     // AWS modelId is a single non-greedy URI label, including when it contains an ARN.
     const LABEL: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
@@ -38,11 +92,6 @@ pub async fn open(
         .remove(b'_')
         .remove(b'~');
     let model = percent_encoding::utf8_percent_encode(&dep.upstream_model, LABEL);
-    let operation = if stream {
-        "converse-stream"
-    } else {
-        "converse"
-    };
     url.set_path(&format!(
         "{}/model/{model}/{operation}",
         dep.base_url.path().trim_end_matches('/')
@@ -133,6 +182,7 @@ pub async fn buffered(
     model: &str,
     id: &str,
     limit: usize,
+    guardrail: bool,
 ) -> Result<Reply, UpstreamError> {
     let status = response.status();
     let provider_id = request_id(&response);
@@ -141,7 +191,14 @@ pub async fn buffered(
     }
     let bytes = crate::upstream::read_body(response, limit).await?;
     let body: Value = serde_json::from_slice(&bytes)?;
-    let usage = wire::evidence(body.get("usage"));
+    let usage = if status.is_success()
+        || body.get("usage").is_some()
+        || body["trace"].get("guardrail").is_some()
+    {
+        super::guardrail::evidence(&body, guardrail)
+    } else {
+        wire::evidence(None)
+    };
     let (output, status, outcome) = if !status.is_success() {
         (error_body(status, &body), status, "failed")
     } else {

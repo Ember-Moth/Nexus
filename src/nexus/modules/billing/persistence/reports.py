@@ -218,6 +218,49 @@ class BillingReports:
             "time_basis": at,
         }
 
+    async def vector_storage(self, org, projects, filters, limit, cursor):
+        conditions, values = predicates(org, projects, filters, alias="c")
+        at = (
+            "r.settled_at"
+            if filters["time_basis"] == "posted_at"
+            else "(d.day::timestamp AT TIME ZONE 'UTC')"
+        )
+        window(conditions, values, at, filters, cursor, "d.id")
+        async with self.database.transaction() as session:
+            rows = (
+                (
+                    await session.execute(
+                        text(f"""
+                SELECT d.id, 'vs_nx_'||d.store_id::text AS vector_store_id,c.project_id,
+                  c.api_key_id,c.model_id,d.day,d.byte_seconds::text AS observed_byte_seconds,
+                  d.uncertain,d.covered_until,r.id AS request_id,r.settled_at AS posted_at,
+                  r.charged_amount::text AS charged_amount,p.currency,
+                  c.sale_id AS sale_price_version_id,
+                  c.discount_id AS discount_version_id,coalesce(r.review_reason,d.reason) AS reason,
+                  CASE WHEN r.reservation_state IN ('captured','released') THEN 'settled'
+                    WHEN d.state='review' OR r.state='review' THEN 'review'
+                    WHEN d.state='open' THEN 'open' ELSE 'pending' END AS state,
+                  {at} AS sort_time
+                FROM billing.vector_storage_days d
+                JOIN billing.vector_storage_contracts c ON c.id=d.store_id
+                JOIN billing.price_versions p ON p.id=c.sale_id
+                LEFT JOIN billing.request_runs r ON r.id=d.id
+                WHERE {" AND ".join(conditions)} ORDER BY {at},d.id LIMIT :limit
+            """),
+                        {**values, "limit": limit + 1},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return {
+            "items": [{k: v for k, v in row.items() if k != "sort_time"} for row in rows[:limit]],
+            "next_cursor": next_cursor(rows[limit - 1]["sort_time"], rows[limit - 1]["id"])
+            if len(rows) > limit
+            else None,
+            "time_basis": filters["time_basis"],
+        }
+
     async def cache_usage(self, org, projects, filters):
         conditions, values = predicates(org, projects, filters)
         time = "r.settled_at" if filters["time_basis"] == "posted_at" else "a.created_at"
@@ -232,7 +275,8 @@ class BillingReports:
                 LEFT JOIN billing.normalized_usage n ON n.attempt_id=a.id
                 AND n.review_reason IS NULL
                 WHERE a.expected_usage_format IN
-                ('openai.responses.v1','anthropic.messages.v1','aws.bedrock.converse.v1') AND
+                ('openai.responses.v1','openai.chat.v1',
+                 'anthropic.messages.v1','aws.bedrock.converse.v1') AND
             """
             + " AND ".join(conditions)
             + """

@@ -8,7 +8,7 @@ matching the encoding these responses had before they were typed. Money stays a 
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer, PlainValidator, WithJsonSchema
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, PlainValidator, WithJsonSchema
 
 
 class View(BaseModel):
@@ -41,4 +41,16 @@ type Timestamp = Annotated[
 type DecimalString = Annotated[
     str,
     WithJsonSchema({"type": "string", "format": "decimal", "pattern": r"^-?[0-9]+(\.[0-9]+)?$"}),
+]
+
+# Byte-seconds routinely exceed the exact integer range of JavaScript clients.
+ByteSeconds = Annotated[int, Field(ge=0), PlainSerializer(str, return_type=str)]
+
+
+def meter_counts(values):
+    return {k: str(v) if k == "vector_storage_byte_seconds" else v for k, v in values.items()}
+
+
+MeterCounts = Annotated[
+    dict[str, int], PlainSerializer(meter_counts, return_type=dict[str, int | str])
 ]

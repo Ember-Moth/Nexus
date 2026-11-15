@@ -7,7 +7,17 @@ from pydantic import BeforeValidator, PlainSerializer
 
 SCALE = Decimal("0.000000000001")
 MAX_AMOUNT = Decimal("9999999999999999.999999999999")
-DIMENSIONS = frozenset(
+GUARDRAIL_DIMENSIONS = frozenset(
+    {
+        "guardrail_content_units",
+        "guardrail_image_units",
+        "guardrail_topic_units",
+        "guardrail_sensitive_units",
+        "guardrail_grounding_units",
+        "guardrail_reasoning_units",
+    }
+)
+DIMENSIONS = GUARDRAIL_DIMENSIONS | frozenset(
     {
         "input_uncached_tokens",
         "input_cache_read_tokens",
@@ -16,6 +26,14 @@ DIMENSIONS = frozenset(
         "input_cache_write_30m_tokens",
         "input_cache_write_12h_tokens",
         "output_tokens",
+        "web_search_requests",
+        "file_search_calls",
+        "code_execution_seconds",
+        "container_1g_minutes",
+        "container_4g_minutes",
+        "container_16g_minutes",
+        "container_64g_minutes",
+        "vector_storage_byte_seconds",
     }
 )
 
@@ -63,7 +81,22 @@ def rounded(value: Decimal, *, ceiling=False) -> Decimal:
     return result
 
 
-def usage_amount(rates: dict, quantities: dict[str, int], factor: Decimal = Decimal(1)):
+def operation_factor(policy_version: str):
+    return Decimal("0.5") if policy_version == "anthropic_message_batch_v1" else Decimal(1)
+
+
+def valid_quantity(dimension, quantity):
+    maximum = 10**24 - 1 if dimension == "vector_storage_byte_seconds" else 1_000_000_000
+    return type(quantity) is int and 0 <= quantity <= maximum
+
+
+def usage_amount(
+    rates: dict,
+    quantities: dict[str, int],
+    factor: Decimal = Decimal(1),
+    *,
+    token_factor: Decimal = Decimal(1),
+):
     if set(rates) != set(quantities) or not set(rates) <= DIMENSIONS:
         raise ValueError("usage dimensions must exactly match the frozen price")
     with localcontext() as context:
@@ -71,17 +104,23 @@ def usage_amount(rates: dict, quantities: dict[str, int], factor: Decimal = Deci
         lines = []
         for dimension in sorted(rates):
             quantity = quantities[dimension]
-            if type(quantity) is not int or not 0 <= quantity <= 1_000_000_000:
+            if not valid_quantity(dimension, quantity):
                 raise ValueError("invalid token quantity")
+            effective = factor * token_factor if dimension.endswith("_tokens") else factor
+            factor_places = max(6, -effective.normalize().as_tuple().exponent)
             rate = rates[dimension]
-            raw = Decimal(quantity) * Decimal(rate["unit_price"]) * factor / rate["unit_quantity"]
+            raw = (
+                Decimal(quantity) * Decimal(rate["unit_price"]) * effective / rate["unit_quantity"]
+            )
             lines.append(
                 {
                     "dimension": dimension,
-                    "quantity": quantity,
+                    "quantity": str(quantity)
+                    if dimension == "vector_storage_byte_seconds"
+                    else quantity,
                     "unit_price": rate["unit_price"],
                     "unit_quantity": rate["unit_quantity"],
-                    "discount_factor": format(factor, ".6f"),
+                    "discount_factor": format(effective, f".{factor_places}f"),
                     "unrounded_amount": format(raw, "f"),
                 }
             )
@@ -89,12 +128,29 @@ def usage_amount(rates: dict, quantities: dict[str, int], factor: Decimal = Deci
         return rounded(total), lines
 
 
-def reserve_amount(rates: dict, input_limit: int, output_limit: int, factor: Decimal):
+def reserve_amount(
+    rates: dict,
+    input_limit: int,
+    output_limit: int,
+    factor: Decimal,
+    *,
+    search_limit: int = 0,
+    file_limit: int = 0,
+    execution_seconds: int = 0,
+    guardrail_unit_limit: int = 0,
+):
     if not {"input_uncached_tokens", "output_tokens"} <= set(rates) or not set(rates) <= DIMENSIONS:
         raise ValueError("incomplete price dimensions")
     if any(
         type(value) is not int or not 0 <= value <= 1_000_000_000
-        for value in (input_limit, output_limit)
+        for value in (
+            input_limit,
+            output_limit,
+            search_limit,
+            file_limit,
+            execution_seconds,
+            guardrail_unit_limit,
+        )
     ):
         raise ValueError("invalid token bounds")
     with localcontext() as context:
@@ -104,10 +160,29 @@ def reserve_amount(rates: dict, input_limit: int, output_limit: int, factor: Dec
             for dimension, rate in rates.items()
         }
         worst_input = max(
-            price for dimension, price in unit.items() if dimension != "output_tokens"
+            price for dimension, price in unit.items() if dimension.startswith("input_")
         )
+        if guardrail_unit_limit and not GUARDRAIL_DIMENSIONS.intersection(unit):
+            raise ValueError("missing Guardrail price")
+        if search_limit and "web_search_requests" not in unit:
+            raise ValueError("missing search price")
+        if execution_seconds and "code_execution_seconds" not in unit:
+            raise ValueError("missing execution time price")
+        if file_limit and "file_search_calls" not in unit:
+            raise ValueError("missing file search price")
         return rounded(
-            (input_limit * worst_input + output_limit * unit["output_tokens"]) * factor,
+            (
+                input_limit * worst_input
+                + output_limit * unit["output_tokens"]
+                + execution_seconds * unit.get("code_execution_seconds", 0)
+                + guardrail_unit_limit
+                * sum(unit[k] for k in GUARDRAIL_DIMENSIONS.intersection(unit))
+                + max(
+                    search_limit * unit.get("web_search_requests", 0),
+                    file_limit * unit.get("file_search_calls", 0),
+                )
+            )
+            * factor,
             ceiling=True,
         )
 

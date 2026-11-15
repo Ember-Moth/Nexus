@@ -1,8 +1,13 @@
 //! The v1 gateway principal can execute only its cluster-scoped SQL contracts.
+pub(crate) mod batches;
 pub mod credential;
 pub mod database;
+pub(crate) mod execution;
 pub mod limits;
+pub(crate) mod resources;
 pub mod snapshot;
+pub(crate) mod stored;
+pub(crate) mod vectors;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use thiserror::Error;

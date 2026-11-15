@@ -37,7 +37,7 @@ def create_catalog_source(database, cipher):
                 raise ValueError("Deployment scope contains an unavailable deployment")
             models = await rows("""
                 SELECT DISTINCT m.id, m.version, m.public_name, m.protocols, m.capabilities,
-                m.usage_schema, m.token_dimensions,
+                m.usage_schema, m.token_dimensions, m.tool_dimensions,
                 m.max_input_tokens, m.max_output_tokens FROM catalog.deployments d JOIN
                 catalog.models m ON m.id=d.model_id
                 WHERE d.id=ANY(CAST(:deps AS uuid[])) ORDER BY m.id
@@ -52,9 +52,12 @@ def create_catalog_source(database, cipher):
                 else:
                     d["usage_format"] = {
                         "openai_responses": "openai.responses.v1",
+                        "openai_chat_completions": "openai.chat.v1",
                         "bedrock_converse": "aws.bedrock.converse.v1",
                         "anthropic_messages": "anthropic.messages.v1",
                     }[profile["endpoint"]]
+                    if profile.get("bedrock_invoke"):
+                        d["usage_format"] = "anthropic.messages.v1"
                 cid = d["credential_id"]
                 material = d.pop("ciphertext")
                 root = d.pop("key_version")

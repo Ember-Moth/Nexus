@@ -108,7 +108,7 @@ class ReportingRepository:
             cte
             + f"""
          SELECT {grouping} AS bucket,line->>'dimension' dimension,
-                sum((line->>'quantity')::bigint) quantity
+                sum((line->>'quantity')::numeric) quantity
 
                 FROM facts,jsonb_array_elements(coalesce(nullif(
               payload->'charge_details','null'::jsonb),'[]'::jsonb)) line

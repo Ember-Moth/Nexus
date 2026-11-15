@@ -63,7 +63,7 @@ fn reject_lossy_history_and_unknown_options_before_reservation() {
     ] {
         assert!(request::convert(R, &json!({"input":input})).is_err());
     }
-    assert!(request::convert(R,&json!({"input":"ok","tools":[{"type":"function","name":"f","parameters":{"type":"object","properties":{"x":{"type":"number"}}}}]})).is_err());
+    assert_eq!(request::convert(R,&json!({"input":"ok","tools":[{"type":"function","name":"f","parameters":{"type":"object","properties":{"x":{"type":"number"}}}}]})).unwrap()["tools"][0]["strict"],false);
     assert!(request::convert(R,&json!({"input":"ok","tools":[{"type":"function","name":"f","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}}]})).is_ok());
 }
 
@@ -107,7 +107,11 @@ fn mapped_stop_errors_and_usage_keep_native_semantics() {
     assert_eq!(err.0["error"]["message"], "failed");
     let mut r = r;
     r["output"][0]["content"][0] = json!({"type":"refusal","refusal":"no"});
-    assert!(response::convert(x, &r, &evidence, 200).is_err());
+    r["status"] = "completed".into();
+    r["incomplete_details"] = Value::Null;
+    let (m, _) = response::convert(x, &r, &evidence, 200).unwrap();
+    assert_eq!(m["stop_reason"], "refusal");
+    assert_eq!(m["content"][0]["text"], "no");
 }
 
 fn step(
@@ -417,4 +421,148 @@ fn bedrock_cached_request_validation_rejects_non_message_elements() {
         .unwrap();
         assert!(bedrock::prepare_cached(&req).is_err());
     }
+}
+
+#[test]
+fn implicit_tools_fall_back_without_changing_optional_or_nested_constraints() {
+    let schema = json!({"type":"object","properties":{"q":{"type":"string","minLength":3}}});
+    let input = json!({"model":"m","input":"hi","tools":[{"type":"function","name":"f","parameters":schema}]});
+    let out = request::convert(R, &input).unwrap();
+    assert_eq!(out["tools"][0]["strict"], false);
+    assert_eq!(out["tools"][0]["input_schema"], schema);
+}
+
+#[test]
+fn media_in_a_tool_result_preserves_call_and_content_order() {
+    use nexus_relay::protocol::request::Generate;
+    let msg = json!({"model":"m","max_tokens":8,"messages":[
+        {"role":"user","content":"look up"},
+        {"role":"assistant","content":[{"type":"tool_use","name":"lookup","id":"call","input":{}}]},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"call","content":[
+            {"type":"text","text":"diagram"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aQ=="}}]}]}]});
+    let res = request::convert(M, &msg).unwrap();
+    let output = &res["input"][2];
+    assert_eq!(output["call_id"], "call");
+    assert_eq!(
+        output["output"][1]["image_url"],
+        "data:image/png;base64,aQ=="
+    );
+    let back = request::convert(R, &res).unwrap();
+    assert_eq!(back["messages"][2], msg["messages"][2]);
+    let parsed = Generate::parse(M, msg, false).unwrap();
+    let bedrock = nexus_relay::bedrock::prepare(&parsed).unwrap();
+    assert_eq!(
+        bedrock["messages"][2]["content"][0]["toolResult"]["content"][1]["image"]["source"]["bytes"],
+        "aQ=="
+    );
+}
+
+#[test]
+fn refusal_stream_keeps_visible_text_and_the_filter_reason() {
+    let mut stream = Stream::new(M, "alias", 4096);
+    let mut observer = Observer::new(R);
+    let item = json!({"type":"message","id":"m","role":"assistant","content":[]});
+    let mut emitted = Vec::new();
+    for event in [
+        json!({"type":"response.created","response":{"id":"r","status":"in_progress"}}),
+        json!({"type":"response.output_item.added","output_index":0,"item":item}),
+        json!({"type":"response.content_part.added","output_index":0,"content_index":0,"item_id":"m","part":{"type":"refusal","refusal":""}}),
+        json!({"type":"response.refusal.delta","output_index":0,"content_index":0,"item_id":"m","delta":"Declined."}),
+        json!({"type":"response.refusal.done","output_index":0,"content_index":0,"item_id":"m","refusal":"Declined."}),
+        json!({"type":"response.incomplete","response":{"id":"r","status":"incomplete","incomplete_details":{"reason":"content_filter"},"output":[{"type":"message","role":"assistant","id":"m","content":[{"type":"refusal","refusal":"Declined."}]}],"usage":{"input_tokens":8,"output_tokens":2,"input_tokens_details":{"cached_tokens":0}}}}),
+    ] {
+        emitted.extend(step(&mut stream, &mut observer, event).unwrap());
+    }
+    assert_eq!(emitted[2]["delta"]["text"], "Declined.");
+    let finish = &emitted[emitted.len() - 2];
+    assert_eq!(finish["delta"]["stop_reason"], "refusal");
+    assert_eq!(finish["usage"]["output_tokens"], 2);
+}
+
+#[test]
+fn messages_refusal_maps_to_an_incomplete_response() {
+    let x = Exchange {
+        client: R,
+        upstream: M,
+        public_model: "alias",
+    };
+    let evidence = UsageEvidence::extract(M, None).unwrap();
+    let msg =
+        json!({"id":"r","stop_reason":"refusal","content":[{"type":"text","text":"partial"}]});
+    let (r, status) = response::convert(x, &msg, &evidence, 200).unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(r["status"], "incomplete");
+    assert_eq!(r["incomplete_details"]["reason"], "content_filter");
+    assert_eq!(r["output"][0]["content"][0]["text"], "partial");
+}
+
+#[test]
+fn plain_text_document_history_roundtrips_as_utf8() {
+    let doc = json!({"type":"document","title":"notes.txt","source":{"type":"text","media_type":"text/plain","data":"二行\n🌲"}});
+    let body =
+        json!({"messages":[{"role":"user","content":[doc,{"type":"text","text":"Read it"}]}]});
+    let res = request::convert(M, &body).unwrap();
+    assert_eq!(res["input"][0]["content"][0]["filename"], "notes.txt");
+    let back = request::convert(R, &res).unwrap();
+    assert_eq!(back["messages"], body["messages"]);
+    let mut bad = res;
+    bad["input"][0]["content"][0]["file_data"] = "data:text/plain;base64,/w==".into();
+    assert!(request::convert(R, &bad).is_err());
+}
+
+#[test]
+fn chat_rebases_url_offsets_after_ordering_interleaved_text() {
+    use nexus_relay::protocol::chat;
+    let mut stream = chat::Stream::new("alias", true, 4096);
+    let mut rendered = String::new();
+    let mut cites = vec![];
+    let a = json!({"type":"url_citation","start_index":0,"end_index":2,"title":"Source","url":"https://example.org/source"});
+    let first = json!({"type":"message","role":"assistant","id":"m1","content":[{"type":"output_text","text":"🌲","annotations":[]}]});
+    let second = json!({"type":"message","role":"assistant","id":"m2","content":[{"type":"output_text","text":"日本","annotations":[a]}]});
+    let r = json!({"id":"r","status":"completed","output":[first,second]});
+    for event in [
+        json!({"type":"response.created","response":{"id":"r"}}),
+        json!({"type":"response.output_text.delta","output_index":1,"content_index":0,"delta":"日"}),
+        json!({"type":"response.output_text.annotation.added","output_index":1,"content_index":0,"annotation_index":0,"annotation":a}),
+        json!({"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"🌲"}),
+        json!({"type":"response.output_item.done","output_index":0,"item":first}),
+        json!({"type":"response.completed","response":r}),
+    ] {
+        for frame in stream.frames(&event).unwrap() {
+            let v = frame.trim().strip_prefix("data: ").unwrap();
+            if v == "[DONE]" {
+                continue;
+            }
+            let decoded: Value = serde_json::from_str(v).unwrap();
+            let delta = &decoded["choices"][0]["delta"];
+            if let Some(s) = delta["content"].as_str() {
+                rendered.push_str(s);
+            }
+            if let Some(a) = delta["annotations"].as_array() {
+                cites.extend(a.iter().cloned());
+            }
+        }
+    }
+    let answer = chat::response(&r, "alias").unwrap();
+    assert_eq!(rendered, "🌲日本");
+    assert_eq!(answer["choices"][0]["message"]["annotations"], json!(cites));
+    assert_eq!(cites[0]["url_citation"]["start_index"], 1);
+    assert_eq!(cites[0]["url_citation"]["end_index"], 3);
+}
+
+#[test]
+fn chat_rejects_conflicting_or_out_of_bounds_source_ranges() {
+    use nexus_relay::protocol::chat;
+    let mut stream = chat::Stream::new("alias", false, 4096);
+    let a = json!({"type":"url_citation","url":"https://example.org/","title":"Source","start_index":0,"end_index":2});
+    stream.frames(&json!({"type":"response.output_text.annotation.added","output_index":0,"content_index":0,"annotation_index":0,"annotation":a})).unwrap();
+    let mut item = json!({"type":"message","id":"m","role":"assistant","content":[{"type":"output_text","text":"風","annotations":[a]}]});
+    let response = |item: Value| json!({"id":"r","status":"completed","output":[item]});
+    assert!(chat::response(&response(item.clone()), "alias").is_err());
+    item["content"][0]["annotations"][0]["end_index"] = 1.into();
+    assert!(
+        stream
+            .frames(&json!({"type":"response.completed","response":response(item)}))
+            .is_err()
+    );
 }

@@ -77,3 +77,41 @@ def test_openapi_advertises_decimal_strings_and_no_gateway_management_routes(set
     assert not any(
         "/reserve" in path or "/settle" in path or "/attempt" in path for path in spec["paths"]
     )
+
+
+def test_vector_storage_daily_rate_and_large_quantity_are_exact():
+    from nexus.modules.billing.application.schemas import Settlement
+
+    quantity = 2**30 * 21600
+    rates = {"vector_storage_byte_seconds": {"unit_price": "0.10", "unit_quantity": 2**30 * 86400}}
+    amount, lines = usage_amount(rates, {"vector_storage_byte_seconds": quantity})
+    assert amount == Decimal("0.025") and lines[0]["quantity"] == str(quantity)
+    facts = Settlement(
+        outcome="unknown",
+        quantities={"vector_storage_byte_seconds": "9007199254740993"},
+        evidence_reference="storage-snapshot",
+        normalization_version="openai.vector_storage.v1/1",
+    )
+    assert facts.quantities == {"vector_storage_byte_seconds": 9007199254740993}
+    with pytest.raises(ValidationError):
+        Settlement(
+            outcome="unknown",
+            quantities={"output_tokens": 1_000_000_001},
+            evidence_reference="storage-snapshot",
+            normalization_version="openai.vector_storage.v1/1",
+        )
+
+
+def test_guardrail_policy_bounds_add_across_filters_before_rounding():
+    rates = {
+        "input_uncached_tokens": {"unit_price": "0", "unit_quantity": 1},
+        "output_tokens": {"unit_price": "0", "unit_quantity": 1},
+        "guardrail_image_units": {"unit_price": "0.000000000001", "unit_quantity": 1},
+        "guardrail_content_units": {"unit_price": "0.000000000001", "unit_quantity": 1000},
+    }
+    # One rounded total for the hold, the ledger uses half-up on actual units.
+    assert reserve_amount(rates, 1, 1, Decimal(1), guardrail_unit_limit=1) == Decimal(
+        "0.000000000002"
+    )
+    actual = {k: int(k.startswith("guardrail_")) for k in rates}
+    assert usage_amount(rates, actual)[0] == Decimal("0.000000000001")

@@ -1,8 +1,16 @@
+pub mod approximation;
 pub mod cache;
+pub mod chat;
+pub(crate) mod chat_upstream;
 pub mod convert;
+pub mod execution;
+pub(crate) mod history;
+pub(crate) mod hosted;
+pub(crate) mod media;
 pub mod request;
 pub mod response;
 pub mod sse;
+pub(crate) mod stop;
 pub mod stream;
 pub mod tokens;
 pub mod tools;

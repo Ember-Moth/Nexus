@@ -19,7 +19,18 @@ pytestmark = pytest.mark.integration
 
 @asynccontextmanager
 async def stream_plane(
-    http, admin, binary, ca, port, family, *, ws=False, convert_from=None, auto_cache=False
+    http,
+    admin,
+    binary,
+    ca,
+    port,
+    family,
+    *,
+    ws=False,
+    chat_upstream=False,
+    convert_from=None,
+    auto_cache=False,
+    cache_rates=None,
 ):
     client, root, app, settings = http
     async with provision_plane(
@@ -38,6 +49,7 @@ async def stream_plane(
                     else "input_cache_write_5m_tokens"
                 ): "1.25",
             }
+            | (cache_rates or {})
             if auto_cache
             else None
         ),
@@ -56,6 +68,8 @@ async def stream_plane(
             "bound_reference": "isolated-stream",
             "count_rule": "deployment_ceiling.v1",
         }
+        if chat_upstream:
+            profile["endpoint"] = "openai_chat_completions"
         if auto_cache:
             profile["auto_prompt_cache"] = True
         if convert_from:
@@ -79,7 +93,7 @@ async def stream_plane(
             json={"node_id": str(nid), "database_role": role, "capabilities": caps},
         )
         assert r.status_code == 200, r.text
-        if convert_from:
+        if convert_from or chat_upstream:
             blocked = await client.post(
                 f"/api/v1/gateway-clusters/{cid}/releases",
                 headers=headers(root, "old-node"),
@@ -91,7 +105,7 @@ async def stream_plane(
                 if convert_from == "anthropic_messages"
                 else "responses-to-messages"
             )
-            caps.append(f"relay.{direction}.v1")
+            caps.append("relay.responses-to-chat.v1" if chat_upstream else f"relay.{direction}.v1")
             r = await client.put(
                 f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
                 headers=auth(root),

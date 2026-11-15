@@ -24,6 +24,7 @@ class CatalogModel(Resource, Base):
     protocols: Mapped[list[str]] = mapped_column(JSONB)
     capabilities: Mapped[dict] = mapped_column(JSONB)
     usage_schema: Mapped[str] = mapped_column(String(32))
+    tool_dimensions: Mapped[list[str]] = mapped_column(JSONB, default=list)
     token_dimensions: Mapped[list[str]] = mapped_column(JSONB)
     max_input_tokens: Mapped[int] = mapped_column()
     max_output_tokens: Mapped[int] = mapped_column()

@@ -217,6 +217,17 @@ class RequestRun(Record, Base):
     billing_policy_version: Mapped[str] = mapped_column(String(40))
     input_limit: Mapped[int] = mapped_column(BigInteger)
     output_limit: Mapped[int] = mapped_column(BigInteger)
+    execution_seconds_limit: Mapped[int] = mapped_column(default=0)
+    container_unit: Mapped[str | None] = mapped_column(String)
+    container_minutes_limit: Mapped[int] = mapped_column(default=0)
+    container_tariff: Mapped[str | None] = mapped_column(String)
+    container_origin: Mapped[UUID | None]
+    container_handle: Mapped[str | None] = mapped_column(String)
+    execution_mode: Mapped[str] = mapped_column(default="none")
+    guardrail_unit_limit: Mapped[int] = mapped_column(default=0)
+    file_search_limit: Mapped[int] = mapped_column(default=0)
+    storage_byte_seconds: Mapped[Decimal] = mapped_column(Numeric(24, 0), default=0)
+    web_search_limit: Mapped[int] = mapped_column(default=0)
     reserved_amount: Mapped[Decimal] = mapped_column(Numeric(28, 12))
     charged_amount: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
     refunded_amount: Mapped[Decimal] = mapped_column(Numeric(28, 12), default=Decimal(0))
@@ -241,6 +252,7 @@ class BudgetHold(Base):
 
 
 class Attempt(Record, Base):
+    meter_supplier_id: Mapped[UUID | None]
     expected_usage_format: Mapped[str | None] = mapped_column(String(80))
     __tablename__ = "request_attempts"
     __table_args__ = {"schema": "billing"}

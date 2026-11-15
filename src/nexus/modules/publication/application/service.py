@@ -81,7 +81,9 @@ class PublicationService:
         pricing_rev, prices = await self.prices(models, deps)
         for model in catalog["models"]:
             price = prices.get(("sale", model["id"]))
-            if not price or price[1] != set(model["token_dimensions"]):
+            if not price or price[1] != set(
+                model["token_dimensions"] + model.get("tool_dimensions", [])
+            ):
                 raise ValueError("Missing complete sale price")
         for dep in catalog["deployments"]:
             cost = prices.get(("cost", dep["id"]))
@@ -167,8 +169,44 @@ class PublicationService:
             nodes = await repo.capabilities(cid)
             required = list(CAPABILITIES)
             profiles = [d["relay_profile"] for d in current["deployments"] if "relay_profile" in d]
+            if any(p["endpoint"] == "openai_chat_completions" for p in profiles):
+                required.append("relay.responses-to-chat.v1")
             if any(p["endpoint"] == "bedrock_converse" for p in profiles):
                 required.append("relay.bedrock-converse.v1")
+            if any(p.get("bedrock_guardrail") or p.get("bedrock_model_fields") for p in profiles):
+                required.append("relay.bedrock-settings.v1")
+            if any(
+                p.get("bedrock_guardrail")
+                or any(o.get("guardrailConfig") for o in p.get("bedrock_request_options", []))
+                for p in profiles
+            ) or any(
+                any(k.startswith("guardrail_") for k in m.get("tool_dimensions", []))
+                for m in current["models"]
+            ):
+                required.append("relay.bedrock-guardrail-usage.v1")
+            if any(p.get("bedrock_request_options") for p in profiles):
+                required.append("relay.bedrock-request-options.v1")
+            if any(p.get("code_execution") for p in profiles) or any(
+                "code_execution_seconds" in m.get("tool_dimensions", []) for m in current["models"]
+            ):
+                required.append("relay.claude-execution.v1")
+            if any(p.get("container_reserve_minutes") for p in profiles) or any(
+                any(k.startswith("container_") for k in m.get("tool_dimensions", []))
+                for m in current["models"]
+            ):
+                required.append("relay.openai-containers.v1")
+            if any(p.get("bedrock_invoke") for p in profiles):
+                required.append("relay.bedrock-claude-invoke.v1")
+            if any(
+                "web_search_requests" in m.get("tool_dimensions", []) for m in current["models"]
+            ):
+                required.append("relay.web-search.v1")
+            if any(
+                set(m.get("tool_dimensions", []))
+                & {"file_search_calls", "vector_storage_byte_seconds"}
+                for m in current["models"]
+            ):
+                required.append("relay.file-search.v1")
             if any(p.get("auto_prompt_cache") for p in profiles):
                 required.append("relay.prompt-cache.v1")
             if profiles:
@@ -181,7 +219,10 @@ class PublicationService:
                 ("anthropic_messages", "relay.messages-to-responses.v1"),
                 ("openai_responses", "relay.responses-to-messages.v1"),
             ]:
-                if any(p.get("convert_from") == source for p in profiles):
+                if any(
+                    p.get("convert_from") == source and p["endpoint"] != "openai_chat_completions"
+                    for p in profiles
+                ):
                     required.append(capability)
             if any(not set(required) <= set(n["capabilities"]) for n in nodes):
                 raise ServiceError(

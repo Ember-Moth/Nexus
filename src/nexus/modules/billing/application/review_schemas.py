@@ -1,4 +1,4 @@
-from typing import Annotated, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field, JsonValue, model_validator
@@ -6,7 +6,7 @@ from pydantic import Field, JsonValue, model_validator
 from nexus.shared.views import DecimalString, Timestamp, View
 
 from ..domain.money import DIMENSIONS
-from .schemas import Nonblank, NonnegativeMoney, Schema
+from .schemas import Nonblank, NonnegativeMoney, Quantities, Schema
 
 ResolutionAction = Literal[
     "confirm_no_charge", "supplement_usage", "retry", "waive", "verify_payment", "confirm_cost"
@@ -21,7 +21,7 @@ class ReviewBasis(Schema):
 class Resolution(ReviewBasis):
     action: ResolutionAction
     attempt_id: UUID | None = None
-    quantities: dict[str, Annotated[int, Field(ge=0, le=1_000_000_000, strict=True)]] | None = None
+    quantities: Quantities | None = None
     normalization_version: str | None = Field(default=None, min_length=1, max_length=80)
     waiver: NonnegativeMoney | None = None
     observation_id: UUID | None = None

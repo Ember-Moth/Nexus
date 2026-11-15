@@ -20,6 +20,7 @@ from ..application.schemas import (
     ReportPage,
     RequestRecord,
     UsageReport,
+    VectorStorageDay,
 )
 from ..application.service import Reports
 
@@ -77,6 +78,7 @@ def create_router(get_service):
 
     for path, kind, Item in [
         ("requests", "requests", RequestRecord),
+        ("vector-storage-usage", "vector_storage", VectorStorageDay),
         ("charges", "charges", ChargeRecord),
         ("ledger", "ledger", LedgerRecord),
         ("upstream-costs", "attempt_costs", AttemptCostEntry),

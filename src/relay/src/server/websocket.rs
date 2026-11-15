@@ -1,5 +1,6 @@
 //! A downstream connection owns exactly one serial upstream conversation.
 use super::{Node, error};
+use crate::protocol::request::Generate;
 use crate::{
     control::snapshot::Binding,
     metrics::{Outcome, RequestTally, Transport, UpstreamTimer},
@@ -318,9 +319,57 @@ async fn session(
             .await;
             break;
         };
-        if request
-            .previous_response_id()
-            .is_some_and(|p| Some(p) != state.parent.as_deref())
+        let resources = async {
+            super::containers::bind(&node, &index, &raw, &mut request).await?;
+            super::vectors::bind(&node, &index, &raw, &mut request).await?;
+            super::bind_input(&node, &index, &raw, &mut request).await?;
+            super::conversations::bind(&node, &index, &raw, &mut request).await
+        }
+        .await;
+        if let Err(failure) = resources {
+            if reject(
+                &mut sink,
+                failure.1,
+                event_id.as_deref(),
+                stream_id.as_deref(),
+                node.stream_idle,
+            )
+            .await
+            .is_err()
+            {
+                break;
+            }
+            continue;
+        }
+        let mut owned_parent = false;
+        if let Some(handle) = request.previous_response_id().and_then(Generate::handle) {
+            match crate::control::stored::bind_parent(&node, &index, &raw, &mut request, handle)
+                .await
+            {
+                Ok(()) => {
+                    owned_parent = true;
+                }
+                Err(failure) => {
+                    if reject(
+                        &mut sink,
+                        failure.1,
+                        event_id.as_deref(),
+                        stream_id.as_deref(),
+                        node.stream_idle,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        break;
+                    }
+                    continue;
+                }
+            }
+        }
+        if !owned_parent
+            && request
+                .previous_response_id()
+                .is_some_and(|p| Some(p) != state.parent.as_deref())
             || state.binding.is_some() && state.lane != stream_id
         {
             if reject(
@@ -390,7 +439,17 @@ async fn session(
         turns += 1;
         let (tx, rx) = mpsc::channel(2);
         let (cancel, controls) = mpsc::channel(1);
+        let request_id = Uuid::new_v4();
         let mut channel = TurnChannel {
+            resources: crate::control::resources::ResourceScope::new(
+                &node.db,
+                selected.key.id,
+                index.revision,
+                selected.model,
+                selected.deployment.id,
+            )
+            .interpreter(request.interpreter.is_some().then_some(request_id)),
+            conversation: request.conversation.clone(),
             out: tx,
             controls,
             disconnected: tokio_util::sync::CancellationToken::new(),
@@ -409,9 +468,7 @@ async fn session(
                 frame["stream_id"] = lane.into();
             }
             let (mut r, secret) =
-                match Reservation::reserve(Uuid::new_v4(), node.clone(), &index, &selected, EP)
-                    .await
-                {
+                match Reservation::reserve(request_id, node.clone(), &index, &selected, EP).await {
                     Ok(v) => v,
                     Err(e) => {
                         channel.error(e.1).await;
@@ -597,6 +654,8 @@ async fn handle_busy(
 }
 
 struct TurnChannel {
+    resources: crate::control::resources::ResourceScope,
+    conversation: Option<crate::protocol::request::ConversationId>,
     out: Output,
     controls: mpsc::Receiver<ClientEvent>,
     disconnected: tokio_util::sync::CancellationToken,
@@ -675,8 +734,13 @@ async fn execute(
     let disconnected = ch.disconnected.clone();
     let request_id = run.reservation.id;
     let mut timer = UpstreamTimer::start(EP, Transport::Websocket);
+    let mut stored = if frame["store"] == true {
+        Some(run.stored_stream())
+    } else {
+        None
+    };
     let result=run.reservation.guarded(async{
-        tokio::select!{biased;_=disconnected.cancelled()=>Err(()),v=roundtrip(socket,ch,frame,&state.retired,cancellable,&mut done,&mut timer)=>v}
+        tokio::select!{biased;_=disconnected.cancelled()=>Err(()),v=roundtrip(socket,ch,frame,&state.retired,cancellable,&mut done,&mut timer,&mut stored)=>v}
     }).await;
     drop(timer);
     let written = matches!(result, Ok(Ok(())));
@@ -721,6 +785,7 @@ enum TurnInput {
     Upstream(Option<Result<Up, tokio_tungstenite::tungstenite::Error>>),
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn roundtrip(
     ws: &mut UpstreamSocket,
     ch: &mut TurnChannel,
@@ -729,12 +794,14 @@ async fn roundtrip(
     cancellable: bool,
     done: &mut Option<Completion>,
     timer: &mut UpstreamTimer,
+    stored: &mut Option<crate::control::stored::StoredStream>,
 ) -> Result<(), ()> {
     timeout(ch.idle, ws.send(Up::Text(frame.to_string().into())))
         .await
         .map_err(|_| ())?
         .map_err(|_| ())?;
-    let mut observer = Observer::new(EP);
+    let mut observer =
+        Observer::with_search(EP, crate::protocol::hosted::SearchMeters::for_body(&frame));
     let mut tools = crate::protocol::tools::ToolLimits::new(EP, ch.limit);
     let mut active: Option<String> = None;
     let mut cancelling: Option<(String, Option<String>)> = None;
@@ -752,9 +819,13 @@ async fn roundtrip(
                 response_id,
             })) => {
                 if stream_id != ch.lane
-                    || response_id
-                        .as_deref()
-                        .is_some_and(|id| Some(id) != active.as_deref())
+                    || response_id.as_deref().is_some_and(|id| {
+                        if let Some(stored) = stored.as_ref() {
+                            id != stored.public_id() || active.is_none()
+                        } else {
+                            Some(id) != active.as_deref()
+                        }
+                    })
                     || cancelling.is_some()
                 {
                     emit(
@@ -810,7 +881,12 @@ async fn roundtrip(
         };
         let mut event: Value = serde_json::from_str(&text).map_err(|_| ())?;
         let kind = event["type"].as_str().ok_or(())?;
-        if event.get("stream_id").and_then(Value::as_str) != ch.lane.as_deref() {
+        if event
+            .get("stream_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            != ch.lane.as_deref()
+        {
             continue;
         }
         let id = event["response"]["id"]
@@ -843,6 +919,13 @@ async fn roundtrip(
         }
         tools.observe(&event).map_err(|_| ())?;
         *done = observer.observe(None, &event).map_err(|_| ())?;
+        ch.resources.rewrite(&mut event).await?;
+        if let (Some(conv), Some(response)) = (&ch.conversation, event.get_mut("response")) {
+            conv.rewrite(response).map_err(|_| ())?;
+        }
+        if let Some(stored) = stored.as_mut() {
+            stored.rewrite(&mut event).await?;
+        }
         timeout(ch.idle, emit(&ch.out, event))
             .await
             .map_err(|_| ())??;

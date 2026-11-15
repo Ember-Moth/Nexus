@@ -27,10 +27,18 @@ impl Encoding {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ReservationBounds {
     pub inputs: u32,
     pub outputs: u32,
+    #[serde(default)]
+    pub guardrail_units: u32,
+    pub searches: u32,
+    pub file_searches: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interpreter: Option<super::execution::ContainerTarget>,
+    pub execution_mode: super::execution::ExecutionMode,
+    pub execution_seconds: u32,
 }
 
 impl ReservationBounds {
@@ -48,6 +56,12 @@ impl ReservationBounds {
             return Err(ProtocolError::Invalid("token bounds"));
         }
         Ok(Self {
+            guardrail_units: 0,
+            searches: 0,
+            file_searches: 0,
+            interpreter: None,
+            execution_mode: crate::protocol::execution::ExecutionMode::None,
+            execution_seconds: 0,
             inputs: input_ceiling,
             outputs,
         })

@@ -89,40 +89,74 @@ impl Decoder {
 }
 
 enum Block {
-    Text,
+    Pending,
+    Text(super::citations::Delta),
+    Thinking(String),
+    Redacted(Vec<u8>),
     Tool(String),
 }
 pub struct Conversation {
     id: String,
     model: String,
-    tool_limit: usize,
-    tool_bytes: usize,
+    pub guardrail: bool,
+    buffer_limit: usize,
+    buffer_bytes: usize,
     started: bool,
     reason: Option<&'static str>,
+    stop_sequence: Option<String>,
     next: u64,
     active: HashMap<u64, Block>,
     tool_ids: HashSet<String>,
 }
 impl Conversation {
-    pub fn new(id: String, model: String, tool_limit: usize) -> Self {
+    pub fn new(id: String, model: String, buffer_limit: usize) -> Self {
         Self {
             id,
             model,
-            tool_limit,
-            tool_bytes: 0,
+            guardrail: false,
+            buffer_limit,
+            buffer_bytes: 0,
             started: false,
             reason: None,
+            stop_sequence: None,
             next: 0,
             active: HashMap::new(),
             tool_ids: HashSet::new(),
         }
     }
     fn begin(&mut self, index: u64, block: Block) -> Result<()> {
-        if index != self.next || self.active.len() >= 256 || index >= 4096 {
+        if index != self.next
+            || self.active.len() >= 256
+            || index >= 4096
+            || self
+                .active
+                .values()
+                .any(|b| matches!(b, Block::Pending | Block::Redacted(_)))
+        {
             return Err(ProtocolError::UnexpectedEvent);
         }
         self.next += 1;
         self.active.insert(index, block);
+        Ok(())
+    }
+    fn start_delta(
+        &mut self,
+        index: u64,
+        block: Block,
+        content: impl FnOnce() -> Option<Value>,
+        events: &mut Vec<Value>,
+    ) -> Result<()> {
+        match self.active.get(&index) {
+            Some(Block::Pending) => {
+                self.active.insert(index, block);
+            }
+            Some(_) => return Ok(()),
+            None => self.begin(index, block)?,
+        }
+        if let Some(content) = content() {
+            events
+                .push(json!({"type":"content_block_start","index":index,"content_block":content}));
+        }
         Ok(())
     }
     pub fn event(
@@ -177,8 +211,8 @@ impl Conversation {
                     self.begin(n, Block::Tool(String::new()))?;
                     json!({"type":"tool_use","name":convert::id(t,"name")?,"id":id,"input":{}})
                 } else if start.is_empty() {
-                    self.begin(n, Block::Text)?;
-                    json!({"type":"text","text":""})
+                    self.begin(n, Block::Pending)?;
+                    return Ok((events, None));
                 } else {
                     return Err(ProtocolError::Unsupported("Bedrock block start"));
                 };
@@ -192,24 +226,85 @@ impl Conversation {
                     return Err(ProtocolError::Invalid("Bedrock delta union"));
                 }
                 let translated = if let Some(text) = delta["text"].as_str() {
-                    if !self.active.contains_key(&n) {
-                        self.begin(n, Block::Text)?;
-                        events.push(json!({"type":"content_block_start","index":n,"content_block":{"type":"text","text":""}}));
-                    }
-                    if !matches!(self.active.get(&n), Some(Block::Text)) {
+                    self.start_delta(
+                        n,
+                        Block::Text(Default::default()),
+                        || Some(json!({"type":"text","text":""})),
+                        &mut events,
+                    )?;
+                    if !matches!(self.active.get(&n), Some(Block::Text(_))) {
                         return Err(ProtocolError::UnexpectedEvent);
                     }
                     json!({"type":"text_delta","text":text})
+                } else if let Some(c) = delta.get("citation") {
+                    self.start_delta(
+                        n,
+                        Block::Text(Default::default()),
+                        || Some(json!({"type":"text","text":""})),
+                        &mut events,
+                    )?;
+                    let Some(Block::Text(pending)) = self.active.get_mut(&n) else {
+                        return Err(ProtocolError::UnexpectedEvent);
+                    };
+                    if let Some(ready) =
+                        pending.push(c, &mut self.buffer_bytes, self.buffer_limit)?
+                    {
+                        events.push(json!({"type":"content_block_delta","index":n,"delta":{"type":"citations_delta","citation":ready}}));
+                    }
+                    return Ok((events, None));
                 } else if let Some(args) = delta["toolUse"]["input"].as_str() {
                     let Some(Block::Tool(buffer)) = self.active.get_mut(&n) else {
                         return Err(ProtocolError::UnexpectedEvent);
                     };
-                    if args.len() > self.tool_limit - self.tool_bytes {
+                    if args.len() > self.buffer_limit - self.buffer_bytes {
                         return Err(ProtocolError::EventTooLarge);
                     }
                     buffer.push_str(args);
-                    self.tool_bytes += args.len();
+                    self.buffer_bytes += args.len();
                     json!({"type":"input_json_delta","partial_json":args})
+                } else if let Some(r) = delta.get("reasoningContent") {
+                    if r.as_object().is_none_or(|o| o.len() != 1) {
+                        return Err(ProtocolError::Invalid("reasoning delta"));
+                    }
+                    if let Some(data) = r.get("redactedContent").and_then(Value::as_str) {
+                        use base64::{Engine, engine::general_purpose::STANDARD};
+                        self.start_delta(n, Block::Redacted(Vec::new()), || None, &mut events)?;
+                        let Some(Block::Redacted(buffer)) = self.active.get_mut(&n) else {
+                            return Err(ProtocolError::UnexpectedEvent);
+                        };
+                        let bytes = STANDARD
+                            .decode(data)
+                            .map_err(|_| ProtocolError::Invalid("redacted reasoning bytes"))?;
+                        if bytes.len() > self.buffer_limit - self.buffer_bytes {
+                            return Err(ProtocolError::EventTooLarge);
+                        }
+                        buffer.extend_from_slice(&bytes);
+                        self.buffer_bytes += bytes.len();
+                        return Ok((events, None));
+                    }
+                    self.start_delta(
+                        n,
+                        Block::Thinking(String::new()),
+                        || Some(json!({"type":"thinking","thinking":""})),
+                        &mut events,
+                    )?;
+                    let Some(Block::Thinking(signature)) = self.active.get_mut(&n) else {
+                        return Err(ProtocolError::UnexpectedEvent);
+                    };
+                    if let Some(t) = r.get("text").and_then(Value::as_str) {
+                        if !signature.is_empty() {
+                            return Err(ProtocolError::UnexpectedEvent);
+                        }
+                        json!({"type":"thinking_delta","thinking":t})
+                    } else {
+                        let piece = convert::text(r, "signature")?;
+                        if piece.len() > self.buffer_limit - self.buffer_bytes {
+                            return Err(ProtocolError::EventTooLarge);
+                        }
+                        signature.push_str(piece);
+                        self.buffer_bytes += piece.len();
+                        return Ok((events, None));
+                    }
                 } else {
                     return Err(ProtocolError::Unsupported("Bedrock content delta"));
                 };
@@ -223,23 +318,42 @@ impl Conversation {
                     .ok_or(ProtocolError::UnexpectedEvent)?
                 {
                     Block::Tool(buffer) => {
-                        self.tool_bytes -= buffer.len();
+                        self.buffer_bytes -= buffer.len();
                         if !buffer.is_empty()
                             && !serde_json::from_str::<Value>(&buffer).is_ok_and(|v| v.is_object())
                         {
                             return Err(ProtocolError::Invalid("Bedrock tool arguments"));
                         }
                     }
-                    Block::Text => {}
+                    Block::Text(mut pending) => {
+                        if let Some(ready) = pending.finish(&mut self.buffer_bytes)? {
+                            events.push(json!({"type":"content_block_delta","index":n,"delta":{"type":"citations_delta","citation":ready}}));
+                        }
+                    }
+                    Block::Thinking(signature) => {
+                        self.buffer_bytes -= signature.len();
+                        if !signature.is_empty() {
+                            events.push(json!({"type":"content_block_delta","index":n,"delta":{"type":"signature_delta","signature":signature}}));
+                        }
+                    }
+                    Block::Redacted(bytes) => {
+                        use base64::{Engine,engine::general_purpose::STANDARD};
+                        if bytes.is_empty(){return Err(ProtocolError::Invalid("empty redacted reasoning"));}
+                        self.buffer_bytes-=bytes.len();
+                        events.push(json!({"type":"content_block_start","index":n,"content_block":{"type":"redacted_thinking","data":STANDARD.encode(bytes)}}));
+                    }
+                    Block::Pending => events.push(json!({"type":"content_block_start","index":n,"content_block":{"type":"text","text":""}})),
                 }
                 events.push(json!({"type":"content_block_stop","index":n}));
             }
             "messageStop" if self.active.is_empty() => {
-                self.reason = Some(wire::reason(convert::text(v, "stopReason")?)?);
+                let reason = wire::reason(convert::text(v, "stopReason")?)?;
+                self.stop_sequence = wire::stop_sequence(reason, v)?.map(str::to_owned);
+                self.reason = Some(reason);
             }
             "metadata" => {
                 let reason = self.reason.ok_or(ProtocolError::UnexpectedEvent)?;
-                let usage = wire::evidence(v.get("usage"));
+                let usage = super::guardrail::evidence(v, self.guardrail);
                 return Ok((
                     self.terminal(reason, &usage),
                     Some(Completion {
@@ -256,7 +370,7 @@ impl Conversation {
     }
     fn terminal(&self, reason: &str, usage: &crate::protocol::usage::UsageEvidence) -> Vec<Value> {
         vec![
-            json!({"type":"message_delta","delta":{"stop_reason":reason,"stop_sequence":null},"usage":wire::visible(usage)}),
+            json!({"type":"message_delta","delta":{"stop_reason":reason,"stop_sequence":self.stop_sequence},"usage":wire::visible(usage)}),
             json!({"type":"message_stop"}),
         ]
     }
@@ -265,6 +379,83 @@ impl Conversation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn signed_and_redacted_fragments_replay_the_original_bytes() {
+        let mut stream = Conversation::new("r".into(), "m".into(), 64);
+        stream
+            .event("messageStart", &json!({"role":"assistant"}), false)
+            .unwrap();
+        stream
+            .event(
+                "contentBlockStart",
+                &json!({"contentBlockIndex":0,"start":{}}),
+                false,
+            )
+            .unwrap();
+        let mut blocks = Vec::new();
+        for (index, parts) in [
+            (
+                0,
+                vec![
+                    json!({"text":"summary"}),
+                    json!({"signature":"ab"}),
+                    json!({"signature":"cd"}),
+                ],
+            ),
+            (
+                1,
+                vec![
+                    json!({"redactedContent":"AQ=="}),
+                    json!({"redactedContent":"AgM="}),
+                ],
+            ),
+        ] {
+            let mut message = Value::Null;
+            for piece in parts {
+                let (events, _) = stream
+                    .event(
+                        "contentBlockDelta",
+                        &json!({"contentBlockIndex":index,"delta":{"reasoningContent":piece}}),
+                        false,
+                    )
+                    .unwrap();
+                for e in events {
+                    if e["type"] == "content_block_start" {
+                        message = e["content_block"].clone();
+                    } else {
+                        assert_eq!(e["delta"]["type"], "thinking_delta");
+                        message["thinking"] = e["delta"]["thinking"].clone();
+                    }
+                }
+            }
+            let (events, _) = stream
+                .event(
+                    "contentBlockStop",
+                    &json!({"contentBlockIndex":index}),
+                    false,
+                )
+                .unwrap();
+            assert_eq!(events.last().unwrap()["type"], "content_block_stop");
+            if index == 0 {
+                message["signature"] = events[0]["delta"]["signature"].clone();
+            } else {
+                message = events[0]["content_block"].clone();
+            }
+            blocks.push(message);
+        }
+        assert_eq!(
+            blocks[0],
+            json!({"type":"thinking","thinking":"summary","signature":"abcd"})
+        );
+        assert_eq!(blocks[1], json!({"type":"redacted_thinking","data":"AQID"}));
+        assert_eq!(stream.buffer_bytes, 0);
+        let req=super::super::prepare_messages(&json!({"messages":[{"role":"user","content":"a"},{"role":"assistant","content":blocks},{"role":"user","content":"again"}]})).unwrap();
+        assert_eq!(
+            req["messages"][1]["content"],
+            json!([{"reasoningContent":{"reasoningText":{"text":"summary","signature":"abcd"}}},{"reasoningContent":{"redactedContent":"AQID"}}])
+        );
+    }
+
     #[test]
     fn length_is_bounded_before_body_allocation() {
         let mut d = Decoder::default();
@@ -276,6 +467,25 @@ mod tests {
             ProtocolError::EventTooLarge
         );
     }
+    #[test]
+    fn aws_stop_sequence_survives_until_terminal_metadata() {
+        let mut stream = Conversation::new("r".into(), "alias".into(), 1024);
+        stream
+            .event("messageStart", &json!({"role":"assistant"}), false)
+            .unwrap();
+        let (pending,done)=stream.event("messageStop",&json!({"stopReason":"stop_sequence","additionalModelResponseFields":{"stop_sequence":"END"}}),false).unwrap();
+        assert!(pending.is_empty() && done.is_none());
+        let (terminal, done) = stream
+            .event(
+                "metadata",
+                &json!({"usage":{"inputTokens":1,"outputTokens":2,"totalTokens":3}}),
+                false,
+            )
+            .unwrap();
+        assert_eq!(terminal[0]["delta"]["stop_sequence"], "END");
+        assert_eq!(done.unwrap().stop_reason.as_deref(), Some("stop_sequence"));
+    }
+
     #[test]
     fn stop_is_not_completion_and_metadata_cannot_precede_it() {
         let mut s = Conversation::new("request".into(), "alias".into(), 1024);

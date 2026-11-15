@@ -126,7 +126,7 @@ class CatalogRepository:
         )
         return await self.model(model_id, versions)
 
-    async def cache_endpoints(self, model_id):
+    async def active_relay_profiles(self, model_id):
         rows = await self._session.execute(
             select(Deployment.relay_profile).where(
                 Deployment.model_id == model_id,
@@ -134,7 +134,7 @@ class CatalogRepository:
                 Deployment.relay_profile.is_not(None),
             )
         )
-        return {p["endpoint"] for p in rows.scalars() if p and p.get("auto_prompt_cache")}
+        return list(rows.scalars())
 
     async def active_protocols(self, model_id):
         return frozenset(

@@ -81,6 +81,14 @@ class BillingRepository:
     def __init__(self, session):
         self._session = session
 
+    async def review_container(self):
+        return (
+            await self._session.execute(text("SELECT billing.v1_review_container()"))
+        ).scalar_one()
+
+    async def stage_storage(self):
+        return (await self._session.execute(text("SELECT billing.v1_stage_storage()"))).scalar_one()
+
     async def claim_usage(self):
         # Account, request, then task. An inbox writer takes request then task.
         candidate_sql = text("""

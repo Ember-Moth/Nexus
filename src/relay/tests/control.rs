@@ -146,6 +146,12 @@ async fn cross_language_lease() -> Result<(), Box<dyn std::error::Error>> {
         model: input.model,
         revision: snapshot.revision,
         bounds: ReservationBounds {
+            guardrail_units: 0,
+            searches: 0,
+            file_searches: 0,
+            interpreter: None,
+            execution_mode: nexus_relay::protocol::execution::ExecutionMode::None,
+            execution_seconds: 0,
             inputs: 4,
             outputs: 6,
         },

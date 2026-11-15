@@ -3,11 +3,20 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
-from nexus.shared.views import DecimalString, Timestamp, View
+from nexus.shared.views import ByteSeconds, DecimalString, Timestamp, View
 
-from ..domain.money import DIMENSIONS, Factor, Money
+from ..domain.money import DIMENSIONS, Factor, Money, valid_quantity
 
 
 class Schema(BaseModel):
@@ -154,9 +163,32 @@ class AdjustmentView(AdjustmentCreate):
     posted_at: datetime | None
 
 
+def checked_quantities(values: dict[str, int]):
+    if any(not valid_quantity(k, v) for k, v in values.items()):
+        raise ValueError("usage quantity exceeds the dimension limit")
+    return values
+
+
+def read_quantities(value):
+    if isinstance(value, dict) and isinstance(
+        number := value.get("vector_storage_byte_seconds"), str
+    ):
+        if not 1 <= len(number) <= 24 or not number.isascii() or not number.isdigit():
+            raise ValueError("invalid storage byte-seconds")
+        return value | {"vector_storage_byte_seconds": int(number)}
+    return value
+
+
+type Quantities = Annotated[
+    dict[str, Annotated[int, Field(ge=0, strict=True)]],
+    BeforeValidator(read_quantities, json_schema_input_type=dict[str, int | str]),
+    AfterValidator(checked_quantities),
+]
+
+
 class Rate(Schema):
     unit_price: NonnegativeMoney
-    unit_quantity: Literal[1, 1000, 1000000]
+    unit_quantity: Literal[1, 20, 1000, 3600, 1000000, 92771293593600]
 
     @field_validator("unit_quantity", mode="before")
     @classmethod
@@ -168,7 +200,7 @@ class Rate(Schema):
 
 class Prices(Schema):
     currency: Currency
-    rates: dict[str, Rate] = Field(min_length=2, max_length=7)
+    rates: dict[str, Rate] = Field(min_length=2, max_length=21)
     enabled: bool = Field(default=True, strict=True)
 
     @field_validator("rates")
@@ -176,6 +208,22 @@ class Prices(Schema):
     def dimensions(cls, rates):
         if not {"input_uncached_tokens", "output_tokens"} <= set(rates) <= DIMENSIONS:
             raise ValueError("unsupported or missing price dimensions")
+        for name, rate in rates.items():
+            if name.startswith("guardrail_") and rate.unit_quantity not in {1, 1000}:
+                raise ValueError("Guardrail filters are priced per unit or thousand units")
+            if (
+                name.startswith("container_")
+                and rate.unit_quantity not in {1, 20}
+                or rate.unit_quantity == 20
+                and not name.startswith("container_")
+            ):
+                raise ValueError("Container rates are per billed minute or twenty minutes")
+            if (name == "code_execution_seconds" and rate.unit_quantity not in {1, 3600}) or (
+                rate.unit_quantity == 3600 and name != "code_execution_seconds"
+            ):
+                raise ValueError("Execution time is priced per second or hour")
+            if (name == "vector_storage_byte_seconds") != (rate.unit_quantity == 92771293593600):
+                raise ValueError("Storage is priced per GiB-day")
         return rates
 
 
@@ -295,6 +343,17 @@ class RequestView(Schema):
     billing_policy_version: str
     input_limit: int
     output_limit: int
+    web_search_limit: int
+    file_search_limit: int
+    guardrail_unit_limit: int
+    execution_seconds_limit: int
+    execution_mode: str
+    container_origin: UUID | None
+    container_handle: str | None
+    container_unit: str | None
+    container_minutes_limit: int
+    container_tariff: str | None
+    storage_byte_seconds: ByteSeconds
     reserved_amount: Money
     charged_amount: Money | None
     refunded_amount: Money
@@ -338,6 +397,6 @@ class Settlement(Schema):
 
     outcome: Literal["success", "customer_cancelled", "upstream_failed", "not_started", "unknown"]
     delivered_attempt_id: UUID | None = None
-    quantities: dict[str, Annotated[int, Field(ge=0, le=1_000_000_000, strict=True)]] | None = None
+    quantities: Quantities | None = None
     evidence_reference: str = Field(min_length=1, max_length=255)
     normalization_version: str = Field(min_length=1, max_length=80)

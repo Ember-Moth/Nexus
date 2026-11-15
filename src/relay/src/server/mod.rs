@@ -1,5 +1,13 @@
+pub(crate) mod background;
+mod batches;
+mod containers;
+mod conversations;
 mod delivery;
+mod files;
+mod history;
 mod observe;
+mod preflight;
+mod vectors;
 mod websocket;
 
 use crate::{
@@ -68,6 +76,7 @@ pub struct Node {
     pub(crate) db: Gateway,
     pub(crate) limits: Limits,
     pub(crate) private: SecretKey,
+    pub(crate) history: Arc<crate::protocol::history::HistoryKey>,
     pub(crate) upstream: Upstream,
     pub(crate) lease_ms: u32,
     pub(crate) stream_idle: Duration,
@@ -123,6 +132,7 @@ impl Node {
         Ok(Arc::new(Self {
             db,
             limits,
+            history: Arc::new(crate::protocol::history::HistoryKey::new(&private, cluster)),
             private,
             upstream,
             lease_ms,
@@ -262,11 +272,17 @@ async fn generate(
     let (parts, body) = incoming.into_parts();
     let (route, endpoint) = match route(&parts.method, parts.uri.path()) {
         Some(r @ Route::Generate(ep)) => (r, ep),
+        Some(Route::Chat) => (Route::Chat, Endpoint::OpenaiResponses),
         Some(Route::Compact) => (Route::Compact, Endpoint::OpenaiResponses),
+        Some(Route::CountTokens) => (Route::CountTokens, Endpoint::AnthropicMessages),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     // Every early return below counts as a rejected request.
-    let mut tally = RequestTally::new(endpoint, Transport::Http);
+    let mut tally = if route == Route::CountTokens {
+        RequestTally::detached()
+    } else {
+        RequestTally::new(endpoint, Transport::Http)
+    };
     let Ok(key) = route.key(&parts.headers) else {
         return error(
             id,
@@ -297,10 +313,11 @@ async fn generate(
             Failure(StatusCode::BAD_REQUEST, "invalid_json"),
         );
     };
-    let parsed = if route == Route::Compact {
-        Generate::parse_compact(json)
-    } else {
-        Generate::parse(endpoint, json, false)
+    let parsed = match route {
+        Route::Chat => Generate::parse_chat(json),
+        Route::Compact => Generate::parse_compact(json),
+        Route::CountTokens => Generate::parse_count(json),
+        _ => Generate::parse(endpoint, json, false),
     };
     let Ok(mut request) = parsed else {
         return error(
@@ -309,6 +326,31 @@ async fn generate(
             Failure(StatusCode::BAD_REQUEST, "invalid_request"),
         );
     };
+    if matches!(route, Route::Generate(_) | Route::Chat) {
+        request.allow_approximation =
+            match crate::protocol::approximation::Choices::parse(&parts.headers) {
+                Ok(choices) => choices,
+                Err(_) => {
+                    return error(
+                        id,
+                        endpoint,
+                        Failure(StatusCode::BAD_REQUEST, "invalid_approximation"),
+                    );
+                }
+            };
+    }
+    if endpoint == Endpoint::AnthropicMessages {
+        match crate::protocol::request::AnthropicHeaders::parse(&parts.headers) {
+            Ok(headers) => request.anthropic = headers,
+            Err(_) => {
+                return error(
+                    id,
+                    endpoint,
+                    Failure(StatusCode::BAD_REQUEST, "invalid_anthropic_headers"),
+                );
+            }
+        }
+    }
     match crate::protocol::request::cache_key_header(&parts.headers) {
         Ok(key) => request.set_affinity_key(key),
         Err(_) => {
@@ -318,6 +360,24 @@ async fn generate(
                 Failure(StatusCode::BAD_REQUEST, "invalid_cache_key"),
             );
         }
+    }
+    if let Err(failure) = containers::bind(&node, &index, key, &mut request).await {
+        return error(id, endpoint, failure);
+    }
+    if let Err(failure) = vectors::bind(&node, &index, key, &mut request).await {
+        return error(id, endpoint, failure);
+    }
+    if let Err(failure) = conversations::bind(&node, &index, key, &mut request).await {
+        return error(id, endpoint, failure);
+    }
+    if let Err(failure) = bind_input(&node, &index, key, &mut request).await {
+        return error(id, endpoint, failure);
+    }
+    if route == Route::CountTokens {
+        return match preflight::count(&node, &index, key, id, request).await {
+            Ok(response) => response,
+            Err(failure) => error(id, endpoint, failure),
+        };
     }
     if request.stream {
         tally.set_transport(Transport::Sse);
@@ -350,22 +410,29 @@ async fn generate(
             status,
             body,
             receipt,
+            applied,
         } => {
             let length = body.len();
             wire.track(length, receipt);
-            Response::builder()
+            applied
+                .headers(Response::builder())
                 .status(status)
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::CONTENT_LENGTH, length)
                 .body(Body::from(body))
                 .expect("validated response metadata")
         }
-        request::Response::Stream { body, receipt } => {
+        request::Response::Stream {
+            body,
+            receipt,
+            applied,
+        } => {
             wire.track_stream(receipt);
             let stream = futures_util::stream::unfold(body, |mut rx| async move {
                 rx.recv().await.map(|item| (item, rx))
             });
-            Response::builder()
+            applied
+                .headers(Response::builder())
                 .header(header::CONTENT_TYPE, "text/event-stream")
                 .header(header::CACHE_CONTROL, "no-cache")
                 .header(header::TRANSFER_ENCODING, "chunked")
@@ -383,6 +450,16 @@ async fn ready(State(node): State<Arc<Node>>) -> StatusCode {
     }
 }
 
+async fn bind_input(
+    node: &Node,
+    index: &Index,
+    key: &str,
+    request: &mut Generate,
+) -> Result<(), Failure> {
+    history::bind(node, index, key, request).await?;
+    files::bind(node, index, key, request).await
+}
+
 pub async fn serve(
     node: Arc<Node>,
     listener: TcpListener,
@@ -392,6 +469,113 @@ pub async fn serve(
     node.refresh().await?;
     node.healthy.store(true, Ordering::Release);
     let router = Router::new()
+        .route(
+            "/v1/containers",
+            get(containers::handle).post(containers::handle),
+        )
+        .route(
+            "/v1/containers/{id}",
+            get(containers::handle).delete(containers::handle),
+        )
+        .route(
+            "/v1/containers/{id}/files",
+            get(containers::handle).post(containers::handle),
+        )
+        .route(
+            "/v1/containers/{id}/files/{file}",
+            get(containers::handle).delete(containers::handle),
+        )
+        .route(
+            "/v1/containers/{id}/files/{file}/content",
+            get(containers::handle),
+        )
+        .route(
+            "/v1/vector_stores",
+            get(vectors::handle_request).post(vectors::handle_request),
+        )
+        .route(
+            "/v1/vector_stores/{id}",
+            get(vectors::handle_request)
+                .post(vectors::handle_request)
+                .delete(vectors::handle_request),
+        )
+        .route(
+            "/v1/vector_stores/{id}/search",
+            post(vectors::handle_request),
+        )
+        .route(
+            "/v1/vector_stores/{id}/files",
+            get(vectors::handle_request).post(vectors::handle_request),
+        )
+        .route(
+            "/v1/vector_stores/{id}/files/{file}",
+            get(vectors::handle_request)
+                .post(vectors::handle_request)
+                .delete(vectors::handle_request),
+        )
+        .route(
+            "/v1/vector_stores/{id}/files/{file}/content",
+            get(vectors::handle_request),
+        )
+        .route(
+            "/v1/vector_stores/{id}/file_batches",
+            post(vectors::handle_request),
+        )
+        .route(
+            "/v1/vector_stores/{id}/file_batches/{batch}",
+            get(vectors::handle_request),
+        )
+        .route(
+            "/v1/vector_stores/{id}/file_batches/{batch}/cancel",
+            post(vectors::handle_request),
+        )
+        .route(
+            "/v1/vector_stores/{id}/file_batches/{batch}/files",
+            get(vectors::handle_request),
+        )
+        .route("/v1/conversations", post(conversations::handle))
+        .route(
+            "/v1/conversations/{id}",
+            get(conversations::handle)
+                .post(conversations::handle)
+                .delete(conversations::handle),
+        )
+        .route(
+            "/v1/conversations/{id}/items",
+            get(conversations::handle).post(conversations::handle),
+        )
+        .route(
+            "/v1/conversations/{id}/items/{item}",
+            get(conversations::handle).delete(conversations::handle),
+        )
+        .route("/v1/models", get(preflight::models))
+        .route(
+            "/v1/responses/{handle}/cancel",
+            post(preflight::stored_response),
+        )
+        .route("/v1/files", get(files::collection).post(files::collection))
+        .route("/v1/files/{id}", get(files::item).delete(files::item))
+        .route("/v1/files/{id}/content", get(files::item))
+        .route(
+            "/v1/responses/{handle}",
+            get(preflight::stored_response).delete(preflight::stored_response),
+        )
+        .route(
+            "/v1/messages/batches",
+            get(batches::handle).post(batches::handle),
+        )
+        .route(
+            "/v1/messages/batches/{id}",
+            get(batches::handle).delete(batches::handle),
+        )
+        .route("/v1/messages/batches/{id}/results", get(batches::handle))
+        .route("/v1/messages/batches/{id}/cancel", post(batches::handle))
+        .route(
+            "/v1/responses/{handle}/input_items",
+            get(preflight::stored_response),
+        )
+        .route("/v1/chat/completions", post(generate))
+        .route("/v1/messages/count_tokens", post(generate))
         .route("/v1/messages", post(generate))
         .route("/v1/responses/compact", post(generate))
         .route("/v1/responses", post(generate).get(websocket::upgrade))
@@ -434,6 +618,9 @@ pub async fn serve(
             refresh.healthy.store(result.is_ok(), Ordering::Release);
         }
     });
+    let poller = tokio::spawn(background::supervise(node.clone(), stop.clone()));
+    let vector_poller = tokio::spawn(vectors::supervise(node.clone(), stop.clone()));
+    let batch_poller = tokio::spawn(batches::supervise(node.clone(), stop.clone()));
     let sockets = TaskTracker::new();
     loop {
         let (stream, _) =
@@ -497,6 +684,9 @@ pub async fn serve(
     }
     maintenance.abort();
     let _ = timeout(Duration::from_secs(1), maintenance).await;
+    let _ = poller.await;
+    let _ = batch_poller.await;
+    let _ = vector_poller.await;
     info!(
         elapsed_ms = drain.elapsed().as_millis() as u64,
         "drain finished"

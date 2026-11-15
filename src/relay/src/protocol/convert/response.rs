@@ -4,14 +4,14 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 
 // IDs of Responses output items and IDs used by tool results are separate namespaces.
-pub(super) fn item_id(response: &str, index: usize, tool: bool) -> String {
+pub(crate) fn item_id(response: &str, index: usize, tool: bool) -> String {
     format!("{}_{response}_{index}", if tool { "fc" } else { "msg" })
 }
 
 pub(super) fn message(id: &str, model: &str) -> Value {
     json!({"id":id,"type":"message","role":"assistant","model":model,"content":[],"stop_reason":null,"stop_sequence":null,"usage":null})
 }
-pub(super) fn response(id: &str, model: &str, time: i64) -> Value {
+pub(crate) fn response(id: &str, model: &str, time: i64) -> Value {
     json!({"id":id,"object":"response","created_at":time,"model":model,"status":"in_progress","output":[],"error":null,"incomplete_details":null,"usage":null,"store":false})
 }
 pub(super) fn output_item(block: &Value, rid: &str, index: usize, status: &str) -> Result<Value> {
@@ -48,7 +48,11 @@ pub(super) fn validate_message_block(block: &Value) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn valid_output_text(part: &Value) -> Result<()> {
+pub(super) fn part_text(part: &Value) -> Result<&str> {
+    if part["type"] == "refusal" {
+        super::fields(part, &["type", "refusal"])?;
+        return text(part, "refusal");
+    }
     if part["type"] != "output_text"
         || ["annotations", "logprobs"].iter().any(|k| {
             part.get(k)
@@ -57,17 +61,14 @@ pub(super) fn valid_output_text(part: &Value) -> Result<()> {
     {
         return Err(ProtocolError::Unsupported("Responses output part"));
     }
-    Ok(())
+    text(part, "text")
 }
 pub(super) fn blocks(item: &Value) -> Result<Vec<Value>> {
     match item["type"].as_str() {
         Some("message") if item["role"] == "assistant" => {
             array(&item["content"], "output content")?
                 .iter()
-                .map(|part| {
-                    valid_output_text(part)?;
-                    Ok(json!({"type":"text","text":text(part,"text")?}))
-                })
+                .map(|part| Ok(json!({"type":"text","text":part_text(part)?})))
                 .collect()
         }
         Some("function_call") => Ok(vec![
@@ -78,6 +79,21 @@ pub(super) fn blocks(item: &Value) -> Result<Vec<Value>> {
 }
 pub(super) fn message_stop(body: &Value, has_tool: bool) -> Result<&'static str> {
     match body["status"].as_str() {
+        Some("completed")
+            if body["output"].as_array().into_iter().flatten().any(|v| {
+                v["type"] == "message"
+                    && v["content"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|p| p["type"] == "refusal")
+            }) =>
+        {
+            Ok("refusal")
+        }
+        Some("incomplete") if body["incomplete_details"]["reason"] == "content_filter" => {
+            Ok("refusal")
+        }
         Some("completed") => Ok(if has_tool { "tool_use" } else { "end_turn" }),
         Some("incomplete") if body["incomplete_details"]["reason"] == "max_output_tokens" => {
             Ok("max_tokens")
@@ -87,8 +103,9 @@ pub(super) fn message_stop(body: &Value, has_tool: bool) -> Result<&'static str>
 }
 pub(super) fn response_status(reason: &str, has_tool: bool) -> Result<(&'static str, Value)> {
     match reason {
-        "end_turn" if !has_tool => Ok(("completed", Value::Null)),
+        "end_turn" | "stop_sequence" | "compaction" if !has_tool => Ok(("completed", Value::Null)),
         "tool_use" if has_tool => Ok(("completed", Value::Null)),
+        "refusal" => Ok(("incomplete", json!({"reason":"content_filter"}))),
         "max_tokens" => Ok(("incomplete", json!({"reason":"max_output_tokens"}))),
         _ => Err(ProtocolError::Unsupported("Messages termination")),
     }
@@ -171,6 +188,16 @@ pub fn convert(
     evidence: &UsageEvidence,
     status: u16,
 ) -> Result<(Value, u16)> {
+    with_history(exchange, body, evidence, status, None)
+}
+
+pub(crate) fn with_history(
+    exchange: Exchange<'_>,
+    body: &Value,
+    evidence: &UsageEvidence,
+    status: u16,
+    history: Option<&crate::protocol::history::Writer>,
+) -> Result<(Value, u16)> {
     if status >= 400
         || body["type"] == "error"
         || body["status"] == "failed"
@@ -187,14 +214,21 @@ pub fn convert(
             let mut out = message(rid, exchange.public_model);
             let mut content = Vec::new();
             let mut items = HashSet::new();
-            for item in array(&body["output"], "output")? {
+            for (index, item) in array(&body["output"], "output")?.iter().enumerate() {
                 if !items.insert(id(item, "id")?) {
                     return Err(ProtocolError::Invalid("duplicate output item"));
                 }
                 if item["type"] == "function_call" && !calls.insert(id(item, "call_id")?) {
                     return Err(ProtocolError::Invalid("duplicate call ID"));
                 }
-                content.extend(blocks(item)?);
+                if (matches!(item["type"].as_str(), Some("reasoning" | "compaction"))
+                    || crate::protocol::history::citations::annotated(item))
+                    && let Some(h) = history
+                {
+                    content.extend(h.project_group(item, rid, index)?);
+                } else {
+                    content.extend(blocks(item)?);
+                }
             }
             out["stop_reason"] = message_stop(body, !calls.is_empty())?.into();
             out["content"] = content.into();
@@ -208,7 +242,17 @@ pub fn convert(
                 if block["type"] == "tool_use" && !calls.insert(id(block, "id")?) {
                     return Err(ProtocolError::Invalid("duplicate call ID"));
                 }
-                items.push(output_item(block, rid, index, "completed")?);
+                let item = if (matches!(
+                    block["type"].as_str(),
+                    Some("thinking" | "redacted_thinking" | "compaction")
+                ) || block["citations"].as_array().is_some_and(|v| !v.is_empty()))
+                    && let Some(h) = history
+                {
+                    h.project(block, rid, index)?
+                } else {
+                    output_item(block, rid, index, "completed")?
+                };
+                items.push(item);
             }
             let (status, detail) = response_status(text(body, "stop_reason")?, !calls.is_empty())?;
             out["status"] = status.into();

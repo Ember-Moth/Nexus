@@ -8,13 +8,14 @@ use super::{
 use serde_json::Value;
 
 pub fn observe(endpoint: Endpoint, body: &Value) -> Result<Completion, ProtocolError> {
-    observe_operation(endpoint, Operation::Generate, body)
+    observe_operation(endpoint, Operation::Generate, body, Default::default())
 }
 
 pub(crate) fn observe_operation(
     endpoint: Endpoint,
     operation: Operation,
     body: &Value,
+    search_metered: crate::protocol::hosted::SearchMeters,
 ) -> Result<Completion, ProtocolError> {
     if body["type"] == "error"
         || body.get("error").is_some_and(Value::is_object) && body["object"] != "response"
@@ -60,6 +61,7 @@ pub(crate) fn observe_operation(
             let terminal = match body["status"].as_str() {
                 Some("completed") if body["output"].is_array() => Terminal::Completed,
                 Some("failed") => Terminal::Failed,
+                Some("cancelled") => Terminal::Cancelled,
                 Some("incomplete") => Terminal::Incomplete,
                 _ => return Err(ProtocolError::Invalid("response status")),
             };
@@ -70,10 +72,31 @@ pub(crate) fn observe_operation(
         .as_str()
         .filter(|id| !id.is_empty() && id.len() <= 255)
         .ok_or(ProtocolError::Invalid("response ID"))?;
+    let mut usage = UsageEvidence::for_model(endpoint, body.get("usage"), body["model"].as_str())?;
+    if endpoint == Endpoint::AnthropicMessages {
+        let compacted = body["content"]
+            .as_array()
+            .is_some_and(|v| v.iter().any(|b| b["type"] == "compaction"));
+        if reason == Some("compaction") && !compacted {
+            return Err(ProtocolError::Invalid("missing compaction block"));
+        }
+        if !super::usage::iterations::terminal_totals(body.get("usage"))
+            || compacted
+                && !usage
+                    .raw_usage
+                    .as_ref()
+                    .is_some_and(|v| v.contains_key("compaction_output_tokens"))
+        {
+            usage.raw_usage = None;
+        }
+    }
+    if endpoint == Endpoint::OpenaiResponses && operation == Operation::Generate {
+        usage.responses_output(body, &Default::default(), search_metered)?;
+    }
     Ok(Completion {
         terminal,
         stop_reason: reason.map(str::to_owned),
         response_id: Some(id.to_owned()),
-        usage: UsageEvidence::extract(endpoint, body.get("usage"))?,
+        usage,
     })
 }

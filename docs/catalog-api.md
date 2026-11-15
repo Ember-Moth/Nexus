@@ -35,9 +35,17 @@
 
 部署的 `relay_profile.convert_from` 可显式启用另一种客户端协议。各方向的端点值、节点能力和开关示例见 [Relay 配置](relay-development.md#启用-http-和-sse-协议转换)。
 
+仅提供 Chat Completions 的 OpenAI 兼容上游使用 `relay_profile.endpoint = "openai_chat_completions"`，支持 Responses 客户端的 HTTP JSON 和 SSE。[部署示例与计量约定](relay-development.md#responses-客户端使用-chat-completions-上游)
+
 部署凭据必须属于其上游，协议族必须在公开模型的支持范围内。修改模型协议时，如果仍有不兼容的启用部署，返回冲突；应先停用这些映射。停用或归档部署不要求旧凭据仍有效，避免失效配置无法收起。
 
 模型和部署的 configured 字段根据启停状态、协议匹配和已加载的加密密钥版本计算。它表示配置前提是否满足，不表示已验证密文可解密、厂商在线、价格已生效或具有调用额度。客户目录仅显示有效且 configured 的授权模型。
+
+按次收费的工具配置在模型的 `tool_dimensions` 中。开启 Web Search 需先为 `web_search_requests` 发布销售价和部署成本价，再设置 `relay_profile.web_search_ceiling`。部署已启用搜索时，模型须保留该维度。请求次数上限和标准版、preview 版的选路见 [Relay Web Search](relay-development.md#web-search)。
+
+原生 Responses 部署可通过 `file_search_ceiling` 启用 File Search。模型须同时发布检索次数和存储字节秒两个价格维度。计价单位、上游账户绑定及存储用量接口见 [File Search 和向量存储](relay-development.md#file-search-和向量存储)。
+
+Claude 独立代码执行使用 `code_execution_seconds` 维度和部署的 `execution_reserve_seconds`。OpenAI Code Interpreter 的容器内存档分别定价，通过 `container_tariff` 和 `container_reserve_minutes` 匹配上游计费方式。两者的资源绑定、免执行费组合和计量证据见 [代码执行和生成文件](relay-development.md#代码执行和生成文件)。
 
 ## Amazon Bedrock 部署
 
@@ -46,6 +54,23 @@
 部署凭据的 `secret` 支持 Bedrock API Key，也支持紧凑 JSON 字符串形式的 AWS 签名凭据，字段为 `access_key_id`、`secret_access_key`，以及临时凭据的 `session_token`。这两种凭据均由 catalog 加密并随集群密文包发给节点；签名凭据使用官方 SigV4 签名器、部署的区域和服务名 `bedrock`。临时凭据到期前按现有凭据轮换流程更换。[AWS 的 Bedrock API Key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)
 
 `relay_profile.endpoint` 设为 `bedrock_converse`，`transports` 设为 `["http"]`，`count_rule` 使用 `deployment_ceiling.v1`。按已验证模型填写 `input_ceiling`、`output_ceiling` 和 `bound_reference`。该上游直接服务两个客户端协议，省略 `convert_from`。需要工具或流式输出时，同时开启模型和部署的相应能力。集群节点须登记 `relay.bedrock-converse.v1` 及 `relay.native.v1`；启用流式时另需 `relay.sse.v1`。先升级控制平面到 `0014_bedrock_converse` 和相应 Worker，再发布快照。
+
+Converse 部署可在 `relay_profile.bedrock_guardrail` 中配置 AWS 的 `guardrailIdentifier`、`guardrailVersion` 和 `trace`，并在 `bedrock_model_fields` 配置模型支持的 `additionalModelRequestFields`。使用这两项时节点需声明 `relay.bedrock-settings.v1`。模型专有参数在出站时与客户端显式参数核对；冲突或覆盖模型、消息、输出上限时拒绝。计数端点只转发 AWS CountTokens 支持的字段。 配置 Guardrail 时节点还需登记 `relay.bedrock-guardrail-usage.v1`，按策略计费的维度、上界和回执要求见[Guardrail 用量与费用](relay-development.md#guardrail-用量与费用)。
+
+需要让租户逐请求选择配置时，在部署的 `bedrock_request_options` 列出允许的组合，并为节点登记 `relay.bedrock-request-options.v1`。例如，以下配置允许在这次生成上切换到 Guardrail 版本 2，同时把 `top_k` 改为 7。未覆盖的字段沿用部署默认值。
+
+```json
+{
+  "bedrock_request_options": [
+    {
+      "guardrailConfig": {"guardrailIdentifier": "abcd", "guardrailVersion": "2"},
+      "additionalModelRequestFields": {"top_k": 7}
+    }
+  ]
+}
+```
+
+客户端在 Messages、Responses 或 Chat 请求的顶层 `bedrock` 对象中传入该组合；SDK 可通过 `extra_body` 设置。空对象选择 Converse 的默认配置。Relay 在已授权候选中匹配默认值或一个完整的已发布组合，重试时再次匹配。
 
 ## 凭据加密与轮换
 

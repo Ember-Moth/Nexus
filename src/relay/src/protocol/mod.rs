@@ -4,6 +4,7 @@ pub mod chat;
 pub(crate) mod chat_upstream;
 pub mod convert;
 pub mod execution;
+pub mod features;
 pub(crate) mod history;
 pub(crate) mod hosted;
 pub(crate) mod media;

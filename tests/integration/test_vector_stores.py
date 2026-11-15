@@ -266,6 +266,7 @@ async def test_native_vector_store_search_and_storage(http, admin, tls, relay_bi
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["vector_stores", "files", "web_search"],
         ) as (relay, model, key, _, plane),
     ):
         await configure(http, admin, plane, web=True)
@@ -413,7 +414,15 @@ async def test_storage_worker_recovery(http, admin, tls, relay_binary, scenario)
 
     # Meter contract tests drive the same SQL receipts emitted by a relay after its
     # HTTP read. The isolated database clock lets them cover UTC rollover without a timed wait.
-    async with stream_plane(http, admin, relay_binary, tls[1], 1, "openai_compatible") as (
+    async with stream_plane(
+        http,
+        admin,
+        relay_binary,
+        tls[1],
+        1,
+        "openai_compatible",
+        features=["vector_stores", "files", "web_search"],
+    ) as (
         _,
         _,
         _,
@@ -597,6 +606,7 @@ async def test_file_search_ws_uses_owned_handles_and_native_receipt(http, admin,
             server.sockets[0].getsockname()[1],
             "openai_compatible",
             ws=True,
+            features=["vector_stores", "files", "web_search"],
         ) as (relay, model, key, _, plane),
     ):
         await configure(http, admin, plane)
@@ -713,6 +723,7 @@ async def test_vector_create_recovers_known_locator(http, admin, tls, relay_bina
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["vector_stores", "files", "web_search"],
         ) as (relay, _, key, _, plane),
     ):
         await configure(http, admin, plane)
@@ -913,6 +924,7 @@ async def test_lapsed_store_is_deleted_by_the_poller(
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["vector_stores"],
         ) as (relay, _, key, _, plane),
     ):
         await configure(http, admin, plane)

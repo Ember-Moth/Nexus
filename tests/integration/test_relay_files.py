@@ -77,7 +77,13 @@ async def test_files_upload_use_list_download_and_delete(http, admin, tls, relay
     async with (
         srv,
         stream_plane(
-            http, admin, relay_binary, tls[1], srv.sockets[0].getsockname()[1], "anthropic"
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            srv.sockets[0].getsockname()[1],
+            "anthropic",
+            features=["files"],
         ) as (relay, model, key, _, _),
     ):
         h = {"x-api-key": key, "anthropic-beta": "files-api-2025-04-14"}
@@ -228,6 +234,7 @@ async def test_openai_file_scope_pagination_and_responses(http, admin, tls, rela
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["files", "stored_responses", "conversations"],
         ) as (relay, model, key, _, plane),
     ):
         h = {"Authorization": "Bearer " + key}

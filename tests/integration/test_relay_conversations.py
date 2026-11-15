@@ -120,6 +120,7 @@ async def test_owned_conversation_items_generation_and_deletion(http, admin, tls
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["conversations", "stored_responses", "files"],
         ) as (relay, model, key, _, plane),
     ):
         h = {"Authorization": "Bearer " + key}
@@ -235,6 +236,7 @@ async def test_conversation_handle_on_websocket(http, admin, tls, relay_binary):
             upstream.sockets[0].getsockname()[1],
             "openai_compatible",
             ws=True,
+            features=["conversations", "stored_responses", "files"],
         ) as (relay, model, token, _, plane),
     ):
         peer, _, _, m, dep, admission, _, cluster = plane

@@ -1,7 +1,11 @@
 //! Owned file handles are rewritten before the provider sees them. Bytes remain with the provider.
 use super::{BodyLimit, Node, error};
 use crate::{
-    control::{database::FilePage, snapshot::Index},
+    control::{
+        database::FilePage,
+        snapshot::{Index, Rejection},
+    },
+    protocol::features::Feature,
     protocol::{
         Endpoint,
         request::{AnthropicHeaders, Generate, Operation, Route},
@@ -76,6 +80,7 @@ pub(super) async fn bind(
             }
         }
         if !citations.is_empty() {
+            request.features.insert(Feature::Files);
             let kid = index.authenticate(raw)?.id;
             let (binding, fields) = resolved(
                 node,
@@ -102,6 +107,7 @@ pub(super) async fn bind(
     if refs.is_empty() {
         return Ok(());
     }
+    request.features.insert(Feature::Files);
     let key = index.authenticate(raw)?;
     let (binding, fields) = resolved(node, index, key.id, request.endpoint, refs, true).await?;
     if let Some((model, dep)) = binding {
@@ -401,6 +407,24 @@ async fn request(
         }
         return Ok(Json(listing).into_response());
     }
+    // Read an upload before any other refusal, so the client receives the answer instead of
+    // a reset; a slow sender cannot hold the slot past the upload deadline.
+    let upload = if parts.method == Method::POST {
+        if !parts.headers.get(header::CONTENT_TYPE).is_some_and(|v| {
+            v.to_str()
+                .is_ok_and(|s| s.starts_with("multipart/form-data;"))
+        }) {
+            return Err(Failure(StatusCode::BAD_REQUEST, "multipart_required"));
+        }
+        Some(
+            tokio::time::timeout(super::UPLOAD_DEADLINE, to_bytes(body, limit))
+                .await
+                .map_err(|_| Failure(StatusCode::REQUEST_TIMEOUT, "upload_timeout"))?
+                .map_err(|_| Failure(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large"))?,
+        )
+    } else {
+        None
+    };
     let mut path = Vec::new();
     let (id, model, dep) = if let Some(file) = file {
         let id = handle(file)?;
@@ -431,24 +455,34 @@ async fn request(
             index.model_names()
         };
         let mut target = None;
+        let mut disabled = false;
         for name in names {
             let selection = if messages {
-                let req = Generate::parse_count(
+                let mut req = Generate::parse_count(
                     json!({"model":name,"messages":[{"role":"user","content":"file"}]}),
                 )
                 .map_err(|_| Failure::unavailable())?;
+                req.features.insert(Feature::Files);
                 index.native_messages(key_text, &req, None)
             } else {
-                let req = Generate::parse_compact(json!({"model":name,"input":[]}))
+                let mut req = Generate::parse_compact(json!({"model":name,"input":[]}))
                     .map_err(|_| Failure::unavailable())?;
+                req.features.insert(Feature::Files);
                 index.select(key_text, &req)
             };
-            if let Ok(value) = selection {
-                target = Some((value.model, value.deployment));
-                break;
+            match selection {
+                Ok(value) => {
+                    target = Some((value.model, value.deployment));
+                    break;
+                }
+                Err(e) => disabled |= matches!(e, Rejection::FeatureDisabled),
             }
         }
-        let (model, dep) = target.ok_or(Failure(StatusCode::BAD_REQUEST, "no_file_deployment"))?;
+        let (model, dep) = target.ok_or(if disabled {
+            Failure::feature_disabled()
+        } else {
+            Failure(StatusCode::BAD_REQUEST, "no_file_deployment")
+        })?;
         node.db
             .preflight(key.id, index.revision, Some(model), Some(dep.id))
             .await?;
@@ -475,20 +509,12 @@ async fn request(
     } else {
         call.bearer_auth(token.as_str())
     };
-    if parts.method == Method::POST {
+    if let Some(upload) = upload {
         let ct = parts
             .headers
             .get(header::CONTENT_TYPE)
-            .filter(|v| {
-                v.to_str()
-                    .is_ok_and(|s| s.starts_with("multipart/form-data;"))
-            })
             .ok_or(Failure(StatusCode::BAD_REQUEST, "multipart_required"))?;
-        call = call.header(header::CONTENT_TYPE, ct).body(
-            to_bytes(body, limit)
-                .await
-                .map_err(|_| Failure(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large"))?,
-        );
+        call = call.header(header::CONTENT_TYPE, ct).body(upload);
     }
     let upstream = call.send().await.map_err(|_| Failure::upstream())?;
     let status = upstream.status();

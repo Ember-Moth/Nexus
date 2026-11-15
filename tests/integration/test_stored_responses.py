@@ -80,6 +80,7 @@ async def test_stored_response_key_ownership(http, admin, tls, relay_binary):  #
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["stored_responses", "background", "remote_mcp"],
         ) as (client, model, key, _, plane),
     ):
         token = {"Authorization": "Bearer " + key}
@@ -221,6 +222,7 @@ async def test_stored_websocket_continues_on_new_connection(http, admin, tls, re
             upstream.sockets[0].getsockname()[1],
             "openai_compatible",
             ws=True,
+            features=["stored_responses", "background", "remote_mcp"],
         ) as (client, model, key, _, plane),
     ):
         url = str(client.base_url).replace("http://", "ws://").rstrip("/") + "/v1/responses"
@@ -298,6 +300,7 @@ async def test_background_recovery_and_cancel(http, admin, tls, relay_binary, ca
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["stored_responses", "background", "remote_mcp"],
         ) as (client, model, key, _, plane),
     ):
         h = {"Authorization": "Bearer " + key}
@@ -436,6 +439,7 @@ async def test_background_stream_single_settlement(http, admin, tls, relay_binar
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["stored_responses", "background", "remote_mcp"],
         ) as (relay, model, key, _, _),
     ):
         auth = {"Authorization": "Bearer " + key}

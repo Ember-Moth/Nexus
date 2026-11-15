@@ -224,7 +224,45 @@ class BedrockRequestOptions(Schema):
         return self
 
 
+ProviderFeature = Literal[
+    "stored_responses",
+    "background",
+    "conversations",
+    "files",
+    "vector_stores",
+    "batches",
+    "code_execution",
+    "remote_mcp",
+    "web_fetch",
+    "web_search",
+]
+# Features available on each native endpoint. Every one of them keeps tenant content in the
+# shared upstream account or sends it to a third party through that account.
+PROVIDER_FEATURES = {
+    "openai_responses": {
+        "stored_responses",
+        "background",
+        "conversations",
+        "files",
+        "vector_stores",
+        "code_execution",
+        "remote_mcp",
+        "web_search",
+    },
+    "anthropic_messages": {
+        "files",
+        "batches",
+        "code_execution",
+        "remote_mcp",
+        "web_fetch",
+        "web_search",
+    },
+}
+
+
 class RelayProfile(Schema):
+    # Off unless the operator lists them, for existing and new deployments alike.
+    provider_features: list[ProviderFeature] = Field(default_factory=list, max_length=10)
     bedrock_guardrail_unit_ceiling: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
     bedrock_request_options: list[BedrockRequestOptions] = Field(
         default_factory=list, max_length=32
@@ -257,6 +295,13 @@ class RelayProfile(Schema):
 
     @model_validator(mode="after")
     def supported(self):
+        features = set(self.provider_features)
+        if len(features) != len(self.provider_features):
+            raise ValueError("duplicate provider features")
+        if features - PROVIDER_FEATURES.get(self.endpoint, set()):
+            raise ValueError("A provider feature is not available on this endpoint")
+        if "background" in features and "stored_responses" not in features:
+            raise ValueError("Background responses require stored responses")
         if self.container_reserve_minutes and (
             self.endpoint != "openai_responses"
             or not self.tools

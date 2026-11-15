@@ -2,6 +2,8 @@
 use super::{BodyLimit, Node, error};
 use crate::{
     control::snapshot::Index,
+    control::snapshot::Rejection,
+    protocol::features::Feature,
     protocol::{
         Endpoint,
         request::{ConversationId, Generate, Operation, Route},
@@ -175,21 +177,27 @@ async fn operation(
             None => index.model_names(),
         };
         let mut target = None;
+        let mut disabled = false;
         for name in names {
             let mut req =
                 Generate::parse_compact(json!({"model":name,"input":[]})).map_err(|_| invalid())?;
+            req.features.insert(Feature::Conversations);
             if let Some((model, dep)) = file_target {
                 req.bind_deployment(model, dep).map_err(|_| invalid())?;
             }
-            if let Ok(s) = index.select(key, &req) {
-                target = Some((s.model, s.deployment));
-                break;
+            match index.select(key, &req) {
+                Ok(s) => {
+                    target = Some((s.model, s.deployment));
+                    break;
+                }
+                Err(e) => disabled |= matches!(e, Rejection::FeatureDisabled),
             }
         }
-        let (model, dep) = target.ok_or(Failure(
-            StatusCode::BAD_REQUEST,
-            "no_conversation_deployment",
-        ))?;
+        let (model, dep) = target.ok_or(if disabled {
+            Failure::feature_disabled()
+        } else {
+            Failure(StatusCode::BAD_REQUEST, "no_conversation_deployment")
+        })?;
         node.db
             .preflight(kid, index.revision, Some(model), Some(dep.id))
             .await?;
@@ -218,6 +226,13 @@ async fn operation(
     };
     if file_target.is_some_and(|b| b != (model, dep.id)) {
         return Err(Failure(StatusCode::BAD_REQUEST, "file_deployment_mismatch"));
+    }
+    // Reads and deletes stay available so a tenant can clean up after a feature is disabled.
+    if write
+        && (!dep.allows(Feature::Conversations)
+            || file_target.is_some() && !dep.allows(Feature::Files))
+    {
+        return Err(Failure::feature_disabled());
     }
     let secret = credential(node, &index, dep).await?;
     let mut url = Upstream::endpoint(&dep.base_url, EP, Operation::Generate);

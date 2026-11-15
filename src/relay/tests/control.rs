@@ -36,6 +36,7 @@ async fn isolated_gateway_contract() -> Result<(), Box<dyn std::error::Error>> {
         "usage-events.v1",
         "relay.native.v1",
         "relay.responses-ws.v1",
+        "relay.provider-features.v1",
     ];
     assert!(
         gateway

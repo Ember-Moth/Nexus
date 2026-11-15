@@ -88,7 +88,13 @@ async def test_messages_remote_tool_deltas_and_settlement(http, admin, tls, rela
     async with (
         server,
         stream_plane(
-            http, admin, relay_binary, tls[1], server.sockets[0].getsockname()[1], "anthropic"
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            "anthropic",
+            features=["remote_mcp", "web_fetch"],
         ) as (relay, model, key, _, _),
     ):
         body = {
@@ -111,3 +117,68 @@ async def test_messages_remote_tool_deltas_and_settlement(http, admin, tls, rela
         assert admin.execute(
             "SELECT charged_amount,reservation_state FROM billing.request_runs"
         ).fetchone() == (3, "captured")
+
+
+@pytest.mark.parametrize("family", ["anthropic", "openai_compatible"])
+async def test_disabled_provider_features_are_refused_before_reservation(
+    http,
+    admin,
+    tls,  # noqa: F811
+    relay_binary,  # noqa: F811
+    family,
+):
+    contacted = []
+
+    async def provider(reader, writer):
+        contacted.append(True)
+        writer.close()
+
+    server = await asyncio.start_server(provider, "127.0.0.1", 0, ssl=tls[0])
+    async with (
+        server,
+        stream_plane(
+            http, admin, relay_binary, tls[1], server.sockets[0].getsockname()[1], family
+        ) as (relay, model, key, _, _),
+    ):
+        if family == "anthropic":
+            path, hdr = "/v1/messages", {"x-api-key": key}
+            base = {"model": model, "max_tokens": 4, "messages": [{"role": "user", "content": "x"}]}
+            refused = [
+                {"mcp_servers": [{"type": "url", "name": "d", "url": "https://example.org/m"}]},
+                {"tools": [{"type": "web_fetch_20250910", "name": "web_fetch"}]},
+            ]
+            resources = [
+                ("/v1/messages/batches", {"requests": [{"custom_id": "a", "params": base}]})
+            ]
+        else:
+            path, hdr = "/v1/responses", {"authorization": f"Bearer {key}"}
+            base = {"model": model, "input": "x"}
+            refused = [
+                {"store": True},
+                {"store": True, "background": True},
+                {
+                    "tools": [
+                        {
+                            "type": "mcp",
+                            "server_label": "d",
+                            "server_url": "https://example.org/m",
+                            "require_approval": "never",
+                        }
+                    ]
+                },
+            ]
+            resources = [("/v1/conversations", {}), ("/v1/vector_stores", {"name": "v"})]
+        for extra in refused:
+            r = await relay.post(path, headers=hdr, json={**base, **extra})
+            assert r.status_code == 400, r.text
+            code = r.json()["error"]["type" if family == "anthropic" else "code"]
+            assert code == "feature_disabled"
+        for resource, body in resources:
+            r = await relay.post(resource, headers=hdr, json=body)
+            assert r.status_code == 400, (resource, r.text)
+        upload = await relay.post(
+            "/v1/files", headers=hdr, files={"file": ("a.txt", b"a")}, data={"purpose": "user_data"}
+        )
+        assert upload.status_code == 400 and "feature_disabled" in upload.text, upload.text
+        assert not contacted
+        assert admin.execute("SELECT count(*) FROM billing.request_runs").fetchone() == (0,)

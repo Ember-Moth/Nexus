@@ -149,7 +149,13 @@ async def test_batch_restart_cancel_isolation_and_item_settlement(http, admin, t
     async with (
         server,
         stream_plane(
-            http, admin, relay_binary, tls[1], server.sockets[0].getsockname()[1], "anthropic"
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            "anthropic",
+            features=["batches"],
         ) as (client, model, key, _, plane),
     ):
         h = {"x-api-key": key}
@@ -270,7 +276,13 @@ async def test_batch_lost_submission_receipt(http, admin, tls, relay_binary):  #
     async with (
         server,
         stream_plane(
-            http, admin, relay_binary, tls[1], server.sockets[0].getsockname()[1], "anthropic"
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            "anthropic",
+            features=["batches"],
         ) as (client, model, key, _, _),
     ):
         h = {"x-api-key": key}

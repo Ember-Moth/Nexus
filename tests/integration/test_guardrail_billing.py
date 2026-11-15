@@ -199,6 +199,7 @@ async def test_assessments_hold_settle_review_and_reconcile(http, admin, tls, re
             "reservation.v1",
             "usage-events.v1",
             "relay.native.v1",
+            "relay.provider-features.v1",
             "relay.sse.v1",
             "relay.bedrock-converse.v1",
             "relay.bedrock-settings.v1",

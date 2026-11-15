@@ -51,6 +51,10 @@ impl Failure {
     pub fn upstream() -> Self {
         Self(StatusCode::BAD_GATEWAY, "upstream_error")
     }
+    /// The operator has not enabled a provider feature this request needs on its deployment.
+    pub fn feature_disabled() -> Self {
+        Self(StatusCode::BAD_REQUEST, "feature_disabled")
+    }
 }
 impl From<Rejection> for Failure {
     fn from(r: Rejection) -> Self {
@@ -59,6 +63,7 @@ impl From<Rejection> for Failure {
             Rejection::Forbidden => Self(StatusCode::FORBIDDEN, "model_forbidden"),
             Rejection::Unsupported => Self(StatusCode::BAD_REQUEST, "unsupported_request"),
             Rejection::Unavailable => Self(StatusCode::BAD_REQUEST, "unsupported_deployment"),
+            Rejection::FeatureDisabled => Self::feature_disabled(),
         }
     }
 }

@@ -212,7 +212,13 @@ async def test_messages_execution_scope_and_financial_evidence(http, admin, tls,
     async with (
         server,
         stream_plane(
-            http, admin, relay_binary, tls[1], server.sockets[0].getsockname()[1], "anthropic"
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            "anthropic",
+            features=["code_execution", "files", "batches", "web_fetch"],
         ) as (relay, model, key, _, plane),
     ):
         h = {"x-api-key": key}
@@ -441,7 +447,13 @@ async def test_batch_code_execution_has_no_loop_bound_and_is_rejected(
     async with (
         server,
         stream_plane(
-            http, admin, relay_binary, tls[1], server.sockets[0].getsockname()[1], "anthropic"
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            "anthropic",
+            features=["code_execution", "files", "batches", "web_fetch"],
         ) as (relay, model, key, _, plane),
     ):
         await configure_execution(http, admin, plane)

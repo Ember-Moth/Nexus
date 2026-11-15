@@ -249,6 +249,8 @@ pub struct Generate {
     pub(crate) chat_stop: Option<Vec<String>>,
     pub(crate) conversation: Option<ConversationId>,
     pub(crate) stored_binding: Option<(uuid::Uuid, uuid::Uuid)>,
+    /// Provider features the selected deployment must enable. Resource binding adds more.
+    pub(crate) features: super::features::Features,
 }
 
 impl Generate {
@@ -477,6 +479,15 @@ impl Generate {
         }
         let has_private_history =
             private_entries(endpoint, &body).any(|(item, _)| super::history::reserved(item));
+        let features = Self::required_features(
+            endpoint,
+            &body,
+            websocket,
+            interpreter.is_some(),
+            execution.as_ref(),
+            file_search.is_some(),
+            search.is_some(),
+        );
         Ok(Self {
             model,
             endpoint,
@@ -497,8 +508,72 @@ impl Generate {
             chat_stop: None,
             conversation: None,
             stored_binding: None,
+            features,
             body,
         })
+    }
+
+    fn required_features(
+        endpoint: Endpoint,
+        body: &Value,
+        websocket: bool,
+        interpreter: bool,
+        execution: Option<&super::execution::Execution>,
+        file_search: bool,
+        search: bool,
+    ) -> super::features::Features {
+        use super::features::{Feature, Features};
+        let mut f = Features::default();
+        if endpoint == Endpoint::OpenaiResponses {
+            if body["store"] == true || body["background"] == true {
+                f.insert(Feature::StoredResponses);
+            }
+            if body["background"] == true {
+                f.insert(Feature::Background);
+            }
+            // A WebSocket may continue from a response it holds only in connection memory.
+            if body["previous_response_id"]
+                .as_str()
+                .and_then(Self::handle)
+                .is_some()
+                || !websocket && !body["previous_response_id"].is_null()
+            {
+                f.insert(Feature::StoredResponses);
+            }
+            if !body["conversation"].is_null() {
+                f.insert(Feature::Conversations);
+            }
+            if Self::input_files(&body["input"]).is_ok_and(|refs| !refs.is_empty()) {
+                f.insert(Feature::Files);
+            }
+        }
+        if interpreter || execution.is_some_and(|e| !e.implicit || e.container.is_some()) {
+            f.insert(Feature::CodeExecution);
+        }
+        if file_search {
+            f.insert(Feature::VectorStores);
+        }
+        if search {
+            f.insert(Feature::WebSearch);
+        }
+        let tools = body["tools"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if body.get("mcp_servers").is_some_and(|v| !v.is_null())
+            || tools
+                .iter()
+                .any(|t| matches!(t["type"].as_str(), Some("mcp" | "mcp_toolset")))
+        {
+            f.insert(Feature::RemoteMcp);
+        }
+        if tools
+            .iter()
+            .any(|t| t["type"] == "web_fetch_20250910" || super::execution::dynamic_fetch(t))
+        {
+            f.insert(Feature::WebFetch);
+        }
+        f
     }
 
     pub fn parse_chat(mut body: Value) -> Result<Self, ProtocolError> {

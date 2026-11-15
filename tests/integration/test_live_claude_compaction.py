@@ -76,6 +76,7 @@ async def test_signed_compaction_and_stateless_replay(http, admin, tls, relay_bi
                     "reservation.v1",
                     "usage-events.v1",
                     "relay.native.v1",
+                    "relay.provider-features.v1",
                     "relay.sse.v1",
                 ],
             },

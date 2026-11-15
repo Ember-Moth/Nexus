@@ -14,7 +14,13 @@ from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 from websockets.exceptions import InvalidStatus
 
+from nexus.modules.publication.application.schemas import FEATURE_CAPABILITIES
+
 pytestmark = pytest.mark.integration
+
+
+def feature_capabilities(features):
+    return [FEATURE_CAPABILITIES[f] for f in features]
 
 
 @asynccontextmanager
@@ -31,7 +37,9 @@ async def stream_plane(
     convert_from=None,
     auto_cache=False,
     cache_rates=None,
+    features=(),
 ):
+    """Provision a relay plane. `features` lists the provider features the deployment enables."""
     client, root, app, settings = http
     async with provision_plane(
         http,
@@ -68,6 +76,8 @@ async def stream_plane(
             "bound_reference": "isolated-stream",
             "count_rule": "deployment_ceiling.v1",
         }
+        if features:
+            profile["provider_features"] = list(features)
         if chat_upstream:
             profile["endpoint"] = "openai_chat_completions"
         if auto_cache:
@@ -84,7 +94,14 @@ async def stream_plane(
             "SELECT node_id,database_role FROM publication.gateway_principals WHERE cluster_id=%s",
             (cid,),
         ).fetchone()
-        caps = ["reservation.v1", "usage-events.v1", "relay.native.v1", "relay.sse.v1"]
+        caps = [
+            "reservation.v1",
+            "usage-events.v1",
+            "relay.native.v1",
+            "relay.provider-features.v1",
+            "relay.sse.v1",
+            *feature_capabilities(features),
+        ]
         if ws:
             caps.append("relay.responses-ws.v1")
         r = await client.put(

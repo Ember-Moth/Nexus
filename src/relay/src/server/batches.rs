@@ -8,6 +8,7 @@ use crate::{
     },
     protocol::{
         Endpoint,
+        features::Feature,
         request::{AnthropicHeaders, Generate, Operation, Route},
         response,
     },
@@ -220,6 +221,7 @@ async fn handle_request(
                 return Err(invalid());
             }
             request.anthropic = headers.clone();
+            request.features.insert(Feature::Batches);
             bind_input(&node, &index, raw, &mut request).await?;
             let s = index.native_messages(raw, &request, account)?;
             account.get_or_insert(s.deployment);

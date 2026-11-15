@@ -173,6 +173,7 @@ async def test_file_citations_recheck_the_owned_file(http, admin, tls, relay_bin
             peer.sockets[0].getsockname()[1],
             family,
             convert_from=direction,
+            features=["files", "code_execution"],
         ) as (relay, model, key, _, plane),
     ):
         vendor_headers = {"x-api-key": key} if claude else {"Authorization": "Bearer " + key}

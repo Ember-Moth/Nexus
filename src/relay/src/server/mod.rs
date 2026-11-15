@@ -256,6 +256,9 @@ fn error(id: Uuid, endpoint: Endpoint, failure: Failure) -> Response {
     (status, Json(json)).into_response()
 }
 
+/// How long a tenant may take to send a request body to a resource API.
+pub(super) const UPLOAD_DEADLINE: Duration = Duration::from_secs(60);
+
 /// Answer with an upstream reply. Errors are scrubbed into the client's protocol.
 pub(super) fn reply(status: StatusCode, value: Value, client: Endpoint) -> Response {
     if status.is_success() {

@@ -200,7 +200,13 @@ async def failover_plane(http, admin, ports, family="anthropic"):
             "SELECT node_id,database_role FROM publication.gateway_principals WHERE cluster_id=%s",
             (cid,),
         ).fetchone()
-        caps = ["reservation.v1", "usage-events.v1", "relay.native.v1", "relay.sse.v1"]
+        caps = [
+            "reservation.v1",
+            "usage-events.v1",
+            "relay.native.v1",
+            "relay.provider-features.v1",
+            "relay.sse.v1",
+        ]
         r = await client.put(
             f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
             headers=auth(root),

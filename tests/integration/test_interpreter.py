@@ -253,6 +253,7 @@ async def test_interpreter_lifecycle(http, admin, tls, relay_binary, tariff):  #
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["code_execution", "files", "stored_responses", "background"],
         ) as (relay, model, key, _, plane),
     ):
         await configure(http, admin, plane, tariff)
@@ -452,6 +453,7 @@ async def test_container_review_and_unused_auto(http, admin, tls, relay_binary):
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["code_execution", "files", "stored_responses", "background"],
         ) as (relay, model, key, _, plane),
     ):
         await configure(http, admin, plane, "session_20m")
@@ -569,6 +571,7 @@ async def test_interpreter_ws_and_lost_create_receipt(http, admin, tls, relay_bi
             upstream.sockets[0].getsockname()[1],
             "openai_compatible",
             ws=True,
+            features=["code_execution", "files", "stored_responses", "background"],
         ) as (relay, model, key, _, plane),
     ):
         await configure(http, admin, plane, "session_20m")
@@ -689,6 +692,7 @@ async def test_background_container_is_bound_after_restart(http, admin, tls, rel
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["code_execution", "files", "stored_responses", "background"],
         ) as (relay, model, key, _, plane),
     ):
         await configure(http, admin, plane, "minute_min_5")
@@ -826,6 +830,7 @@ async def test_container_holds_grow_before_the_session_outlives_them(
             tls[1],
             server.sockets[0].getsockname()[1],
             "openai_compatible",
+            features=["code_execution"],
         ) as (relay, model, key, _, plane),
     ):
         org = plane[2]

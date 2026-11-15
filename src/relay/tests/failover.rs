@@ -105,6 +105,12 @@ fn build(candidates: &[(u32, u32, Value)]) -> Result<Fixture, nexus_relay::contr
             "relay.responses-ws.v1",
             "relay.messages-to-responses.v1",
             "relay.responses-to-messages.v1",
+            "relay.provider-features.v1",
+            "relay.stored-responses.v1",
+            "relay.background-responses.v1",
+            "relay.conversations.v1",
+            "relay.files.v1",
+            "relay.remote-mcp.v1",
         ]
         .map(String::from)
         .to_vec(),
@@ -772,12 +778,71 @@ fn compact_routes_only_to_native_http_responses_within_its_frozen_bounds() {
 }
 
 #[test]
+fn provider_features_are_off_until_the_deployment_enables_them() {
+    let responses = |features: Value| {
+        json!({"endpoint":"openai_responses","count_rule":"o200k_base.v1",
+            "provider_features":features})
+    };
+    let generate = |body: Value| {
+        let mut base = json!({"model":"public","input":"hi"});
+        for (k, v) in body.as_object().unwrap() {
+            base[k] = v.clone();
+        }
+        Generate::parse(Endpoint::OpenaiResponses, base, false).unwrap()
+    };
+    let mcp = json!({"tools":[{"type":"mcp","server_label":"docs",
+        "server_url":"https://example.org/mcp","require_approval":"never"}]});
+    let off = fixture(&[(0, 1, responses(json!([])))]);
+    for body in [
+        json!({"store":true}),
+        json!({"store":true,"background":true}),
+        json!({"conversation":format!("conv_nx_{}", Uuid::new_v4())}),
+        mcp.clone(),
+    ] {
+        let rejected = off.index.select("enterprise", &generate(body)).err();
+        assert!(matches!(
+            rejected,
+            Some(nexus_relay::control::snapshot::Rejection::FeatureDisabled)
+        ));
+    }
+    assert!(off.index.select("enterprise", &generate(json!({}))).is_ok());
+    assert!(
+        off.index
+            .select("enterprise", &generate(json!({"store":false})))
+            .is_ok()
+    );
+    let on = fixture(&[(0, 1, responses(json!(["stored_responses", "remote_mcp"])))]);
+    assert!(
+        on.index
+            .select("enterprise", &generate(json!({"store":true})))
+            .is_ok()
+    );
+    assert!(on.index.select("enterprise", &generate(mcp)).is_ok());
+    assert!(
+        on.index
+            .select(
+                "enterprise",
+                &generate(json!({"store":true,"background":true}))
+            )
+            .is_err()
+    );
+    // Features must suit the endpoint, require their node capability and be listed once.
+    for profile in [
+        responses(json!(["background"])),
+        responses(json!(["batches"])),
+        responses(json!(["vector_stores"])),
+        responses(json!(["files", "files"])),
+        json!({"endpoint":"anthropic_messages","provider_features":["stored_responses"]}),
+        json!({"endpoint":"bedrock_converse","provider_features":["files"]}),
+    ] {
+        assert!(build(&[(0, 1, profile)]).is_err());
+    }
+}
+
+#[test]
 fn search_failover_preserves_the_frozen_call_limit() {
-    let f = fixture(&[
-        (0, 1, json!({"web_search_ceiling":2})),
-        (1, 1, json!({"web_search_ceiling":1})),
-        (2, 1, json!({"web_search_ceiling":4})),
-    ]);
+    let search = |n| json!({"web_search_ceiling":n,"provider_features":["web_search"]});
+    let f = fixture(&[(0, 1, search(2)), (1, 1, search(1)), (2, 1, search(4))]);
     let req = messages(json!({"tools":[{"type":"web_search_20250305","name":"web_search"}]}));
     let first = f.index.select("enterprise", &req).unwrap();
     assert_eq!(first.bounds.searches, 2);
@@ -792,7 +857,11 @@ fn search_failover_preserves_the_frozen_call_limit() {
 
 #[test]
 fn looping_requests_reserve_input_for_each_model_call() {
-    let f = fixture(&[(0, 1, json!({"web_search_ceiling":2}))]);
+    let f = fixture(&[(
+        0,
+        1,
+        json!({"web_search_ceiling":2,"provider_features":["web_search"]}),
+    )]);
     let plain = f.index.select("enterprise", &messages(json!({}))).unwrap();
     assert_eq!(plain.bounds.inputs, 80);
     let search = messages(json!({"tools":[{"type":"web_search_20250305","name":"web_search"}]}));

@@ -4,11 +4,12 @@ use super::{BodyLimit, Node, error};
 use crate::{
     control::{
         database::StoredResponse,
-        snapshot::{Deployment, Index},
+        snapshot::{Deployment, Index, Rejection},
     },
     protocol::{
         Endpoint,
         execution::{ContainerTarget, MemoryTier, isolated},
+        features::Feature,
         request::{Generate, Operation, Route},
     },
     request::{Failure, lifecycle::credential},
@@ -473,19 +474,30 @@ impl Containers {
                 None => self.index.model_names(),
             };
             let mut target = None;
+            let mut disabled = false;
             for name in names {
                 let mut req =
                     Generate::parse_compact(json!({"model":name,"input":[]})).map_err(|_| bad())?;
+                req.features.insert(Feature::CodeExecution);
+                if bound.is_some() {
+                    req.features.insert(Feature::Files);
+                }
                 if let Some((m, d)) = bound {
                     req.bind_deployment(m, d).map_err(|_| bad())?;
                 }
-                if let Ok(s) = self.index.container_target(&self.raw, &req, memory) {
-                    target = Some((s.model, s.deployment));
-                    break;
+                match self.index.container_target(&self.raw, &req, memory) {
+                    Ok(s) => {
+                        target = Some((s.model, s.deployment));
+                        break;
+                    }
+                    Err(e) => disabled |= matches!(e, Rejection::FeatureDisabled),
                 }
             }
-            let (m, d) =
-                target.ok_or(Failure(StatusCode::BAD_REQUEST, "no_container_deployment"))?;
+            let (m, d) = target.ok_or(if disabled {
+                Failure::feature_disabled()
+            } else {
+                Failure(StatusCode::BAD_REQUEST, "no_container_deployment")
+            })?;
             (None, m, d)
         } else {
             let h = parse(path[0], "cntr_nx_")?;
@@ -516,6 +528,10 @@ impl Containers {
                     .ok_or_else(Failure::unavailable)?,
             )
         };
+        // Reads and deletes stay available after the feature is disabled.
+        if !create && file_post && !dep.allows(Feature::CodeExecution) {
+            return Err(Failure::feature_disabled());
+        }
         let mut fid = None;
         if path.len() >= 2 {
             remote.push("files".into());

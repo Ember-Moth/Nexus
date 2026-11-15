@@ -3,11 +3,12 @@ use super::{BodyLimit, Node, error};
 use crate::{
     control::{
         database::Gateway,
-        snapshot::{Deployment, Index},
+        snapshot::{Deployment, Index, Rejection},
         vectors::Observation,
     },
     protocol::{
         Endpoint,
+        features::Feature,
         request::{Generate, Operation, Route},
     },
     request::{Failure, lifecycle::credential},
@@ -387,21 +388,30 @@ impl OperationRequest {
                 self.index.model_names()
             };
             let mut target = None;
+            let mut disabled = false;
             for name in names {
                 let mut req = Generate::parse_compact(json!({"model":name,"input":[]}))
                     .map_err(|_| invalid())?;
+                req.features.insert(Feature::VectorStores);
+                if bound.is_some() {
+                    req.features.insert(Feature::Files);
+                }
                 if let Some((model, dep)) = bound {
                     req.bind_deployment(model, dep).map_err(|_| invalid())?;
                 }
-                if let Ok(s) = self.index.vector_target(&self.raw, &req) {
-                    target = Some((s.model, s.deployment));
-                    break;
+                match self.index.vector_target(&self.raw, &req) {
+                    Ok(s) => {
+                        target = Some((s.model, s.deployment));
+                        break;
+                    }
+                    Err(e) => disabled |= matches!(e, Rejection::FeatureDisabled),
                 }
             }
-            let (model, dep) = target.ok_or(Failure(
-                StatusCode::BAD_REQUEST,
-                "no_file_search_deployment",
-            ))?;
+            let (model, dep) = target.ok_or(if disabled {
+                Failure::feature_disabled()
+            } else {
+                Failure(StatusCode::BAD_REQUEST, "no_file_search_deployment")
+            })?;
             (trace, dep, model, None)
         } else {
             let id = handle(path[0], "vs_nx_")?;
@@ -424,6 +434,11 @@ impl OperationRequest {
                 Some(store.stamp),
             )
         };
+        // Reads, deletes and cancellations stay available after the feature is disabled.
+        let cancel = path.get(3) == Some(&"cancel");
+        if !get && !delete && !cancel && !dep.allows(Feature::VectorStores) {
+            return Err(Failure::feature_disabled());
+        }
         let mut batch_id = None;
         if files || batches || search {
             remote.push(path[1].to_string());

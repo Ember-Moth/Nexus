@@ -283,7 +283,12 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             json={
                 "node_id": str(node_id),
                 "database_role": role,
-                "capabilities": ["reservation.v1", "usage-events.v1", "relay.native.v1"],
+                "capabilities": [
+                    "reservation.v1",
+                    "usage-events.v1",
+                    "relay.native.v1",
+                    "relay.provider-features.v1",
+                ],
             },
         )
         assert resp.status_code == 200, resp.text

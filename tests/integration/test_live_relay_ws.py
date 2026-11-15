@@ -137,6 +137,7 @@ async def test_authorized_two_turns(http, admin, tls, relay_binary):  # noqa: F8
                     "reservation.v1",
                     "usage-events.v1",
                     "relay.native.v1",
+                    "relay.provider-features.v1",
                     "relay.responses-ws.v1",
                 ],
             },

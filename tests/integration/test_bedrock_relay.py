@@ -373,7 +373,13 @@ async def test_bedrock_converse_and_stream(http, admin, tls, relay_binary, sigv4
             (cid,),
         ).fetchone()
         principal = f"/api/v1/gateway-clusters/{cid}/principals/{nid}"
-        caps = ["reservation.v1", "usage-events.v1", "relay.native.v1", "relay.sse.v1"]
+        caps = [
+            "reservation.v1",
+            "usage-events.v1",
+            "relay.native.v1",
+            "relay.provider-features.v1",
+            "relay.sse.v1",
+        ]
         for extra, expected in [
             ([], 409),
             (["relay.bedrock-converse.v1"], 409),
@@ -764,6 +770,7 @@ async def test_claude_invoke_transport(http, admin, tls, relay_binary):  # noqa:
             "reservation.v1",
             "usage-events.v1",
             "relay.native.v1",
+            "relay.provider-features.v1",
             "relay.sse.v1",
             "relay.bedrock-converse.v1",
             "relay.bedrock-claude-invoke.v1",

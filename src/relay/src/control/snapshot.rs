@@ -9,6 +9,7 @@ use uuid::Uuid;
 use super::{ControlError, credential::CredentialRef, database::Snapshot};
 use crate::protocol::{
     Endpoint, cache,
+    features::{Feature, Features},
     request::{Generate, Operation},
     tokens::{CallLoop, ReservationBounds},
 };
@@ -32,6 +33,16 @@ pub const CAPABILITIES: &[&str] = &[
     "relay.messages-to-responses.v1",
     "relay.responses-to-messages.v1",
     "relay.responses-to-chat.v1",
+    "relay.provider-features.v1",
+    "relay.stored-responses.v1",
+    "relay.background-responses.v1",
+    "relay.conversations.v1",
+    "relay.files.v1",
+    "relay.vector-stores.v1",
+    "relay.message-batches.v1",
+    "relay.code-execution.v1",
+    "relay.remote-mcp.v1",
+    "relay.web-fetch.v1",
 ];
 
 #[derive(Deserialize)]
@@ -190,6 +201,9 @@ impl From<Endpoint> for UpstreamProtocol {
 
 #[derive(Deserialize)]
 struct Profile {
+    /// Features that keep content in, or send it through, the upstream account. None by default.
+    #[serde(default)]
+    provider_features: Vec<Feature>,
     #[serde(default)]
     container_reserve_minutes: u32,
     container_tariff: Option<String>,
@@ -231,6 +245,9 @@ struct Profile {
 }
 
 impl Profile {
+    fn features(&self) -> Features {
+        self.provider_features.iter().copied().collect()
+    }
     fn permits_bedrock_options(&self, options: &crate::bedrock::RequestOptions) -> bool {
         // The caller may request the configured defaults or one explicitly published
         // alternative. Combining fragments of independently approved options is ambiguous.
@@ -309,6 +326,8 @@ pub enum Rejection {
     Unsupported,
     #[error("deployment_unavailable")]
     Unavailable,
+    #[error("feature_disabled")]
+    FeatureDisabled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -355,6 +374,12 @@ impl Deployment {
         self.relay_profile
             .as_ref()
             .is_some_and(|p| p.endpoint == UpstreamProtocol::BedrockConverse)
+    }
+    /// Whether the operator enabled a provider feature for this deployment.
+    pub(crate) fn allows(&self, feature: Feature) -> bool {
+        self.relay_profile
+            .as_ref()
+            .is_some_and(|p| p.features().contains(feature))
     }
 }
 
@@ -592,6 +617,39 @@ impl Index {
                     {
                         return Err(ControlError::Invalid("prompt cache configuration"));
                     }
+                }
+                let features = p.features();
+                if features.iter().count() != p.provider_features.len()
+                    || features.contains(Feature::Background)
+                        && !features.contains(Feature::StoredResponses)
+                    || features.iter().any(|f| {
+                        let endpoint = match f {
+                            Feature::StoredResponses
+                            | Feature::Background
+                            | Feature::Conversations
+                            | Feature::VectorStores => {
+                                p.endpoint == UpstreamProtocol::OpenaiResponses
+                            }
+                            Feature::Batches | Feature::WebFetch => {
+                                p.endpoint == UpstreamProtocol::AnthropicMessages
+                            }
+                            Feature::Files
+                            | Feature::CodeExecution
+                            | Feature::RemoteMcp
+                            | Feature::WebSearch => matches!(
+                                p.endpoint,
+                                UpstreamProtocol::OpenaiResponses
+                                    | UpstreamProtocol::AnthropicMessages
+                            ),
+                        };
+                        !endpoint
+                            || !snapshot
+                                .required_capabilities
+                                .iter()
+                                .any(|c| c == f.capability())
+                    })
+                {
+                    return Err(ControlError::Invalid("provider features"));
                 }
                 let family = match p.endpoint {
                     UpstreamProtocol::BedrockConverse => "aws_bedrock",
@@ -862,6 +920,7 @@ impl Index {
         let mut conversion = None;
         let mut bedrock_body = None;
         let mut incompatible = false;
+        let mut disabled = false;
         let mut best = (true, u32::MAX);
         let cache_enabled = route.iter().any(|c| {
             self.deployments[&c.deployment_id]
@@ -1011,6 +1070,10 @@ impl Index {
             {
                 continue;
             }
+            if !profile.features().covers(request.features) {
+                disabled = true;
+                continue;
+            }
             if !request.restored.is_empty() && profile.endpoint.representation() == request.endpoint
             {
                 incompatible = true;
@@ -1148,7 +1211,9 @@ impl Index {
                 selected = Some((dep, profile, applied));
             }
         }
-        let (dep, p, applied) = selected.ok_or(if incompatible {
+        let (dep, p, applied) = selected.ok_or(if disabled {
+            Rejection::FeatureDisabled
+        } else if incompatible {
             Rejection::Unsupported
         } else {
             Rejection::Unavailable

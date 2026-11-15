@@ -703,7 +703,7 @@ async def test_native_profile_publication_attempt_binding_and_worker_replay(plan
         "SELECT node_id, database_role FROM publication.gateway_principals WHERE cluster_id=%s",
         (cid,),
     ).fetchone()
-    caps = ["reservation.v1", "usage-events.v1", "relay.native.v1"]
+    caps = ["reservation.v1", "usage-events.v1", "relay.native.v1", "relay.provider-features.v1"]
     node_path = f"/api/v1/gateway-clusters/{cid}/principals/{node_id}"
     for extra, status in [([], 409), (["relay.responses-ws.v1"], 202)]:
         result = await client.put(

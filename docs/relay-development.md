@@ -22,7 +22,7 @@
 | `NEXUS_RELAY_FAILOVER_BUDGET_MS` | 首次尝试开始后仍可发起新尝试的时限，默认 10000 毫秒，范围 100 至 60000 毫秒；不截断已在执行的尝试 |
 | `NEXUS_RELAY_UPSTREAM_CA` | 可选的 PEM 根证书路径，用于拥有专用 CA 的 HTTPS 部署 |
 
-在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 或 `websocket` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认使用 `store=false`，省略输出限制时使用部署上限。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。旧部署保留原配置，声明端点后才参与原生转发。
+在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 或 `websocket` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认使用 `store=false`，省略输出限制时使用部署上限。已存储 response、后台运行、会话、文件、向量库、批处理、代码执行、远程 MCP、Web Fetch 和 Web Search 默认关闭，须在 `provider_features` 中逐项启用。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。旧部署保留原配置，声明端点后才参与原生转发。
 
 流量按快照能力启用。基础节点登记 `reservation.v1`、`usage-events.v1`、`relay.native.v1`。HTTP 部署开启 `streaming` 时，新发布的快照另要求 `relay.sse.v1`，公开模型也需要开启流式能力。Responses 部署开启 `websocket` 时，还需 `relay.responses-ws.v1`。只有通过验证的部署才声明 `continuation` 和 `cancellation`。前者允许用本连接已完成的上一轮 ID 续接；后者允许转发原生取消事件。其余部署通过断开专属上游连接中止在途生成，保留未知结果供核对。
 
@@ -42,7 +42,7 @@ WS 握手使用企业 Bearer Key，空闲和 ping/pong 不触发资金预留。�
 - `POST /v1/chat/completions` 支持单个输出、自定义函数、显式多轮历史、普通 JSON 与 Chat SSE。流以 `data: [DONE]` 结束，`stream_options.include_usage` 控制最后的用量块。按真实上游的 Responses、Messages 或 Bedrock usage 结算。`stop` 接受单个字符串或最多四个停止串，选择支持停止序列的 Messages 或 Bedrock 上游，并将匹配终态返回为 `finish_reason: "stop"`。仅有原生 Responses 部署时，默认会在预留前拒绝显式停止序列；客户端也可逐请求授权本地匹配。
 - Chat 客户端可通过 `web_search_options` 在已定价的标准 Responses Web Search 部署上搜索。支持 `search_context_size` 和 `user_location.approximate`。搜索次数受部署的 `web_search_ceiling` 限制，按完成的搜索动作结算。查询选项适用于单独的搜索请求，与自定义函数分开发送。
 - URL 引用位于 `choices[0].message.annotations`。流式 Chat 在结束前通过 Nexus 扩展 `choices[0].delta.annotations` 交付完整引用数组。引用位置以拼接后的回答正文为准；客户端可将带 `annotations` 的助手消息放回下一轮历史。[OpenAI 搜索输出](https://developers.openai.com/api/docs/guides/tools-web-search)
-- 在原生 Responses HTTP、SSE 或 WebSocket 生成中提交 `store:true`，返回的响应 ID 为 Nexus 的 `resp_nx_…` 句柄。相同企业 Key 可读取或删除 `/v1/responses/{handle}`，或在后续生成、compact 及重新建立的 WebSocket 中传 `previous_response_id`。节点将句柄绑定原部署、凭据版本和上游账户，并再次检查当前权限。储存内容由上游持有，本地只保存定位元数据。普通无状态请求继续返回原先的 ID；这些 ID 不能用于 HTTP 状态续接。
+- 部署在 `relay_profile.provider_features` 中启用 `stored_responses` 后，在原生 Responses HTTP、SSE 或 WebSocket 生成中提交 `store:true`，返回的响应 ID 为 Nexus 的 `resp_nx_…` 句柄。相同企业 Key 可读取或删除 `/v1/responses/{handle}`，或在后续生成、compact 及重新建立的 WebSocket 中传 `previous_response_id`。节点将句柄绑定原部署、凭据版本和上游账户，并再次检查当前权限。储存内容由上游持有，本地只保存定位元数据。普通无状态请求继续返回原先的 ID；这些 ID 不能用于 HTTP 状态续接。
 
 ### Responses 客户端使用 Chat Completions 上游
 

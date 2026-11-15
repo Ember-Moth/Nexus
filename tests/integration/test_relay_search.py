@@ -36,7 +36,11 @@ async def configure_search(http, admin, plane, variant="standard"):
         headers=auth(root, current["version"]),
         json={
             "relay_profile": current["relay_profile"]
-            | {"web_search_ceiling": 2, "web_search_variant": variant}
+            | {
+                "web_search_ceiling": 2,
+                "web_search_variant": variant,
+                "provider_features": [*current["relay_profile"]["provider_features"], "web_search"],
+            }
         },
     )
     assert changed.status_code == 200, changed.text
@@ -213,7 +217,13 @@ async def test_search_to_ledger(http, admin, tls, relay_binary, family, variant,
     async with (
         server,
         stream_plane(
-            http, admin, relay_binary, tls[1], server.sockets[0].getsockname()[1], family
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            family,
+            features=["batches"] if family == "anthropic" else [],
         ) as (relay, model, key, _, plane),
     ):
         path = "/v1/messages" if messages else "/v1/responses"
@@ -438,7 +448,13 @@ async def test_batch_search_price_is_independent_of_token_discount(http, admin, 
     async with (
         server,
         stream_plane(
-            http, admin, relay_binary, tls[1], server.sockets[0].getsockname()[1], "anthropic"
+            http,
+            admin,
+            relay_binary,
+            tls[1],
+            server.sockets[0].getsockname()[1],
+            "anthropic",
+            features=["batches"],
         ) as (relay, model, key, _, plane),
     ):
         await configure_search(http, admin, plane)

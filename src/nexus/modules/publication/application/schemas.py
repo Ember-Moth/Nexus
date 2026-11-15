@@ -9,6 +9,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from nexus.shared.views import Timestamp, View
 
 CAPABILITIES = ("reservation.v1", "usage-events.v1")
+# Node capability a release requires once any deployment enables the provider feature.
+FEATURE_CAPABILITIES = {
+    "stored_responses": "relay.stored-responses.v1",
+    "background": "relay.background-responses.v1",
+    "conversations": "relay.conversations.v1",
+    "files": "relay.files.v1",
+    "vector_stores": "relay.vector-stores.v1",
+    "batches": "relay.message-batches.v1",
+    "code_execution": "relay.code-execution.v1",
+    "remote_mcp": "relay.remote-mcp.v1",
+    "web_fetch": "relay.web-fetch.v1",
+    "web_search": "relay.web-search.v1",
+}
 # Revisions are bigint in SQL and decimal strings in JSON to survive any client's integers.
 Revision = Annotated[str, Field(pattern=r"^[0-9]+$")]
 

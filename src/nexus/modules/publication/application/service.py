@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from nexus.shared.errors import ServiceError
 
-from .schemas import CAPABILITIES
+from .schemas import CAPABILITIES, FEATURE_CAPABILITIES
 
 
 def serialize(value):
@@ -199,7 +199,7 @@ class PublicationService:
                 required.append("relay.bedrock-claude-invoke.v1")
             if any(
                 "web_search_requests" in m.get("tool_dimensions", []) for m in current["models"]
-            ):
+            ) or any("web_search" in p.get("provider_features", []) for p in profiles):
                 required.append("relay.web-search.v1")
             if any(
                 set(m.get("tool_dimensions", []))
@@ -211,6 +211,14 @@ class PublicationService:
                 required.append("relay.prompt-cache.v1")
             if profiles:
                 required.append("relay.native.v1")
+                # Nodes must enforce provider feature switches before serving any profile.
+                required.append("relay.provider-features.v1")
+            enabled = {f for p in profiles for f in p.get("provider_features", [])}
+            required.extend(
+                capability
+                for feature, capability in FEATURE_CAPABILITIES.items()
+                if feature in enabled and capability not in required
+            )
             if any(p.get("streaming") and "http" in p["transports"] for p in profiles):
                 required.append("relay.sse.v1")
             if any("websocket" in p["transports"] for p in profiles):

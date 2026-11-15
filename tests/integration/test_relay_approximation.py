@@ -492,6 +492,7 @@ async def test_exact_first_then_consented_failover(http, admin, tls, relay_binar
                     "reservation.v1",
                     "usage-events.v1",
                     "relay.native.v1",
+                    "relay.provider-features.v1",
                     "relay.messages-to-responses.v1",
                 ],
             },

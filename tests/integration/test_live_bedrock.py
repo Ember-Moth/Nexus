@@ -92,6 +92,7 @@ async def test_authorized_bedrock_generation_and_settlement(http, admin, tls, re
             "reservation.v1",
             "usage-events.v1",
             "relay.native.v1",
+            "relay.provider-features.v1",
             "relay.sse.v1",
             "relay.bedrock-converse.v1",
         ]

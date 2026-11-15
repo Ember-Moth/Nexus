@@ -4,8 +4,8 @@
 
 ## 自助注册与邀请
 
-1. 用户调用 `POST /auth/registrations`，提交 `login` 和 `password`。登录名去除首尾空格并转成小写，长度为 3–254 个字符，不能含空白。密码长度为 16–1024 个字符。关闭邮箱验证时返回 201，响应含 `access_token`、`expires_at` 和 `personal_organization_id`。已有登录名返回 409。
-2. 注册事务同时创建账号、个人组织和绑定人的 `org_owner` 成员关系。默认名称为 `Personal's Organisation`。通过 `GET /me` 可找回个人组织 ID。要改名，先读取 `GET /organizations/{org}`，再以其 ETag 为 `If-Match` 调用 `PATCH /organizations/{org}`，提交 `{"name":"我的工作室"}`。
+1. 平台管理员开放注册后（见[认证开关](#认证开关与发送渠道)），用户调用 `POST /auth/registrations`，提交 `login`、`password` 和邮箱，统一返回 202。用户兑换邮件中的令牌后，`POST /auth/registrations/verify` 返回 201，响应含 `access_token`、`expires_at` 和 `personal_organization_id`。登录名规则见[登录名](#登录名)，密码长度为 16–1024 个字符。
+2. 确认注册的事务同时创建账号、个人组织和绑定人的 `org_owner` 成员关系。默认名称为 `Personal's Organisation`。通过 `GET /me` 可找回个人组织 ID。要改名，先读取 `GET /organizations/{org}`，再以其 ETag 为 `If-Match` 调用 `PATCH /organizations/{org}`，提交 `{"name":"我的工作室"}`。
 3. Owner 调用 `POST /organizations/{org}/invitations`，提交目标登录名和角色，例如 `{"login":"alice","role":"org_developer"}`。将响应中一次性展示的 `token` 私下交给对方。邀请有效期为 7 天，向同一组织内同一登录名重发邀请会使旧令牌失效。
 4. 受邀者可以先注册，再以自己的会话调用 `POST /invitations/accept`，提交 `{"token":"<邀请令牌>"}`。加入后保留自己的个人组织。Owner 可以列出成员，变更角色或停用成员。已接受的邀请不能用来恢复被停用的成员或重新取得旧角色。
 
@@ -13,26 +13,56 @@
 
 ## 邮箱验证、登录和密码找回
 
-客户端先调用 `GET /auth/options` 读取 `email_verification`、`turnstile`、`turnstile_site_key` 和 `email_delivery_available`。邮箱验证开关控制新用户自助注册。已有账号仍可使用原登录名和密码登录，再绑定找回密码用的邮箱。登录名恰好是邮件地址的老账号也需要完成绑定。
+客户端先调用 `GET /auth/options` 读取 `registration`、`email_verification`、`turnstile`、`turnstile_site_key` 和 `email_delivery_available`。`registration` 为 false 时隐藏注册入口。已有账号仍可使用原登录名和密码登录，再绑定找回密码用的邮箱。登录名恰好是邮件地址的老账号也需要完成绑定。
 
 | 用途 | 接口 | 请求与结果 | Turnstile action |
 | --- | --- | --- | --- |
-| 注册或重发注册邮件 | `POST /auth/registrations` | 提交 `login`、`password` 和可选的 `email`。开启验证时必须提供邮箱，也可使用邮箱格式的登录名。关闭验证时立即开户，若显式提交邮箱且已配发信渠道，会发送可选的绑定令牌。开启验证时返回 202 和 `email_verification_required: true` | `register` |
-| 确认注册 | `POST /auth/registrations/verify` | 提交邮件中的 `token` 与本次注册的 `password`。成功返回 201，会话和个人组织在同一事务中创建 | `confirm_registration` |
+| 注册或重发注册邮件 | `POST /auth/registrations` | 提交 `login`、`password` 和 `email`；省略 `email` 时登录名必须是邮件地址。返回 202 和 `email_verification_required: true`，登录名是否已存在不影响响应（见[注册不暴露登录名](#注册不暴露登录名)）。注册关闭时返回 403 `registration_unavailable` | `register` |
+| 确认注册 | `POST /auth/registrations/verify` | 提交邮件中的 `token` 与本次注册的 `password`。成功返回 201，会话和个人组织在同一事务中创建。登录名已被他人先确认时返回 409 `login_in_use`；注册已关闭时返回 403 `registration_unavailable` | `confirm_registration` |
 | 登录 | `POST /auth/sessions` | 提交 `login`、`password`，成功返回 201 和会话 | `login` |
 | 绑定或更换邮箱 | `POST /me/email` | 携带现有会话，提交 `email` 和当前 `password`，成功受理返回 202 | `bind_email` |
 | 确认绑定 | `POST /me/email/verify` | 携带同一账号的会话，提交邮件中的 `token`。成功返回 204，可从 `GET /me` 读取 `verified_email` | `confirm_email` |
-| 忘记密码 | `POST /auth/password/forgot` | 提交 `email`。对格式正确的邮箱统一返回 202 和 `{"accepted":true}`，仅向已绑定该邮箱的有效账号发信 | `forgot_password` |
+| 忘记密码 | `POST /auth/password/forgot` | 提交 `email`。对格式正确的邮箱统一返回 202 和 `{"accepted":true}`，仅向已绑定该邮箱、且没有平台角色的有效账号发信（见[平台角色的找回](#平台角色的找回)） | `forgot_password` |
 | 重置密码 | `POST /auth/password/reset` | 提交邮件中的 `token` 和新 `password`。成功返回 204 并撤销旧会话和其他重置凭据，随后重新登录 | `reset_password` |
 | 管理员签发凭据设置密码 | `POST /auth/password` | 提交管理员签发的 `token` 和新 `password`，成功返回 204 | `set_password` |
 
-启用 Turnstile 后，表中每次请求还要提交与该 action 对应的新 `turnstile_token`。后端向 Siteverify 校验成功标志、业务 action 和预期 hostname。令牌失效或动作不匹配时返回 403，依赖不可用时返回 503。[Cloudflare 服务端校验](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)
+启用 Turnstile 后，表中每次请求还要提交与该 action 对应的新 `turnstile_token`。后端向 Siteverify 校验成功标志、业务 action 和预期 hostname。令牌失效或动作不匹配时返回 403。Siteverify 不可达、返回异常，或服务端的 Turnstile 配置缺失、secret 失效时，一律返回 503 `turnstile_unavailable`，具体原因只写入服务端 `nexus.auth` 日志的 `turnstile.unavailable` 事件。[Cloudflare 服务端校验](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)
 
-邮箱令牌有效期为 15 分钟，成功兑换后失效。API 将发送任务与验证记录一起写入 PostgreSQL。Worker 领取并发送，加密暂存的令牌在发送成功后清除，失败时在有效期内退避重试。SMTP 和 Cloudflare 在供应商已受理但回执丢失时可能重复投递同一令牌。重发找回密码或绑定邮箱的请求会替换该账号上一次同用途的令牌。
+### 注册不暴露登录名
+
+注册在任何情况下对同一请求返回相同的状态码和响应体，并做同样的工作（Argon2 哈希、一次查询、一次入队），耗时大致相同。登录名未被占用时，向邮箱发送注册令牌；已被占用时（包括大小写、全角等规范化后相同的写法），改为发送一封不含令牌的“该登录名已被使用”提示，内容不包含请求方填写的任何文字。只有邮箱的主人能得知结果。两个待确认的注册争用同一登录名时，先确认的一方成功，另一方在确认时收到 409。
+
+注册关闭时，只要请求体格式正确，接口在检查登录名、邮箱和 Turnstile 之前就返回 403 `registration_unavailable`，不同输入得到相同的响应。密码哈希在节流、开关检查和 Turnstile 校验通过之后才执行。
+
+### 邮件投递
+
+邮箱令牌在邮件交给服务商后 15 分钟内有效，成功兑换后失效。API 将发送任务与验证记录一起写入 PostgreSQL。Worker 领取并发送，加密暂存的令牌在发送成功后清除；每次投递尝试都从当时起重新计算 15 分钟，因此发信队列积压不会让验证和重置邮件在发出前过期。未发出的任务在 `NEXUS_MAIL_QUEUE_TTL_SECONDS`（默认 3600 秒）后丢弃，并记 `mail.expired`。
+
+服务商同步拒收某封邮件（Cloudflare 的 `permanent_bounces`、Resend 除 401/403/408/409/425/429 外的 4xx、SMTP 对收件人或正文的 5xx）时，该任务直接删除，不再重试，Worker 仍保持就绪。网络错误、5xx、限流和凭据错误（401/403、SMTP 认证失败）视为服务商不可用：任务退避重试，Worker 在该轮报告 `identity_mail` 不可用。SMTP 和 Cloudflare 在供应商已受理但回执丢失时可能重复投递同一令牌。重发找回密码或绑定邮箱的请求会替换该账号上一次同用途的令牌。
+
+### 发信限额
+
+注册、绑定和找回共用一套发信额度，按规范化后的收件地址计数（email_validator 的 UTS-46 映射之后，大小写、全角等写法落到同一个桶），在每个 `NEXUS_MAIL_WINDOW_SECONDS` 窗口内：
+
+| 额度 | 参数 | 默认 | 键 |
+| --- | --- | --- | --- |
+| 单个收件人，单个请求来源 | `NEXUS_MAIL_PER_RECIPIENT` | 3 | 请求方地址（IPv4 或 IPv6 /64）+ 收件地址 |
+| 单个收件人，全部来源 | `NEXUS_MAIL_PER_RECIPIENT_TOTAL` | 10 | 收件地址 |
+| 单个账户 | `NEXUS_MAIL_PER_ACCOUNT` | 10 | 注册时为登录名，绑定时为当前账号；匿名找回不计 |
+| 单个请求来源 | `NEXUS_MAIL_PER_IP` | 20 | 请求方地址 |
+| 全局 | `NEXUS_MAIL_GLOBAL` | 1000 | — |
+
+一次请求只有在全部额度都有余量时才计数，任一额度用尽返回 429 `rate_limited`，`Retry-After` 为该额度剩余的秒数。额度在 Turnstile 校验（以及绑定时的密码校验）通过之后才扣减，未通过挑战的请求不消耗共享额度；找回密码在查询账号之前扣减，邮箱是否存在不影响结果。
+
+按“来源 + 收件人”计数是为了避免锁定：攻击者用尽自己的额度后，账号主人从自己的网络仍能收到邮件。“全部来源”的额度只用来限制同一邮箱可被发送的总量；要用尽它，需要至少 4 个不同来源在同一窗口内参与，此时受害者最多被阻断到窗口结束。更看重可用性的部署可以调高 `NEXUS_MAIL_PER_RECIPIENT_TOTAL`。
 
 ## 认证开关与发送渠道
 
-平台管理员读取 `GET /settings/authentication`，用返回的 ETag 作为 `If-Match` 调用 `PUT /settings/authentication`，提交两个独立开关，例如 `{"email_verification":true,"turnstile":false}`。两项默认关闭。Turnstile 需在 API 进程配置 `NEXUS_TURNSTILE_SITE_KEY`、`NEXUS_TURNSTILE_SECRET_KEY` 和实际展示组件的 `NEXUS_TURNSTILE_HOSTNAME`。
+平台管理员读取 `GET /settings/authentication`，用返回的 ETag 作为 `If-Match` 调用 `PUT /settings/authentication`，提交 `{"registration":true,"email_verification":true,"turnstile":false}` 这样的完整策略。三项默认关闭，省略 `registration` 视为关闭。
+
+- `registration` 控制自助注册，只能与 `email_verification` 同时开启，否则返回 422 `registration_requires_email_verification`；数据库约束同样禁止这种组合。不验证就开放注册时，注册响应必然暴露登录名是否已存在，任何人也能不拥有邮箱就批量开户，因此不再允许。关闭注册后，尚未确认的注册也无法完成。
+- `email_verification` 需要已配置发信渠道。
+- Turnstile 需在 API 进程配置 `NEXUS_TURNSTILE_SITE_KEY`、`NEXUS_TURNSTILE_SECRET_KEY` 和实际展示组件的 `NEXUS_TURNSTILE_HOSTNAME`。
 
 API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所选渠道凭据。邮箱验证或密码找回需要运行 Worker。[配置示例](../.env.example)
 
@@ -45,6 +75,16 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 ## 管理员开户
 
 初始平台管理员由部署主机引导。管理员也可通过 `POST /users` 创建 pending 用户，将返回的一次性 `setup_token` 交给用户调用 `POST /auth/password` 设置密码。用户可随后调用 `POST /auth/sessions` 登录。[初始管理员](development.md#初始管理员)
+
+### 平台角色的找回
+
+拥有任一平台角色（`platform_admin`、`platform_finance`）的用户默认不能用邮件找回密码：`POST /auth/password/forgot` 照常返回 202，但不发信；角色在重置邮件发出后才授予的，该令牌也会被拒绝。这类用户由另一位平台管理员调用 `POST /users/{id}/password-reset-tokens` 签发一次性凭据。部署方可设置 `NEXUS_PLATFORM_EMAIL_RECOVERY=true` 恢复邮件找回。
+
+### 登录名
+
+新建登录名（自助注册、管理员创建、引导管理员）先做 NFKC 规范化，再去除首尾空格并转成小写，长度为 3–254 个字符，不能含空白、控制字符或不可见字符（零宽字符、双向控制符、变体选择符、Hangul 填充符等）。自助注册还不能使用保留名，默认包括 `admin`、`administrator`、`root`、`system`、`support`、`security`、`postmaster` 等，可用 `NEXUS_RESERVED_LOGINS`（JSON 列表，整体替换内置列表）调整；保留名按规范化后的写法比较，管理员创建和引导管理员不受此限。
+
+登录、邀请时按规范化后的写法查找账号，并兼容升级前按原规则保存的登录名，存量用户不受影响；同一账号的各种写法共用一个登录限流桶。
 
 管理员调用 `POST /organizations` 创建企业，传 `owner_user_id` 可指定已激活的用户为首位 owner，省略时使用当前管理员。组织 owner 可通过 `POST /organizations/{org}/members` 直接添加已激活用户。
 
@@ -68,7 +108,7 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 
 | 接口 | 行为 |
 | --- | --- |
-| `POST /auth/registrations` | 自助注册，返回会话与个人组织 ID |
+| `POST /auth/registrations` | 开始自助注册，返回 202；确认后由 `POST /auth/registrations/verify` 返回会话与个人组织 ID |
 | `POST /auth/sessions` | 校验密码，创建有期限且可撤销的管理会话 |
 | `DELETE /auth/sessions/current` | 撤销当前会话，重复注销不产生额外副作用 |
 | `POST /auth/password` | 兑换一次性凭据并设置密码，同时撤销该用户已有管理会话 |
@@ -97,7 +137,7 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 
 ## 凭据与运行参数
 
-会话、设置密码凭据与邀请令牌分别使用独立前缀和 32 字节随机值，数据库仅保存 SHA-256 摘要。密码使用 Argon2id，验证与哈希在有并发上限的线程任务中执行。过期会话和密码凭据在读取时失效，历史记录按部署策略维护。
+会话、设置密码凭据与邀请令牌分别使用独立前缀和 32 字节随机值，数据库仅保存 SHA-256 摘要。密码使用 Argon2id，验证与哈希在线程任务中执行，登录与其他操作（注册、找回、重置、绑定、设置密码）各有独立的并发上限，注册洪峰不会挤占登录。排队超过 `NEXUS_HASH_QUEUE_TIMEOUT_SECONDS` 时返回 503 `authentication_unavailable` 和 `Retry-After: 1`。过期会话和密码凭据在读取时失效，历史记录按部署策略维护。
 
 | 参数 | 默认值 |
 | --- | --- |
@@ -106,7 +146,17 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 | `NEXUS_LOGIN_WINDOW_SECONDS` | 60 |
 | `NEXUS_LOGIN_PER_ACCOUNT` | 每窗口 10 次 |
 | `NEXUS_LOGIN_PER_IP` | 每窗口 60 次 |
+| `NEXUS_LOGIN_HASH_CONCURRENCY` | 2，登录的 Argon2 并发 |
+| `NEXUS_ACCOUNT_HASH_CONCURRENCY` | 1，注册、找回等其他操作的 Argon2 并发 |
+| `NEXUS_HASH_QUEUE_TIMEOUT_SECONDS` | 5 |
+| `NEXUS_MAIL_WINDOW_SECONDS` 等 | 见[发信限额](#发信限额) |
+| `NEXUS_MAIL_QUEUE_TTL_SECONDS` | 3600 |
+| `NEXUS_PLATFORM_EMAIL_RECOVERY` | false |
+| `NEXUS_RESERVED_LOGINS` | 内置保留名列表 |
+| `NEXUS_AUTH_PROXY_PEERS` / `NEXUS_AUTH_PROXY_SECRET` | 未设置 |
 
-注册、登录与密码兑换受 Redis 原子限流控制，键中不保留明文登录名、IP 或令牌。Redis 不可用时拒绝新的认证请求，已建立会话的业务授权仍以 PostgreSQL 为准。当前使用直接连接的客户端地址，CLI 关闭默认代理头信任，不能用 X-Forwarded-For 绕过限流；真实反向代理的信任配置需在部署时明确。
+注册、登录与密码兑换受 Redis 原子限流控制，键中不保留明文登录名、IP 或令牌。注册、绑定和找回在发信额度之外，另按请求来源各做一次登录阈值的预节流，以限制 Turnstile 校验和数据库读取的次数。Redis 不可用时拒绝新的认证请求，已建立会话的业务授权仍以 PostgreSQL 为准。
+
+限流使用直接连接的客户端地址，IPv6 按 /64 网段计数。CLI 关闭默认代理头信任，不能用 X-Forwarded-For 绕过限流。经 BFF 访问时，API 只在来源 IP 属于 `NEXUS_AUTH_PROXY_PEERS`、且 `X-Nexus-Client-IP-Signature` 是以 `NEXUS_AUTH_PROXY_SECRET` 对 `X-Nexus-Client-IP` 的值计算的 HMAC 时，才采信该地址；设置了白名单却没有密钥时 API 拒绝启动。[BFF 配置](../src/web/README.md)
 
 凭据与管理响应设置 `Cache-Control: no-store`。验证错误只返回字段位置与错误类型，不回显输入中的密码、令牌或底层 SQL 详情；错误响应带可关联的 trace_id。

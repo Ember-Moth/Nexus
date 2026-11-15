@@ -5,7 +5,8 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 ## 凭请求 ID 排查
 
 - 管理 API 的 `X-Request-ID` 对应 `nexus.api` 的 `http.response` JSON 日志。日志记录方法、路由模板、状态、错误码与生成响应头所用的毫秒数。可以用 `GET /api/v1/audit-events?trace_id=<UUID>` 查该请求产生的审计事件，组织用户仍须提供组织 ID。迁移前的记录与独立后台操作允许 `trace_id` 为空。
-- 注册、邮箱绑定和密码找回请求实际入队后会写 `mail.queued`。按原 `request_id` 或 `job_id` 查 Worker 的 `mail.attempt`、`mail.failed`、`mail.accepted` 和待发送任务的 `mail.expired`。失败事件给出尝试次数、渠道、可用的供应商状态码和重试安排。供应商受理后仍可能退信。本地 SMTP 成功以 SMTP 事务完成为准，日志不保存地址、邮件令牌、正文或供应商返回的自由文本。
+- 注册、邮箱绑定和密码找回请求实际入队后会写 `mail.queued`，`purpose` 为 `register`、`bind`、`reset`，或表示“登录名已被使用”提示的 `exists`。按原 `request_id` 或 `job_id` 查 Worker 的 `mail.attempt`、`mail.failed`、`mail.accepted` 和 `mail.expired`。失败事件给出尝试次数、渠道、可用的供应商状态码和 `outcome`：`retry_scheduled` 表示服务商不可用、稍后重试；`rejected` 表示服务商同步拒收（例如永久退信或 4xx），任务已删除且不影响 Worker 就绪。`mail.expired` 表示任务在 `NEXUS_MAIL_QUEUE_TTL_SECONDS` 内没有发出。供应商受理后仍可能退信。本地 SMTP 成功以 SMTP 事务完成为准，日志不保存地址、邮件令牌、正文或供应商返回的自由文本。
+- Turnstile 不可用时匿名调用方只收到 `turnstile_unavailable`。`nexus.auth` 日志的 `turnstile.unavailable` 事件以 `outcome` 给出原因：`not_configured`（策略开启但 API 缺少 Turnstile 配置）、`invalid_secret`（Siteverify 报告 secret 缺失或失效）、`transport` 或 `malformed_response`。
 - Relay 的两个生成接口在普通 HTTP、SSE 和早期拒绝响应中返回服务器生成的 `X-Request-ID`。请求成功预留时，该 UUID 就是计费请求 ID。WebSocket 握手的 ID 是会话 ID；会话内各轮拥有独立的计费请求 ID。HTTP 402 的 `insufficient_funds` 对应账户充值，`budget_exceeded` 对应调整预算。原先两个场景均返回 `insufficient_budget`。
 - 管理 API 与 Worker 的 Nexus 应用日志通过 stderr 输出 JSON，可由部署环境采集。日志级别受 `NEXUS_LOG_LEVEL` 控制。请求 ID 由服务端生成，原始请求路径、查询参数、认证头和请求体不写入请求事件。
 
@@ -172,6 +173,15 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 
 生产环境保持依赖库在 `info` 或更高级别。临时开启 `debug` 排查时，依赖库的字段仍被替换，但事件数量会显著增加。
 
+## 升级到 0036（身份认证滥用防护）
+
+1. 执行迁移后尽快同时替换 API 和 Worker。0036 只改动 `identity.auth_policy` 和 `identity.email_challenges` 两张小表。替换完成前，旧 API 实例仍按旧逻辑接受注册；旧 Worker 不认识新的 `exists` 提示邮件，会把它当作失败重试，直到新 Worker 接手。
+2. **自助注册在迁移后关闭**，包括此前已开放注册的部署。需要开放时，先配置发信渠道，再由平台管理员 `PUT /settings/authentication` 提交 `{"registration":true,"email_verification":true,...}`。注册只能与邮箱验证同时开启。
+3. **配置 BFF 共享密钥**。凡设置了 `NEXUS_AUTH_PROXY_PEERS` 的 API，必须同时设置至少 32 个字符的 `NEXUS_AUTH_PROXY_SECRET`，否则拒绝启动；在 BFF 上设置同名同值的变量。BFF 没有密钥时不转发客户端 IP，API 回退到按 BFF 地址限流。生成方式见 [BFF 配置](../src/web/README.md)。
+4. 拥有平台角色的用户默认不能再用邮件找回密码，改由其他管理员签发 setup token。确需保留时设置 `NEXUS_PLATFORM_EMAIL_RECOVERY=true`。
+5. 按业务量检查发信额度（`NEXUS_MAIL_*`，见[发信限额](identity-api.md#发信限额)）和保留登录名 `NEXUS_RESERVED_LOGINS`。默认全局每小时 1000 封。
+6. 已有账号不受新的登录名规则影响，可继续用原写法登录。
+
 ## 数据库迁移
 
 ### 锁等待与超时
@@ -199,6 +209,6 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 
 - 一个修订只做一件可以整体回滚的事；数据回填与约束、索引分开成不同的修订。
 - 加列不带易变默认值（PostgreSQL 11 起常量或 `now()` 这类稳定默认值不重写表）；需要非空约束时，先回填，再以 `NOT VALID` 添加 CHECK 约束并单独 `VALIDATE CONSTRAINT`。
-- 业务表上的索引在 `upgrade()` 中用 `nexus.infrastructure.migrations.create_index_concurrently` 建立，删除用 `drop_index_concurrently`；`downgrade()` 不使用它们，以保持降级的原子性。辅助函数会提交修订中之前的语句，在 autocommit 下执行 `CONCURRENTLY`，并在该语句上取消迁移级超时（并发建索引只取 SHARE UPDATE EXCLUSIVE 锁，不阻塞读写，但要等待库内所有更早的事务结束）。中断留下的 INVALID 索引在重跑时会被删除重建。
+- 业务表上的索引在 `upgrade()` 中用 `nexus.infrastructure.migrations.create_index_concurrently` 建立，删除用 `drop_index_concurrently`；`downgrade()` 不使用它们，以保持降级的原子性。辅助函数会提交修订中之前的语句，在 autocommit 下执行 `CONCURRENTLY`，并在该语句上取消迁移级超时（并发建索引只取 SHARE UPDATE EXCLUSIVE 锁，不阻塞读写，但要等待库内所有更早的事务结束）。中断留下的 INVALID 索引在重跑时会被删除重建。`0036_identity_abuse_limits` 是参考用法。
 - 大批量回填分批提交，每批按主键范围更新，避免长事务和长时间行锁。
 - 会被 Relay 访问的表（`billing.*` 的请求、尝试和审计表，`catalog.deployments` 等）上的锁表操作，按 0017 的方式安排维护窗口或先摘流。

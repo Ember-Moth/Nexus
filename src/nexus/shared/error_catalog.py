@@ -29,6 +29,7 @@ GROUPS = (
             "policy_expands_access",
         ),
     ),
+    (403, "contact_administrator", "after_correction", ("registration_unavailable",)),
     (
         403,
         "complete_challenge",
@@ -172,6 +173,7 @@ GROUPS = (
             "payment_precision",
             "price_dimensions_mismatch",
             "query_required",
+            "registration_requires_email_verification",
             "relay_profile_required",
             "unsupported_event_version",
             "unsupported_payment_currency",
@@ -218,7 +220,6 @@ GROUPS = (
             "mail_unavailable",
             "payment_credentials_revoked",
             "payment_endpoints_unconfigured",
-            "turnstile_not_configured",
         ),
     ),
 )

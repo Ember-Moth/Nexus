@@ -88,7 +88,6 @@ def business_errors(*codes: str, challenge=False):
                 "turnstile_required",
                 "turnstile_rejected",
                 "turnstile_unavailable",
-                "turnstile_not_configured",
             }
         )
     by_status = {}
@@ -97,8 +96,6 @@ def business_errors(*codes: str, challenge=False):
         if not matches:
             raise ValueError(f"Unregistered error code: {code}")
         for status in matches:
-            if code == "turnstile_not_configured" and status != (503 if challenge else 409):
-                continue
             by_status.setdefault(status, []).append(code)
     responses = error_responses(*by_status)
     for status, options in by_status.items():

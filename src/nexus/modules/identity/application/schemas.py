@@ -64,15 +64,21 @@ class VerificationPending(Schema):
 
 
 class AuthPolicy(Schema):
+    registration: bool = Field(
+        default=False,
+        description="Self-service registration; requires email_verification. Omitted means closed.",
+    )
     email_verification: bool
     turnstile: bool
 
 
 class AuthPolicyView(AuthPolicy):
+    registration: bool
     version: int
 
 
 class PublicAuthOptions(AuthPolicy):
+    registration: bool
     turnstile_site_key: str | None
     email_delivery_available: bool
 

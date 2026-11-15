@@ -4,7 +4,7 @@ import asyncio
 import base64
 
 from nexus.config import RuntimeSettings
-from nexus.infrastructure.auth_limits import RedisAuthLimits
+from nexus.infrastructure.auth_limits import RedisAuthLimits, RedisMailLimits
 from nexus.infrastructure.cache import Cache
 from nexus.infrastructure.credential_cipher import CredentialCipher
 from nexus.infrastructure.payment_http import PaymentHttp, ProviderHttp
@@ -109,6 +109,16 @@ class Application:
             settings=settings,
             mail_cipher=CredentialCipher(
                 settings.encryption_key_version, roots, purpose="identity-mail"
+            ),
+            mail_limits=RedisMailLimits(
+                self.cache,
+                base64.urlsafe_b64decode(settings.encryption_key.get_secret_value()),
+                per_recipient=settings.mail_per_recipient,
+                per_recipient_total=settings.mail_per_recipient_total,
+                per_account=settings.mail_per_account,
+                per_ip=settings.mail_per_ip,
+                global_limit=settings.mail_global,
+                window=settings.mail_window_seconds,
             ),
         )
         self.projects = identity.create_project_service(self._storage[ModuleName.IDENTITY.value])

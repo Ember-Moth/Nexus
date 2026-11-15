@@ -4,7 +4,6 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from fastapi.responses import JSONResponse
 
 from nexus.http import (
     auth_limit_peer,
@@ -69,26 +68,20 @@ def create_router(
 
     @router.post(
         "/auth/registrations",
-        response_model=RegistrationCreated,
-        status_code=201,
-        responses={
-            **business_errors(
-                "login_in_use",
-                "invalid_login",
-                "invalid_password",
-                "invalid_email",
-                "mail_unavailable",
-                "conflict",
-                challenge=True,
-            ),
-            202: {"model": VerificationPending},
-        },
+        response_model=VerificationPending,
+        status_code=202,
+        responses=business_errors(
+            "registration_unavailable",
+            "invalid_login",
+            "invalid_password",
+            "invalid_email",
+            "mail_unavailable",
+            challenge=True,
+        ),
     )
     async def register(body: Registration, request: Request, service: Service):
-        result = await service.register(body, peer(request))
-        if isinstance(result, VerificationPending):
-            return JSONResponse(status_code=202, content=result.model_dump())
-        return result
+        """Start a registration; the response does not reveal whether the login is taken."""
+        return await service.register(body, peer(request))
 
     @router.post(
         "/auth/sessions",
@@ -138,6 +131,7 @@ def create_router(
             "unauthorized",
             "forbidden",
             "turnstile_not_configured",
+            "registration_requires_email_verification",
             "version_conflict",
             "mail_unavailable",
             "precondition_required",
@@ -160,6 +154,7 @@ def create_router(
             "invalid_password",
             "login_in_use",
             "email_in_use",
+            "registration_unavailable",
             "conflict",
             challenge=True,
         ),

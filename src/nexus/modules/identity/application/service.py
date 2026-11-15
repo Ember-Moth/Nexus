@@ -6,10 +6,11 @@ from uuid import UUID, uuid4
 from nexus.shared.errors import BootstrapRejected
 
 from ..domain.errors import IdentityError, forbidden, missing, unauthorized
+from ..domain.logins import login_candidates, new_login
 from ..domain.tokens import digest_token
 from .authorization import AccessControl
 from .email_auth import EmailAuthentication
-from .ports import AuthLimits, Cursor, Passwords, TransactionFactory
+from .ports import AuthLimits, Cursor, MailLimits, Passwords, TransactionFactory
 from .schemas import (
     BootstrapResult,
     CurrentUser,
@@ -22,15 +23,6 @@ from .schemas import (
     SessionCreated,
     SetupIssued,
 )
-
-
-def normalize_login(login: str) -> str:
-    value = login.strip().lower()
-    if not 3 <= len(value) <= 254 or any(char.isspace() for char in value):
-        raise IdentityError(
-            "invalid_login", "Login must contain 3-254 non-whitespace characters", 422
-        )
-    return value
 
 
 class IdentityService(EmailAuthentication):
@@ -192,6 +184,13 @@ class IdentityService(EmailAuthentication):
         setup_ttl: int,
         providers,
         mail_cipher,
+        mail_limits: MailLimits,
+        mail_queue_ttl: int = 3600,
+        platform_email_recovery: bool = False,
+        reserved_logins: frozenset[str] = frozenset(),
+        login_hash_slots: int = 2,
+        account_hash_slots: int = 1,
+        hash_queue_timeout: float = 5.0,
     ) -> None:
         self._transactions = transactions
         self._access = AccessControl(transactions)
@@ -202,13 +201,36 @@ class IdentityService(EmailAuthentication):
         self._setup_ttl = setup_ttl
         self.providers = providers
         self.cipher = mail_cipher
-        self._hash_slots = asyncio.Semaphore(2)
+        self._mail_limits = mail_limits
+        self._mail_queue_ttl = mail_queue_ttl
+        self._platform_email_recovery = platform_email_recovery
+        self._reserved_logins = reserved_logins
+        # Sign-in has its own Argon2 slots: a flood of sign-ups, resets or mailbox proofs can
+        # only queue behind each other.
+        self._login_slots = asyncio.Semaphore(login_hash_slots)
+        self._account_slots = asyncio.Semaphore(account_hash_slots)
+        self._hash_queue_timeout = hash_queue_timeout
+
+    async def _argon2(self, slots: asyncio.Semaphore, function, *args):
+        try:
+            async with asyncio.timeout(self._hash_queue_timeout):
+                await slots.acquire()
+        except TimeoutError:
+            raise IdentityError(
+                "authentication_unavailable",
+                "Authentication is busy; retry shortly",
+                503,
+                retry_after=1,
+            ) from None
+        # The slot stays taken until the thread finishes, even if the request is cancelled.
+        work = asyncio.ensure_future(asyncio.to_thread(function, *args))
+        work.add_done_callback(lambda _: slots.release())
+        return await asyncio.shield(work)
 
     async def _hash(self, password: str) -> str:
         if not 16 <= len(password) <= 1024:
             raise IdentityError("invalid_password", "Password must contain 16-1024 characters", 422)
-        async with self._hash_slots:
-            return await asyncio.to_thread(self._passwords.hash, password)
+        return await self._argon2(self._account_slots, self._passwords.hash, password)
 
     async def _throttle(self, subject: str, peer: str):
         try:
@@ -225,24 +247,25 @@ class IdentityService(EmailAuthentication):
                 retry_after=self._login_window,
             )
 
-    async def _verify(self, password_hash, password):
-        async with self._hash_slots:
-            return await asyncio.to_thread(self._passwords.verify, password_hash, password)
+    async def _verify(self, password_hash, password, *, login=False):
+        slots = self._login_slots if login else self._account_slots
+        return await self._argon2(slots, self._passwords.verify, password_hash, password)
 
     async def login(
         self, login: str, password: str, peer: str, turnstile_token=None
     ) -> SessionCreated:
-        login = normalize_login(login)
+        candidates = login_candidates(login)
         if not 1 <= len(password) <= 1024:
             raise unauthorized()
-        await self._throttle("login:" + login, peer)
+        # Every spelling of an account shares its canonical bucket.
+        await self._throttle("login:" + candidates[0], peer)
         version = await self.guard("login", turnstile_token)
         async with self._transactions() as tx:
-            credentials = await tx.directory.credentials(login)
+            credentials = await tx.directory.credentials(*candidates)
         password_hash = (
             credentials[1] if credentials and credentials[0].status == "active" else None
         )
-        verified = await self._verify(password_hash, password)
+        verified = await self._verify(password_hash, password, login=True)
         if not verified or credentials is None:
             raise unauthorized()
         async with self._transactions() as tx:
@@ -258,9 +281,6 @@ class IdentityService(EmailAuthentication):
         await tx.directory.create_session(user_id, digest_token(token, "nxs_"), expires)
         await tx.audit.record(user_id, "session.created", user_id)
         return SessionCreated(access_token=token, expires_at=expires)
-
-    async def register(self, body, peer):
-        return await self._register(body, normalize_login(body.login), peer)
 
     async def logout(self, token: str):
         digest = digest_token(token, "nxs_")
@@ -303,7 +323,7 @@ class IdentityService(EmailAuthentication):
     async def create_user(self, token: str, login: str):
         async with self._access.authenticated(token) as (tx, actor):
             self._access.platform_admin(actor)
-            user = await tx.directory.create_user(normalize_login(login))
+            user = await tx.directory.create_user(new_login(login))
             await tx.audit.record(actor.user.id, "user.created", user.id)
             return await self._issue_setup(tx, actor, user)
 
@@ -479,9 +499,12 @@ class IdentityService(EmailAuthentication):
             return result
 
     async def invite(self, token, org_id, body):
-        login = normalize_login(body.login)
+        candidates = login_candidates(body.login)
         async with self._access.authenticated(token) as (tx, actor):
             org = await self._access.organization(tx, actor, org_id, manage=True, lock=True)
+            # Invite an existing account under the spelling it is stored with.
+            existing = await tx.directory.credentials(*candidates)
+            login = existing[0].login if existing else candidates[0]
             if org.status not in {"active", "provisioning"}:
                 raise IdentityError(
                     "organization_inactive", "Organization cannot accept invitations", 409
@@ -539,9 +562,12 @@ class IdentityService(EmailAuthentication):
             return member
 
     async def bootstrap_admin(self, login: str, password: str) -> BootstrapResult:
-        login = login.strip().lower()
-        if not 3 <= len(login) <= 254 or any(char.isspace() for char in login):
-            raise BootstrapRejected("login must contain 3-254 non-whitespace characters")
+        legacy = login.strip().lower()
+        try:
+            login = new_login(login)
+        except IdentityError as error:
+            message = str(error)
+            raise BootstrapRejected(message[0].lower() + message[1:]) from None
         if not 16 <= len(password) <= 1024:
             raise BootstrapRejected("administrator password must contain 16-1024 characters")
         # CPU work is performed outside both the event loop and the database transaction.
@@ -550,7 +576,7 @@ class IdentityService(EmailAuthentication):
             await tx.administrators.lock_bootstrap()
             existing = await tx.administrators.first_admin()
             if existing is not None:
-                if existing[1] != login:
+                if existing[1] not in {login, legacy}:
                     raise BootstrapRejected("an administrator already exists")
                 return BootstrapResult(existing[0], created=False)
             if await tx.administrators.login_exists(login):

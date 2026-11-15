@@ -51,10 +51,15 @@ class DirectoryRepository:
     async def now(self) -> datetime:
         return (await self._session.execute(select(func.clock_timestamp()))).scalar_one()
 
-    async def credentials(self, login: str):
-        row = (
-            await self._session.execute(select(User).where(User.login == login))
-        ).scalar_one_or_none()
+    async def credentials(self, *logins: str):
+        """The account stored under the first matching spelling, in the order given."""
+        rows = {
+            row.login: row
+            for row in (await self._session.execute(select(User).where(User.login.in_(logins))))
+            .scalars()
+            .all()
+        }
+        row = next((rows[login] for login in logins if login in rows), None)
         return (view(UserView, row), row.password_hash) if row else None
 
     async def user(self, user_id: UUID, *, lock: bool = False):

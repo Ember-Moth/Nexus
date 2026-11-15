@@ -10,15 +10,6 @@ pytestmark = pytest.mark.integration
 API = "/api/v1"
 
 
-async def register(client, name):
-    response = await client.post(
-        API + "/auth/registrations", json={"login": name, "password": PASSWORD}
-    )
-    assert response.status_code == 201, response.text
-    assert response.headers["cache-control"] == "no-store"
-    return response.json()
-
-
 async def issue(client, owner, name, role):
     base = f"{API}/organizations/{owner['personal_organization_id']}/invitations"
     response = await client.post(
@@ -41,12 +32,27 @@ async def accept(client, session, invitation):
     )
 
 
-async def test_registration_creates_one_owned_tenant_and_one_account(http, admin):
+async def test_registration_creates_one_owned_tenant_and_one_account(http, admin, delivery, signup):
     client, root, app, _ = http
+    messages, mail = delivery[3], delivery[2]
+    # Both spellings start a registration; the login is decided when a mailbox proves itself.
+    for name, address in [
+        ("New-Customer", "first@example.com"),
+        ("new-customer", "second@example.com"),
+    ]:
+        started = await client.post(
+            API + "/auth/registrations",
+            json={"login": name, "password": PASSWORD, "email": address},
+        )
+        assert started.status_code == 202
+    assert await mail.dispatch_email() == 1 and await mail.dispatch_email() == 1
     attempts = await asyncio.gather(
         *(
-            client.post(API + "/auth/registrations", json={"login": name, "password": PASSWORD})
-            for name in ("New-Customer", "new-customer")
+            client.post(
+                API + "/auth/registrations/verify",
+                json={"token": message.token, "password": PASSWORD},
+            )
+            for message in messages
         )
     )
     assert sorted(response.status_code for response in attempts) == [201, 409]
@@ -100,11 +106,11 @@ async def test_registration_creates_one_owned_tenant_and_one_account(http, admin
     assert denied.status_code == 422
 
 
-async def test_invitation_join_role_change_and_owner_binding(http, admin):
+async def test_invitation_join_role_change_and_owner_binding(http, admin, signup):
     client = http[0]
-    owner = await register(client, "solo-owner")
+    owner = await signup("solo-owner")
     invitation = await issue(client, owner, "Guest-User", "org_owner")
-    other = await register(client, "guest-user")
+    other = await signup("guest-user")
     assert (await accept(client, owner, invitation)).status_code == 404
     joined = await asyncio.gather(
         accept(client, other, invitation), accept(client, other, invitation)
@@ -159,9 +165,9 @@ async def test_invitation_join_role_change_and_owner_binding(http, admin):
     assert (await accept(client, other, fresh)).json()["role"] == "org_developer"
 
 
-async def test_invitation_rotation_expiry_revocation_and_scope(http, admin):
+async def test_invitation_rotation_expiry_revocation_and_scope(http, admin, signup):
     client = http[0]
-    owner, guest = await register(client, "inviter"), await register(client, "invited")
+    owner, guest = await signup("inviter"), await signup("invited")
     path = f"{API}/organizations/{owner['personal_organization_id']}/invitations"
     stale = await issue(client, owner, "invited", "org_owner")
     current = await issue(client, owner, "invited", "org_developer")
@@ -192,9 +198,9 @@ async def test_invitation_rotation_expiry_revocation_and_scope(http, admin):
     assert (await client.get(path, headers=auth(owner["access_token"]))).json()["items"] == []
 
 
-async def test_direct_membership_changes_invalidate_pending_invites(http):
+async def test_direct_membership_changes_invalidate_pending_invites(http, signup):
     client = http[0]
-    owner, guest = await register(client, "direct-owner"), await register(client, "direct-guest")
+    owner, guest = await signup("direct-owner"), await signup("direct-guest")
     pending = await issue(client, owner, "direct-guest", "org_owner")
     me = (await client.get(API + "/me", headers=auth(guest["access_token"]))).json()
     path = f"{API}/organizations/{owner['personal_organization_id']}/members"

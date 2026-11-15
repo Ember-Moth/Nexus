@@ -37,6 +37,15 @@ def test_proxy_peers_require_a_strong_shared_secret(settings_factory):
     assert "s" * 32 not in repr(settings)
 
 
+def test_security_defaults(settings_factory):
+    settings = settings_factory()
+    assert settings.platform_email_recovery is False
+    assert {"admin", "root", "system"} <= set(settings.reserved_logins)
+    assert settings.mail_per_recipient <= settings.mail_per_recipient_total
+    with pytest.raises(ValidationError):
+        settings_factory(mail_per_recipient=11, mail_per_recipient_total=10)
+
+
 def test_migration_timeouts_are_configurable():
     from nexus.config import MigrationSettings
 

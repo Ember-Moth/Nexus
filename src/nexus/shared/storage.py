@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0035_upstream_purges"
+SCHEMA_REVISION = "0036_identity_abuse_limits"

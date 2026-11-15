@@ -29,3 +29,17 @@ def forbidden(resource_id: UUID | None = None) -> IdentityError:
 
 def missing(resource_id: UUID) -> IdentityError:
     return IdentityError("not_found", "Resource not found", 404, resource_id=resource_id)
+
+
+class MailRejected(Exception):
+    """The provider refused this message for good; sending it again cannot succeed."""
+
+    def __init__(self, status: int | str | None) -> None:
+        super().__init__("message rejected by the mail provider")
+        self.status = status
+
+
+def registration_unavailable() -> IdentityError:
+    return IdentityError(
+        "registration_unavailable", "Self-service registration is not available", 403
+    )

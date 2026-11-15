@@ -40,6 +40,30 @@ class Cache:
         )
         return result == 1
 
+    async def spend_budgets(self, keys: list[str], limits: list[int], window: int) -> int:
+        """Count once against every key when all are below their limits (atomically).
+
+        Returns 0 on success, otherwise the longest wait in seconds among the spent keys.
+        """
+        return int(
+            await self._client.eval(
+                "local wait = 0; "
+                "for i, key in ipairs(KEYS) do "
+                "if tonumber(redis.call('GET', key) or '0') >= tonumber(ARGV[i + 1]) then "
+                "local ttl = redis.call('TTL', key); "
+                "if ttl < 1 then ttl = tonumber(ARGV[1]) end; "
+                "if ttl > wait then wait = ttl end end end; "
+                "if wait > 0 then return wait end; "
+                "for _, key in ipairs(KEYS) do "
+                "if redis.call('INCR', key) == 1 then redis.call('EXPIRE', key, ARGV[1]) end end; "
+                "return 0",
+                len(keys),
+                *(f"{self._namespace}:{{mail}}:{key}" for key in keys),
+                window,
+                *limits,
+            )
+        )
+
     async def write_heartbeat(self, worker_id: str, payload: str, ttl: int) -> None:
         await self._client.set(f"{self._namespace}:workers:{worker_id}", payload, ex=ttl)
 

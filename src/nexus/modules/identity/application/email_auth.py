@@ -7,20 +7,25 @@ from uuid import uuid4
 from nexus.shared.telemetry import event, request_id
 
 from ..domain.email import mailbox
-from ..domain.errors import IdentityError, unauthorized
+from ..domain.errors import IdentityError, MailRejected, registration_unavailable, unauthorized
+from ..domain.logins import new_login
 from ..domain.tokens import digest_token
 from .schemas import PublicAuthOptions, RegistrationCreated, VerificationPending
 
 logger = logging.getLogger("nexus.mail")
+
+# "exists" tells a mailbox owner that the login they tried is taken. Its token is never sent; the
+# prefix only keeps the stored digest unique and unusable as any other proof.
+PREFIXES = {"register": "nxv_", "bind": "nxb_", "reset": "nxr_", "exists": "nxe_"}
 
 
 class EmailAuthentication:
     """Shares the identity service authentication and transaction primitives."""
 
     async def public_options(self):
-        async with self._transactions() as tx:
-            policy = await tx.email.policy()
+        policy = await self._read_policy()
         return PublicAuthOptions(
+            registration=policy.registration,
             email_verification=policy.email_verification,
             turnstile=policy.turnstile,
             turnstile_site_key=self.providers.site_key if policy.turnstile else None,
@@ -39,6 +44,14 @@ class EmailAuthentication:
     async def update_policy(self, session, body, version):
         async with self._access.authenticated(session) as (tx, actor):
             self._access.platform_admin(actor)
+            # Without verification the registration response would have to say whether a login
+            # exists, and anyone could open accounts in bulk without owning a mailbox.
+            if body.registration and not body.email_verification:
+                raise IdentityError(
+                    "registration_requires_email_verification",
+                    "Enable email verification before opening registration",
+                    422,
+                )
             if body.email_verification:
                 self.require_mail()
             if body.turnstile and not self.providers.turnstile_ready:
@@ -53,25 +66,48 @@ class EmailAuthentication:
             )
             return result
 
-    async def guard(self, action, token):
+    async def _read_policy(self):
         async with self._transactions() as tx:
-            policy = await tx.email.policy()
+            return await tx.email.policy()
+
+    async def _challenge(self, policy, action, token):
         if policy.turnstile:
             await self.providers.verify(token, action)
+
+    async def guard(self, action, token):
+        policy = await self._read_policy()
+        await self._challenge(policy, action, token)
         return policy.version
 
-    async def current(self, tx, version):
+    async def current(self, tx, version, *, registration=False):
         policy = await tx.email.policy(share=True)
         if policy.version != version:
             raise IdentityError(
                 "auth_policy_changed", "Authentication settings changed; retry", 409
             )
+        if registration and not policy.registration:
+            raise registration_unavailable()
         return policy
+
+    async def _mail_budget(self, recipient, peer, account=None):
+        """Spend one message from every budget it draws on, or refuse with Retry-After.
+
+        Callers spend it only after Turnstile and any password check, so requests that fail those
+        cannot drain the budgets that other requesters share.
+        """
+        try:
+            wait = await self._mail_limits.allow(recipient, peer, account)
+        except Exception:
+            raise IdentityError(
+                "authentication_unavailable", "Authentication is temporarily unavailable", 503
+            ) from None
+        if wait:
+            raise IdentityError("rate_limited", "Too many email requests", 429, retry_after=wait)
 
     async def queue(self, tx, purpose, email, *, user_id=None, login=None, password_hash=None):
         self.require_mail()
         delivery_id = uuid4()
-        prefix = {"register": "nxv_", "bind": "nxb_", "reset": "nxr_"}[purpose]
+        prefix = PREFIXES[purpose]
         token = prefix + secrets.token_urlsafe(32)
         version, ciphertext = self.cipher.encrypt(token, user_id or delivery_id, delivery_id)
         if user_id:
@@ -87,6 +123,7 @@ class EmailAuthentication:
                 digest=digest_token(token, prefix),
                 version=version,
                 ciphertext=ciphertext,
+                queue_ttl=self._mail_queue_ttl,
             )
         )
 
@@ -103,33 +140,32 @@ class EmailAuthentication:
             provider=self.providers.name,
         )
 
-    async def _register(self, body, login, peer):
-        address = mailbox(body.email) if body.email is not None else None
-        await self._throttle("register:" + (address or login), peer)
-        version = await self.guard("register", body.turnstile_token)
+    async def register(self, body, peer):
+        # Closed registration answers before any other check, identically for every input.
+        policy = await self._read_policy()
+        if not policy.registration:
+            raise registration_unavailable()
+        await self._throttle("register:" + peer, peer)
+        login = new_login(body.login, self._reserved_logins)
+        address = mailbox(body.email if body.email is not None else login)
+        self.require_mail()
+        await self._challenge(policy, "register", body.turnstile_token)
+        await self._mail_budget(address, peer, "login:" + login)
         password_hash = await self._hash(body.password.get_secret_value())
         async with self._transactions() as tx:
-            policy = await self.current(tx, version)
-            if policy.email_verification:
-                address = address or mailbox(login)
-                if await tx.administrators.login_exists(login):
-                    raise IdentityError("login_in_use", "Login is already in use", 409)
-                job = await self.queue(
-                    tx, "register", address, login=login, password_hash=password_hash
-                )
-                purpose = "register"
-                result = VerificationPending()
+            await self.current(tx, policy.version, registration=True)
+            # Whether or not the login is taken, the request does the same work and gets the same
+            # answer; only the owner of the mailbox learns which message was sent.
+            if await tx.administrators.login_exists(login):
+                purpose = "exists"
+                job = await self.queue(tx, purpose, address)
             else:
-                result, user_id = await self.finish_registration(tx, login, password_hash, None)
-                purpose = "bind"
-                job = (
-                    await self.queue(tx, purpose, address, user_id=user_id)
-                    if address and self.providers.mail_ready
-                    else None
+                purpose = "register"
+                job = await self.queue(
+                    tx, purpose, address, login=login, password_hash=password_hash
                 )
-        if job:
-            self.log_queued(job, purpose)
-        return result
+        self.log_queued(job, purpose)
+        return VerificationPending()
 
     async def finish_registration(self, tx, login, password_hash, email):
         user = await tx.directory.create_user(login, password_hash)
@@ -151,7 +187,7 @@ class EmailAuthentication:
         ):
             raise unauthorized()
         async with self._transactions() as tx:
-            await self.current(tx, version)
+            await self.current(tx, version, registration=True)
             row = await tx.email.consume(digest, "register")
             if not row:
                 raise unauthorized()
@@ -163,13 +199,15 @@ class EmailAuthentication:
 
     async def request_binding(self, session, body, peer):
         address = mailbox(body.email)
-        await self._throttle("bind:" + address, peer)
+        await self._throttle("bind:" + peer, peer)
         version = await self.guard("bind_email", body.turnstile_token)
+        self.require_mail()
         async with self._access.authenticated(session) as (tx, actor):
             credentials = await tx.directory.credentials(actor.user.login)
         password_hash = credentials[1]
         if not await self._verify(password_hash, body.password.get_secret_value()):
             raise unauthorized()
+        await self._mail_budget(address, peer, f"user:{actor.user.id}")
         async with self._access.authenticated(session) as (tx, actor):
             await self.current(tx, version)
             await tx.directory.user(actor.user.id, lock=True)
@@ -194,12 +232,17 @@ class EmailAuthentication:
 
     async def forgot(self, body, peer):
         address = mailbox(body.email)
-        await self._throttle("forgot:" + address, peer)
+        await self._throttle("forgot:" + peer, peer)
         version = await self.guard("forgot_password", body.turnstile_token)
         self.require_mail()
+        # Spent before the lookup, so the answer and the limits are the same for unknown
+        # addresses and for accounts that may not recover by email.
+        await self._mail_budget(address, peer)
         async with self._transactions() as tx:
             await self.current(tx, version)
-            user_id = await tx.email.recipient(address)
+            user_id = await tx.email.recipient(
+                address, platform_recovery=self._platform_email_recovery
+            )
             if not user_id:
                 return
             job = await self.queue(tx, "reset", address, user_id=user_id)
@@ -224,6 +267,9 @@ class EmailAuthentication:
                 or user.status != "active"
                 or (await tx.email.verified(user.id) != row["email"])
             ):
+                raise unauthorized()
+            # A platform role granted after the token was sent still closes this path.
+            if not self._platform_email_recovery and (await tx.directory.roles(user.id)).roles:
                 raise unauthorized()
             await tx.directory.replace_password(user.id, password_hash)
             await tx.audit.record(user.id, "user.password_reset", user.id)
@@ -257,6 +303,21 @@ class EmailAuthentication:
                 job["ciphertext"], job["user_id"] or job["id"], job["id"], job["key_version"]
             )
             status = await self.providers.send(job["email"], job["purpose"], token, job["id"])
+        except MailRejected as error:
+            # The provider answered and refused this message. Retrying cannot help, and the
+            # provider itself is reachable, so the worker stays ready.
+            async with self._transactions() as tx:
+                dropped = await tx.email.reject(job["id"], lease)
+            event(
+                logger,
+                logging.WARNING,
+                "mail.failed",
+                **fields,
+                error_type=type(error).__name__,
+                provider_status=error.status,
+                outcome="rejected" if dropped else "superseded",
+            )
+            return 1
         except Exception as error:
             async with self._transactions() as tx:
                 scheduled = await tx.email.finish(job["id"], lease, False)

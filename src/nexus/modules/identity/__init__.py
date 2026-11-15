@@ -6,7 +6,7 @@ from nexus.infrastructure.postgres import ModuleDatabase
 from nexus.shared.storage import ModuleName
 
 from .application.model_access import ModelAccessService
-from .application.ports import AuthLimits
+from .application.ports import AuthLimits, MailLimits
 from .application.projects import ProjectService
 from .application.schemas import BootstrapResult
 from .application.service import IdentityService
@@ -32,7 +32,12 @@ __all__ = [
 
 
 def create_service(
-    database: ModuleDatabase, auth_limits: AuthLimits, *, settings, mail_cipher
+    database: ModuleDatabase,
+    auth_limits: AuthLimits,
+    *,
+    settings,
+    mail_cipher,
+    mail_limits: MailLimits,
 ) -> IdentityService:
     database.require_module(ModuleName.IDENTITY)
     return IdentityService(
@@ -44,6 +49,13 @@ def create_service(
         setup_ttl=settings.password_setup_ttl_seconds,
         providers=AuthProviders(settings),
         mail_cipher=mail_cipher,
+        mail_limits=mail_limits,
+        mail_queue_ttl=settings.mail_queue_ttl_seconds,
+        platform_email_recovery=settings.platform_email_recovery,
+        reserved_logins=frozenset(settings.reserved_logins),
+        login_hash_slots=settings.login_hash_concurrency,
+        account_hash_slots=settings.account_hash_concurrency,
+        hash_queue_timeout=settings.hash_queue_timeout_seconds,
     )
 
 

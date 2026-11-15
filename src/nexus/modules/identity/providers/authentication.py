@@ -1,12 +1,34 @@
 import asyncio
+import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
 
 import httpx
 
+from nexus.shared.telemetry import event, request_id
+
 from ..domain.email import mailbox
-from ..domain.errors import IdentityError
+from ..domain.errors import IdentityError, MailRejected
+
+logger = logging.getLogger("nexus.auth")
+
+# HTTP statuses that refuse the message itself. 401/403 point at our credentials or sender
+# domain, and 408/409/425/429 are transient; those keep the message queued and the worker
+# reports the provider as unavailable.
+RETRYABLE_CLIENT_ERRORS = frozenset({401, 403, 408, 409, 425, 429})
+
+
+def permanent_status(status: int) -> bool:
+    return 400 <= status < 500 and status not in RETRYABLE_CLIENT_ERRORS
+
+
+def turnstile_unavailable(reason: str) -> IdentityError:
+    # Anonymous callers learn only that the check is unavailable; the cause goes to the log.
+    event(
+        logger, logging.ERROR, "turnstile.unavailable", request_id=request_id.get(), outcome=reason
+    )
+    return IdentityError("turnstile_unavailable", "Turnstile is unavailable", 503)
 
 
 class AuthProviders:
@@ -34,7 +56,7 @@ class AuthProviders:
 
     async def verify(self, token, action):
         if not self.turnstile_ready:
-            raise IdentityError("turnstile_not_configured", "Turnstile is not configured", 503)
+            raise turnstile_unavailable("not_configured")
         if not token:
             raise IdentityError("turnstile_required", "Complete the Turnstile challenge", 403)
         try:
@@ -53,12 +75,12 @@ class AuthProviders:
                 errors = result.get("error-codes", [])
                 if not isinstance(errors, list) or "internal-error" in errors:
                     raise ValueError
-                if "missing-input-secret" in errors or "invalid-input-secret" in errors:
-                    raise IdentityError(
-                        "turnstile_not_configured", "Check Turnstile credentials", 503
-                    )
-        except httpx.HTTPError, ValueError:
-            raise IdentityError("turnstile_unavailable", "Turnstile is unavailable", 503) from None
+        except httpx.HTTPError:
+            raise turnstile_unavailable("transport") from None
+        except ValueError:
+            raise turnstile_unavailable("malformed_response") from None
+        if "missing-input-secret" in errors or "invalid-input-secret" in errors:
+            raise turnstile_unavailable("invalid_secret")
         if (
             result.get("success") is not True
             or result.get("action") != action
@@ -103,10 +125,29 @@ class AuthProviders:
             "register": "Confirm your Nexus registration",
             "bind": "Verify your Nexus email",
             "reset": "Reset your Nexus password",
+            "exists": "Your Nexus registration request",
         }[purpose]
-        body = f"{subject}\n\nUse this one-time token within 15 minutes:\n\n{token}\n"
+        if purpose == "exists":
+            # Fixed text with no token and nothing the requester typed.
+            body = (
+                f"{subject}\n\nSomeone asked to register a Nexus account with this address, "
+                "but the requested login is already taken. If this was you, sign in or reset "
+                "your password instead. Otherwise you can ignore this message.\n"
+            )
+        else:
+            body = f"{subject}\n\nUse this one-time token within 15 minutes:\n\n{token}\n"
         if self.settings.mail_provider == "smtp":
-            await asyncio.to_thread(self.smtp_send, recipient, subject, body, delivery_id)
+            try:
+                await asyncio.to_thread(self.smtp_send, recipient, subject, body, delivery_id)
+            except smtplib.SMTPRecipientsRefused as error:
+                codes = [code for code, _ in error.recipients.values()]
+                if codes and all(code >= 500 for code in codes):
+                    raise MailRejected(codes[0]) from None
+                raise
+            except smtplib.SMTPDataError as error:
+                if error.smtp_code >= 500:
+                    raise MailRejected(error.smtp_code) from None
+                raise
             return
         payload = {"from": self.sender, "subject": subject, "text": body}
         if self.settings.mail_provider == "resend":
@@ -123,6 +164,8 @@ class AuthProviders:
         headers["Authorization"] = "Bearer " + key.get_secret_value()
         async with httpx.AsyncClient(transport=self.transport, timeout=8) as client:
             response = await client.post(url, json=payload, headers=headers)
+            if permanent_status(response.status_code):
+                raise MailRejected(response.status_code)
             response.raise_for_status()
             result = response.json()
         if self.settings.mail_provider == "resend":
@@ -130,6 +173,8 @@ class AuthProviders:
                 raise RuntimeError("Missing Resend receipt")
         else:
             accepted = result.get("result") or {}
+            if recipient in (accepted.get("permanent_bounces") or []):
+                raise MailRejected("permanent_bounce")
             if result.get("success") is not True or recipient not in (
                 accepted.get("queued", []) + accepted.get("delivered", [])
             ):

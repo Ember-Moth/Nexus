@@ -10,6 +10,7 @@ from test_billing import account_amounts, balance, finance_role, headers
 from test_identity_api import PASSWORD, auth, create_org, login
 
 from nexus.api import create_app
+from nexus.shared.storage import SCHEMA_REVISION
 from scripts.mock_payment_provider import MockPaymentProvider
 
 pytestmark = pytest.mark.integration
@@ -1126,7 +1127,7 @@ async def test_payment_migration_cannot_erase_retained_remote_intents(
         await asyncio.to_thread(command.downgrade, config, "0006_pricing_reservations")
     assert (
         admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchone()[0]
-        == "0035_upstream_purges"
+        == SCHEMA_REVISION
     )
     assert (
         admin.execute(

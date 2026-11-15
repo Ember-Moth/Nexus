@@ -6,6 +6,7 @@ from uuid import uuid4
 import httpx
 import psycopg
 import pytest
+from mail_stub import PASSWORD, install_mail
 
 from nexus.api import create_app
 from nexus.config import MigrationSettings, RuntimeSettings
@@ -89,7 +90,8 @@ def reset_identity(admin):
     )
 
     admin.execute(
-        "UPDATE identity.auth_policy SET email_verification=false,turnstile=false,version=1"
+        "UPDATE identity.auth_policy SET registration=false,email_verification=false,"
+        "turnstile=false,version=1"
     )
     admin.execute(
         "INSERT INTO billing.discount_versions (id,factor,state,effective_at,published_at) "
@@ -116,3 +118,39 @@ async def http(runtime_settings):
             )
             assert response.status_code == 201, response.text
             yield client, response.json()["access_token"], app, settings
+
+
+@pytest.fixture
+def delivery(http):
+    client, root, app, settings = http
+    mail = app.state.identity_service
+    messages, challenges = install_mail(mail, settings)
+    return client, root, mail, messages, challenges
+
+
+@pytest.fixture
+def signup(delivery, admin):
+    """Open verified self-service registration and complete it for one login."""
+    client, _, mail, messages, _ = delivery
+    admin.execute(
+        "UPDATE identity.auth_policy SET registration=true,email_verification=true,"
+        "version=version+1"
+    )
+
+    async def register(login, email=None):
+        email = email or login.lower() + "@example.com"
+        started = await client.post(
+            "/api/v1/auth/registrations",
+            json={"login": login, "password": PASSWORD, "email": email},
+        )
+        assert started.status_code == 202, started.text
+        assert await mail.dispatch_email() == 1
+        token = messages.pop().token
+        created = await client.post(
+            "/api/v1/auth/registrations/verify", json={"token": token, "password": PASSWORD}
+        )
+        assert created.status_code == 201, created.text
+        assert created.headers["cache-control"] == "no-store"
+        return created.json()
+
+    return register

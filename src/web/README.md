@@ -126,7 +126,7 @@ pnpm api:types:check                                 # CI：生成结果必须�
 | --- | --- | --- |
 | 登录 `/login` | 已完成 | 登录名/密码错误（含追踪 ID）、429、会话过期提示、`next` 跳转、语言切换；Turnstile 开启时渲染组件；“忘记密码”“注册账号”入口 |
 | 设置密码 `/setup-password` | 已完成 | 兑换一次性凭据 |
-| 注册 `/register` | 已完成 | 两次密码校验、登录名占用（409）；无需邮箱验证时直接进入新建的个人企业。`registration_closed` 显示“当前不开放自助注册”，待身份加固会话加上开关后联调 |
+| 注册 `/register` | 已实现 | 按 `/auth/options.registration` 显示：关闭时只显示“当前不开放自助注册”，登录页同时隐藏注册入口；开放时邮箱必填，提交后进入“请查收验证邮件”（202）。已在浏览器验证关闭和开放两种状态；本地没有发信渠道，开放状态提交得到 `mail_unavailable`，202 之后的步骤未走通 |
 | 完成注册 `/register/verify` | 已实现 | 令牌可从 `?token=` 带入或粘贴；本地没有发信渠道，只验证了无效令牌提示 |
 | 找回密码 `/forgot-password` | 已实现 | 结果统一显示为已受理；本地未配置发信，验证了 `mail_unavailable` 提示和邮箱格式错误 |
 | 重置密码 `/reset-password` | 已实现 | 密码长度、两次输入校验；验证了无效令牌提示（不会登出） |
@@ -154,12 +154,12 @@ pnpm api:types:check                                 # CI：生成结果必须�
 | 页面 | 状态 | 说明 |
 | --- | --- | --- |
 | 企业 `organizations`、路由策略 `routes` | 已完成 | 见上一阶段 |
-| 用户与平台角色 `users` | 已完成 | 新建用户并签发一次性凭据、重新签发、平台角色（未激活用户会被拒绝，提示明确）；认证设置卡片（邮箱验证、Turnstile 开关）只读取未提交 |
+| 用户与平台角色 `users` | 已完成 | 新建用户并签发一次性凭据、重新签发、平台角色（未激活用户会被拒绝，提示明确）；认证设置卡片：开放自助注册（默认关闭，开启时自动开启并锁定邮箱验证）、邮箱验证、Turnstile。本地无发信渠道，保存时显示 API 的拒绝原因 |
 | 模型 `models` | 已完成 | 列表（按状态、按企业视角预览）、新建（协议、计量维度、工具维度、上限），配置前提检查 |
 | 上游与凭据 `upstreams` | 已完成 | 列表与详情；凭据新建、撤销（输入名称确认）与轮换步骤提示；新建/编辑上游表单未在浏览器提交 |
-| 部署 `deployments` | 已完成 | 新建（模型、上游、凭据联动），Relay 档案编辑器按 `RELAY_FIELDS` 配置渲染，可“按上游填充建议值”；后续新增能力开关只需在 `src/components/platform-catalog/relay-profile.ts` 加字段 |
-| 售价版本 `sale-prices` | 已实现，待联调 | 版本时间线、草稿编辑、立即/定时发布。列表接口当前 500，页面显示降级提示并保留本次会话创建的版本；已验证新建草稿 |
-| 成本价版本 `cost-prices` | 已实现，待联调 | 同上；已验证新建草稿、启用价格被拒（部署停用）、改为停用价格后发布 |
+| 部署 `deployments` | 已完成 | 新建与编辑（模型、上游、凭据联动），Relay 档案编辑器按 `RELAY_FIELDS` 配置渲染，可“按上游填充建议值”。“供应商托管功能”逐项开关 `provider_features`（默认全部关闭），每项说明保存在供应商账户中的内容和所需节点能力，所选端点不支持的功能不可开启；已验证保存后接口返回所选功能 |
+| 售价版本 `sale-prices` | 已完成 | 服务端版本时间线（生效中、已排期、草稿）、基于当前版本新建草稿（含差额列）、立即/定时发布；已验证定时发布后时间线和上一版本的结束时间同步更新 |
+| 成本价版本 `cost-prices` | 已完成 | 同上；已验证时间线、基于当前版本新建草稿、启用价格被拒（部署停用）、停用价格发布 |
 | 企业折扣 `discounts` | 已完成 | 按企业的版本时间线，新建草稿、编辑、立即/定时发布 |
 | 收款账户 `receiving` | 已完成 | 新建、编辑、启停 |
 | 人工入账 `funding` | 已完成 | 选择企业 → 账户摘要；登记草稿、过账（确认对话框，Idempotency-Key + If-Match） |
@@ -167,14 +167,14 @@ pnpm api:types:check                                 # CI：生成结果必须�
 | 核对事项 `reconciliation` | 已实现 | 待处理/已处理队列、详情与处理表单、登记上游账单；本地无核对事项，只验证了空状态与表单 |
 | 支付异常 `payment-cases` | 已实现 | 支付异常与支付订单两个页签，订单详情含查单记录与“请求查单”；本地无异常 |
 | 支付渠道 `channels` | 已完成 | 按适配器 schema 生成配置表单（也可切到 JSON），新建 mock 渠道并启用 |
-| 集群与发布 `clusters` | 已完成 | 新建集群（企业、部署、公钥）、编辑范围与启停、轮换公钥；登记节点（数据库角色、能力）；发布当前资源或回滚（202 后进度抽屉轮询）；详情页节点与发布历史，系统发起的发布显示为“系统（自动发布）” |
+| 集群与发布 `clusters` | 已完成 | 新建与编辑：企业范围（指定企业 / 全部企业 / 全部个人企业）、自动发布开关、启停、轮换公钥；列表显示自动发布状态；详情页“自动发布”卡片显示最近一次自动发布及触发来源、最近一次失败的错误码与原因、回滚后的暂停与“恢复自动发布”；登记节点；手动发布或回滚（回滚前提示会暂停自动发布）；发布历史按 `initiator` 标出“系统（自动发布器）”。已在浏览器走通：开启自动发布 → 新 Key 触发自动发布 r2 → 回滚 r3 暂停 → 恢复后自动发布 r4；`personal` 范围缺少路由时显示失败原因 |
 | 审计事件 `audit` | 已完成 | 按企业、动作、追踪 ID 筛选，操作人与企业显示名称 |
 | 运行指标 `metrics` | 已完成 | 经 `GET /api/metrics`（仅平台管理员）读取 `/internal/metrics`，按 API 请求、数据库、发布、用量、支付、异常分组，15 秒刷新 |
 
 ### 本地联调准备
 
 - 支付：仓库根目录 `scripts/mock_payment_provider.py` 启动 mock 收银台；API 和 Worker 需要同一组 `NEXUS_MOCK_*`、`NEXUS_PAYMENT_*` 环境变量。在“支付渠道”新建 `mock` 渠道时，商户标识、API Key 与 Webhook 密钥要与 mock 服务的启动参数一致。
-- 节点登记要求数据库里已有专用登录角色：只属于 `nexus_gateway`、有 LOGIN、无其他权限，例如 `CREATE ROLE nexus_gateway_dev LOGIN; GRANT nexus_gateway TO nexus_gateway_dev;`。
+- 节点登记要求数据库里已有专用登录角色：只属于 `nexus_gateway`、有 LOGIN、无其他权限，例如 `CREATE ROLE nexus_gateway_dev LOGIN; GRANT nexus_gateway TO nexus_gateway_dev;`。部署带 Relay 档案时，节点还需 `relay.provider-features.v1`，开启的托管功能各需对应能力。
 - 发布要求集群范围内每个部署都被所选企业的路由策略引用，否则返回 `invalid_snapshot`（界面会显示服务端原因）。
 
 ## 新增的后端只读接口
@@ -185,23 +185,22 @@ pnpm api:types:check                                 # CI：生成结果必须�
 | --- | --- |
 | `GET /api/v1/gateway-clusters/{cluster_id}` | 集群单体，带 ETag，供编辑使用 |
 | `GET /api/v1/gateway-clusters/{cluster_id}/principals` | 节点列表（游标分页）：节点 ID、启用、已应用修订、最近确认、数据库角色、能力 |
-| `GET /api/v1/gateway-clusters/{cluster_id}/releases` | 发布历史（游标分页）：修订、SHA-256、时间、发起人（可为空，表示系统）、回滚来源、副本写入情况 |
+| `GET /api/v1/gateway-clusters/{cluster_id}/releases` | 发布历史（游标分页）：修订、SHA-256、时间、`initiator`（`operator` 手动 / `auto_publisher` 自动）、手动发布的 `actor_id`、回滚来源、副本写入情况 |
 | `GET /api/v1/organizations/{organization_id}/exports` | 导出任务列表（游标分页）；非平台角色只看到自己发起的任务，`attempt_costs` 只对平台财务可见 |
 
 ## 发现的 API 缺口
 
 前端已做降级（显示 ID、提示或本地记忆），以下按影响排序：
 
-1. **价格版本列表 500**：`GET /sale-price-versions`、`GET /cost-price-versions` 抛出 `TypeError`（`pricing.list_prices` 把 `kind` 放进 `**filters`）。计费会话修复后需复查两个价格页的时间线。
-2. **令牌错误与会话失效同为 401 `unauthorized`**：邮箱验证、邀请等令牌无效时，前端只能靠代理额外探测 `/me` 区分。建议改用独立错误码（如 `invalid_token`）。
-3. **个人企业同名**：迁移 `0015` 把所有个人企业命名为 “Personal's Organisation”，平台侧企业选择器只能追加短 ID 区分。建议用登录名生成名称。
-4. **名称与 N+1**：费用明细、用量、审计、流水只返回项目、Key、模型、用户 ID；平台财务不能列用户或 Key，只能显示 ID。项目授权不带成员登录名（前端用成员列表补齐）。
-5. **列表筛选缺失**：访问策略、项目授权不能按项目筛选；核对事项列表没有“全部状态”，事项类型与状态枚举不在契约中；审计事件只能按时间正序。
-6. **单体接口缺失**：没有 `GET` 单个折扣版本、单个收款账户；核对事项详情不返回 ETag。
-7. **用户与平台角色**：`UserView` 不含平台角色，用户列表不能显示角色列（对话框逐个读取）。
-8. **状态操作缺失**：访问策略不能删除或恢复继承；调整草稿不能取消。
-9. **契约细节**：`ChannelPatch.verification_grace_seconds` 在契约中为必填，但未配置验签材料时提交会被拒；渠道配置只返回 `configured` 布尔值；价格的 `unit_quantity` 未说明单位；价格版本没有按范围的序号；`relay_profile` 校验失败只返回 `value_error`，没有字段路径；`/auth/options` 还没有“是否开放注册”字段（由身份加固会话加入）。
-10. **其他**：`mail_unavailable` 用 503，前端需特殊处理；`/internal/metrics` 不在 OpenAPI 中，BFF 单独代理；发布记录不保存系统发起人（`actor_id` 为空即视为系统）；`node_config_acks` 缺少 `(node_id, created_at)` 索引，节点列表的“最近确认”在数据量大时会变慢。
+1. **令牌错误与会话失效同为 401 `unauthorized`**：邮箱验证、邀请等令牌无效时，前端只能靠代理额外探测 `/me` 区分。建议改用独立错误码（如 `invalid_token`）。
+2. **个人企业同名**：迁移 `0015` 把所有个人企业命名为 “Personal's Organisation”，平台侧企业选择器只能追加短 ID 区分。建议用登录名生成名称。
+3. **名称与 N+1**：费用明细、用量、审计、流水只返回项目、Key、模型、用户 ID；平台财务不能列用户或 Key，只能显示 ID。项目授权不带成员登录名（前端用成员列表补齐）。
+4. **列表筛选缺失**：访问策略、项目授权不能按项目筛选；核对事项列表没有“全部状态”，事项类型与状态枚举不在契约中；审计事件只能按时间正序。
+5. **单体接口缺失**：没有 `GET` 单个折扣版本、单个收款账户；核对事项详情不返回 ETag。
+6. **用户与平台角色**：`UserView` 不含平台角色，用户列表不能显示角色列（对话框逐个读取）。
+7. **状态操作缺失**：访问策略不能删除或恢复继承；调整草稿不能取消。
+8. **契约细节**：`ChannelPatch.verification_grace_seconds` 在契约中为必填，但未配置验签材料时提交会被拒；渠道配置只返回 `configured` 布尔值；价格的 `unit_quantity` 未说明单位；价格版本没有按范围的序号；`relay_profile` 校验失败只返回 `value_error`，没有字段路径；`ClusterUpdate.key_grace_seconds` 在契约中为必填，只改其他字段时也要带上。
+9. **其他**：`mail_unavailable` 用 503，前端需特殊处理；`/internal/metrics` 不在 OpenAPI 中，BFF 单独代理；自动发布状态只保留最近一次的触发来源，单次自动发布的触发来源只在审计 `config.released` 中；`node_config_acks` 缺少 `(node_id, created_at)` 索引，节点列表的“最近确认”在数据量大时会变慢。
 
 ## 检查
 

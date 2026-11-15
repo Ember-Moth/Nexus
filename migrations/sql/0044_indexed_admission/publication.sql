@@ -1,3 +1,25 @@
+-- Every gateway call names its principal. Admission holds these row locks while it queues on
+-- the organization's lock, so they are the weakest that still keep the rows from being deleted
+-- or re-keyed: FOR KEY SHARE does not block updates of other columns, so a release (desired and
+-- distributed revision, key sequence), a scope change, an acknowledgement (applied revision)
+-- or a deactivation never waits behind queued admissions. Acknowledgements of one node still
+-- serialize on FOR NO KEY UPDATE.
+CREATE OR REPLACE FUNCTION publication.v1_principal(for_ack boolean DEFAULT false)
+RETURNS publication.gateway_principals LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
+DECLARE p publication.gateway_principals; cid uuid;
+BEGIN
+ SELECT cluster_id INTO cid FROM publication.gateway_principals WHERE database_role=session_user;
+ PERFORM id FROM publication.gateway_clusters WHERE id=cid AND active FOR KEY SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'gateway_unauthorized'; END IF;
+ IF for_ack THEN
+  SELECT * INTO p FROM publication.gateway_principals WHERE database_role=session_user AND cluster_id=cid AND active FOR NO KEY UPDATE;
+ ELSE
+  SELECT * INTO p FROM publication.gateway_principals WHERE database_role=session_user AND cluster_id=cid AND active FOR KEY SHARE;
+ END IF;
+ IF NOT FOUND THEN RAISE EXCEPTION 'gateway_unauthorized'; END IF;
+ RETURN p;
+END $$;
+
 -- The snapshot a node may use at `rev` (NULL: the desired one), validated as v1_snapshot always
 -- did, without reading its manifest or payload.
 CREATE FUNCTION publication.v1_revision(p publication.gateway_principals, rev bigint, for_admission boolean)
@@ -163,7 +185,7 @@ CREATE FUNCTION publication.stage_keys(cid uuid, keys jsonb)
 RETURNS bigint LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $$
 DECLARE cur_seq bigint; next_seq bigint; changed bigint:=0; n bigint; horizon bigint;
 BEGIN
- SELECT key_sequence INTO STRICT cur_seq FROM publication.gateway_clusters WHERE id=cid FOR UPDATE;
+ SELECT key_sequence INTO STRICT cur_seq FROM publication.gateway_clusters WHERE id=cid FOR NO KEY UPDATE;
  next_seq=cur_seq+1;
  WITH incoming AS MATERIALIZED (SELECT * FROM jsonb_to_recordset(keys) AS x(id uuid, digest text,
   organization_id uuid, project_id uuid, service_account_id uuid, expires_at timestamptz))

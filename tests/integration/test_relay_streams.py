@@ -353,10 +353,7 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
             5,
             0,
         )
-        assert (
-            dropped == ["reserve_request", "append_usage_event"]
-            and len(received) == 1
-        )
+        assert dropped == ["reserve_request", "append_usage_event"] and len(received) == 1
         mode = "error"
         reply = await public.post(path, headers=hdr, json=body)
         assert "event: error" in reply.text

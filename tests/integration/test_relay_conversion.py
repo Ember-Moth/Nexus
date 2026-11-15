@@ -410,9 +410,7 @@ async def test_conversion_matches_native(http, admin, tls, relay_binary, family)
                 "status"
             ] == "accepted"
         assert await http[2].state.usage.process() == 4
-        assert (
-            dropped == ["reserve_request", "append_usage_event"] and len(seen) == 4
-        )
+        assert dropped == ["reserve_request", "append_usage_event"] and len(seen) == 4
         fmt = "anthropic.messages.v1" if messages else "openai.responses.v1"
         assert (
             admin.execute(

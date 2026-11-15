@@ -392,3 +392,60 @@ Python 模拟器的每个节点只有一个连接，同一时刻只处理一个�
 | 非流式（JSON）响应 | 不受影响：原来就等到写完或连接关闭 | 与原来相同 |
 
 **保守原则。** 只有终态块确实写进 socket 的流，才会从 `unknown` 变为 `succeeded`；其余仍是 `unknown`，进入核对，不会因为这个改动多扣钱。字节写进内核并不等于客户端收到，这个限制与快客户端相同，没有扩大。
+
+### 改动
+
+**1. 准入时不再展开快照（建议 2）。**
+
+- **索引表**：发布时 publication 写两张按键建索引的表。
+  - `publication.snapshot_index`：每个修订的路由（企业, 模型）、部署、模型和企业的访问策略，主键 `(cluster_id, revision, kind, primary_id, secondary_id)`。
+  - `publication.cluster_keys`：集群的 Key，按 `(cluster_id, key_id, added_sequence)` 建主键，另有 `(cluster_id, key_id)` 的存活唯一索引。
+- **模块边界**：billing 和 gateway 不直接 JOIN 这些表，只调用 publication 授权给 `nexus_bridge` 的 `publication.v1_admission(principal, rev, kid, org, model, for_admission)`。
+- **形状不变**：它返回 Key（按该修订的 Key 序号判断是否属于集群），以及与快照同形、只含该企业相关路由、部署、模型和访问策略的清单。catalog 的资格检查函数原样使用。
+- **开销**：`reserve_*`、`start_attempt`、`preflight` 都改走这条路径，每个请求的数据库开销与 Key 数、企业数和部署数无关。
+- **顺带去掉的开销**：`get_credential_envelope`（每个请求的第一条 SQL）和 `ack_config` 原来也调用 `v1_snapshot`、展开整个快照并做 Base64，现在只读快照行的几个列。
+
+**2. 条件拉取，Key 增量下发（建议 3）。**
+
+- **轮询**：节点每 2–3 秒调用 `config_head`，只返回修订、摘要、Key 序号和本节点已应用的修订；与本地一致就不再读取。变化时 `get_config_snapshot(revision)` 返回存储的原文（bytea），不再附带 manifest 和 Base64。
+- **Key 的处理选了增量下发**，理由：
+  - 撤销的检测是确定的：撤销推进源修订，自动发布生成新修订，下一次 `config_head` 就能看到，与原来全量拉取的时限相同。回查方案要靠正缓存的 TTL 或单独的撤销通道才能发现撤销。
+  - 请求路径上没有额外的数据库往返，也没有可被拿来枚举 Key 的查询入口，不需要负缓存和限速。
+  - 节点内存仍随 Key 数线性增长，但每个 Key 只是一个约 200 字节的条目，10 万个 Key 约 20 MiB，原来是 409 MiB 的完整 JSON。
+- **序号的来源**：序号不是 identity 的全局序号，而是 publication 在发布时按集群分配的。企业、项目、服务账号的状态变化和集群范围变化都会让 Key 进出集群，只有在发布时与上一个 Key 集合求差，才能同时覆盖这些情况；identity 的单个 Key 序号表达不了这些变化。
+- **校验和自愈**：快照的 `key_set` 带 Key 数和集合摘要，节点按净变化更新后核对两者，不一致就从序号 0 重新读取全部 Key。
+- **回滚语义的变化**：回滚恢复旧的模型、部署、路由和策略，Key 集合保持当前。原来回滚会把回滚点之后签发的 Key 一并移出集群。
+- **撤销与范围失效的检测仍然保留**：
+  - `config_head` 对期望快照做与原来全量读取相同的范围检查，集群范围失效（`snapshot_scope_expired`）时直接报错，节点标为不健康。
+  - Key 撤销通过新修订和 Key 增量送达。
+  - 测试覆盖：`test_relay_admission.py::test_polling_reads_only_the_head_and_still_sees_revocation_and_scope_expiry` 用 PostgreSQL 语句日志证明空闲时只调用 `config_head`、不读原文和 Key，并验证新 Key 生效、撤销的 Key 被拒绝、范围收缩后 `/ready` 变为 503；`test_plane.py` 的范围收缩用例对 `config_head`、`get_config_snapshot`、`config_keys` 都断言 `snapshot_scope_expired`。
+
+**3. 合并 `reserve_request` 和 `start_attempt`（建议 5）。**
+
+- **合并调用**：各 `reserve_*` 末尾增加 `aid`、`dep`。`gateway_v1.admit` 在同一事务里预留并登记第一次尝试，企业串行区只进入一次，只有一次往返和一次同步提交。故障转移的后续尝试仍调用 `start_attempt`。
+- **取消语义**：尝试登记失败时整个事务回滚，不留下预留，等价于原来“预留后立即取消”。
+- **重放语义**：同一 rid、aid 和参数重放时，返回已提交的请求并按 `start_attempt` 的规则重放尝试；结果仍未知时，先取消（只有预留时生效），已有尝试则以 `unknown` 关闭进入核对，与原来开始尝试结果未知时相同。
+- **有意保留两步的情况**：WebSocket 的第一轮要先拨通上游，仍然先预留，拨通后再 `start_attempt`，拨号失败时可以干净地取消预留。消息批处理本来就在一个事务里完成两步。
+- **一处可见差异**：客户端恰好在合并调用进行中断开时，第一次尝试已经登记，于是以“未发送”关闭。客户不扣费，该尝试进入 `missing_usage` 成本核对。这与原来“开始尝试后、发送前断开”的路径相同；原来在预留和开始尝试之间断开时可以直接取消。现在发起调用前会先检查客户端，断开的不再预留。
+- **测试覆盖**：`test_indexed_admission.py::test_first_attempt_commits_with_the_reservation` 覆盖整体回滚、重放、错误尝试的拒绝和不可取消。原有的 `lose_gateway_receipts` 故障注入（`test_relay.py`、`test_relay_streams.py`、`test_relay_conversion.py`、`test_relay_compact.py`）现在丢弃的是合并调用提交后的应答，验证了合并后的重放。
+
+**4. 配置刷新改用独立连接（建议 6）。**
+
+- **独立连接**：维护循环使用主连接池之外的一个连接，读 head、原文、Key 增量、凭据包，并写确认。
+- **行锁也要改**：只换连接还不够。每个 gateway 调用的 `v1_principal` 原来对集群行和节点行取 `FOR SHARE`，排队等企业锁的准入会一直持有它。于是发布时更新集群行（`desired_revision`、`distributed_revision`）、节点确认时取节点行的 `FOR UPDATE`，都会被几百个排队的会话挡住。原 10 万 Key 场景的“分发失败”和本次基线重跑时的失败都是这个原因。现在准入只取 `FOR KEY SHARE`，确认取 `FOR NO KEY UPDATE`，发布锁集群行用 `FOR NO KEY UPDATE`，更新非键列不再等排队的准入。
+- **对停用的影响**：停用集群或节点也不再等待在途调用结束，在途调用最多晚几毫秒提交，此后的调用都会被拒绝。
+- **`/ready` 的选择：连接池耗尽时不退出负载均衡。** 理由：
+  - 连接池耗尽几乎总是所有节点共有的数据库争用。摘掉节点不减轻数据库负载，只把请求推给其余节点，还可能让整个集群同时显示为不可用。
+  - 单个请求拿不到连接时等 5 秒返回 503。热点企业由准入名额限流（第 5 项）。
+  - `/ready` 只在配置刷新失败或节点并发已满时返回 503。
+- **测试覆盖**：`test_relay_admission.py::test_refresh_keeps_its_own_connection_when_the_pool_is_exhausted` 用 1 个连接的连接池，让请求等在企业锁上，同时发布新修订，验证节点照常应用并确认、`/ready` 始终为 200。
+
+**5. 连接治理与企业级并发上限（建议 1）。**
+
+- **连接预算**：`NEXUS_RELAY_POOL_SIZE` 的公式写进了 Helm values 和[部署文档](deployment.md#连接预算)。CNPG 的 `max_connections` 按 `节点数 × (连接池 + 1) + API + Worker + 余量` 计算，chart 默认值 16 × 9 + 2 × 5 + 1 × 5 + 30 = 189 ≤ 200。本机没有 helm，没有运行 `helm lint`，只改了 values 和注释。
+- **`statement_timeout`**：改为角色设置。relay-node Job 的 `ensure_gateway_login` 对节点登录执行 `ALTER ROLE … SET statement_timeout = '8s'`，Relay 不再在 `after_connect` 里 `SET`，启动时发现值为 0 就拒绝启动。PgBouncer 的 transaction 模式下也能生效。
+- **现有 `concurrency` 配额不能用来限制排队的会话**：它限制的是在途请求，从预留一直持有到流结束，超限立即返回 429。压到“节点数 × 2”这个量级，就同时把企业的长流并发压低了。
+- **新增的准入名额**：一个集群范围的 Redis 有序集合，只在准入调用期间持有，默认 `NEXUS_RELAY_TENANT_ADMISSIONS=32`。企业的 platform 层 `admission_concurrency` quota policy 覆盖它，沿用 `quota_policies` 和资源数量那套 platform 层、企业范围的约束。没有名额的请求在节点内存中排队，每个节点每个企业只有队首轮询 Redis，等待超过 `NEXUS_RELAY_ADMISSION_WAIT_MS`（5 秒）返回 429，没有预留。
+- **测试覆盖**：`test_relay_admission.py::test_admission_slots_bound_the_sessions_queued_in_the_database` 验证名额为 1 时，3 个并发请求只有 1 个会话进入数据库等锁，另外两个返回 429；platform 层覆盖为 3 后，3 个会话都进入；customer 层的覆盖返回 422。
+
+**6. 慢客户端按写出进展判定交付（建议 7）。** 见上面的设计说明。测试覆盖：`test_relay_admission.py::test_a_slow_reader_that_keeps_reading_receives_and_pays_for_its_stream` 中，客户端持续慢读一个 4 MiB 的流，上游结束后还需要读超过 1 秒的空闲时限，交付判为 `succeeded` 并正常扣费。`test_relay_streams.py::test_slow_downstream_keeps_lease_until_bounded_abort` 中完全停读的客户端仍在空闲时限后中止，进入核对，不扣费。`delivery.rs` 的单元测试用暂停的时钟覆盖进展、停滞和总上限三种情况。

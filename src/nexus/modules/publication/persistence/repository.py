@@ -101,7 +101,9 @@ class PublicationRepository:
 
     async def cluster(self, cid, lock=False):
         rows = await self.rows(
-            CLUSTER + "WHERE c.id=:cid" + (" FOR UPDATE OF c" if lock else ""),
+            # NO KEY UPDATE serializes publishers and cluster changes without waiting for
+            # gateway calls, which hold FOR KEY SHARE on the row (publication.v1_principal).
+            CLUSTER + "WHERE c.id=:cid" + (" FOR NO KEY UPDATE OF c" if lock else ""),
             cid=cid,
         )
         if not rows:

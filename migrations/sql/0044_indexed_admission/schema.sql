@@ -5,11 +5,17 @@ ALTER TABLE publication.gateway_clusters
  ADD COLUMN key_sequence bigint NOT NULL DEFAULT 0 CHECK(key_sequence >= 0);
 ALTER TABLE publication.config_snapshots
  ADD COLUMN key_sequence bigint NOT NULL DEFAULT 0 CHECK(key_sequence >= 0),
- ADD COLUMN required_capabilities text[] NOT NULL DEFAULT '{}',
- ADD CONSTRAINT config_snapshots_key_set
-  CHECK(coalesce((manifest->'key_set'->>'sequence')::bigint, 0) = key_sequence);
+ ADD COLUMN required_capabilities text[] NOT NULL DEFAULT '{}';
+-- Releases stored before this migration name no key set (sequence 0); a release made by it and
+-- kept across a downgrade names its own. Nodes need a new release either way: the keys of a
+-- stored release are not recoverable from its payload.
 UPDATE publication.config_snapshots SET required_capabilities = ARRAY(
- SELECT jsonb_array_elements_text(manifest->'required_capabilities'));
+ SELECT jsonb_array_elements_text(manifest->'required_capabilities')),
+ key_sequence = coalesce((manifest->'key_set'->>'sequence')::bigint, 0);
+UPDATE publication.gateway_clusters c SET key_sequence = coalesce((SELECT max(s.key_sequence)
+ FROM publication.config_snapshots s WHERE s.cluster_id = c.id), 0);
+ALTER TABLE publication.config_snapshots ADD CONSTRAINT config_snapshots_key_set
+ CHECK(coalesce((manifest->'key_set'->>'sequence')::bigint, 0) = key_sequence);
 
 CREATE TABLE publication.cluster_keys(
  cluster_id uuid NOT NULL REFERENCES publication.gateway_clusters,

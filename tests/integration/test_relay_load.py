@@ -546,6 +546,8 @@ async def test_pool_variants(http, admin, tls, binary, service_directory, tmp_pa
         ("pool-4", {"NEXUS_RELAY_POOL_SIZE": "4"}, None),
         ("pool-2", {"NEXUS_RELAY_POOL_SIZE": "2"}, None),
         ("pool-8-deadlock-10s", {}, "10s"),
+        # Without the cluster-wide admission slots (NEXUS_RELAY_TENANT_ADMISSIONS default 32).
+        ("pool-8-ungated", {"NEXUS_RELAY_TENANT_ADMISSIONS": "0"}, None),
     ]
     variants = selected(variants)
     async with load_plane(

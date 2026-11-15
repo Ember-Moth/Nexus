@@ -120,7 +120,7 @@ async def relay_metrics(client):
 
 
 @asynccontextmanager
-async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
+async def running_relay(program, peer, private, cid, settings, ca, proxy_port, extra=None):
     port, metrics_port = free_port(), free_port()
     info = peer.connection.info
     login = f"{info.user}:{quote(info.password, safe='')}"
@@ -135,6 +135,7 @@ async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
         "NEXUS_RELAY_LISTEN": f"127.0.0.1:{port}",
         "NEXUS_RELAY_METRICS_LISTEN": f"127.0.0.1:{metrics_port}",
         "NEXUS_RELAY_LEASE_MS": "600",
+        **(extra or {}),
     }
     secrets = [env["NEXUS_RELAY_PRIVATE_KEY"], info.password, urlsplit(redis_url).password]
     inherited = {k: v for k, v in os.environ.items() if not k.startswith("RELAY_ACCEPTANCE_")}
@@ -680,16 +681,32 @@ async def test_upgrade_in_flight_legacy_attempt(plane, http, admin, migration_se
     peer, _, org, model, dep, a, raw, _ = plane
     config = Config(str(CRATE.parents[1] / "alembic.ini"))
     config.attributes["settings"] = migration_settings
+    await http[2].state.publication.distribute()
+    old = await peer.refresh()
+    assert "relay_profile" not in old["resources"]["deployments"][0]
     await asyncio.to_thread(command.downgrade, config, "0012_gateway_admission")
     try:
-        old = await peer.refresh()
-        assert "relay_profile" not in old["resources"]["deployments"][0]
-        await peer.reserve(raw, model["id"], 4, 6, a.request_id)
+        # A release of that time listed its keys in the manifest.
+        listed = json.dumps(list(peer.keys.values()))
+        admin.execute(
+            """UPDATE publication.config_snapshots s SET manifest=x.m,
+               payload_bytes=convert_to(x.m::text,'UTF8'),
+               sha256=encode(sha256(convert_to(x.m::text,'UTF8')),'hex')
+               FROM (SELECT cluster_id,revision,
+                     jsonb_set(manifest,'{resources,key_verifiers}',%s::jsonb) m
+                     FROM publication.config_snapshots) x
+               WHERE s.cluster_id=x.cluster_id AND s.revision=x.revision""",
+            (listed,),
+        )
+        # The simulator speaks the current protocol; under 0012 the contracts are called as
+        # they were then (reserve without its attempt, start_attempt separately).
+        await peer.call("reserve_request", a.request_id, a.api_key_id, a.model_id, 1, 4, 6)
         attempt = uuid4()
         await peer.call("start_attempt", a.request_id, attempt, 1, UUID(dep["id"]))
     finally:
         await asyncio.to_thread(command.upgrade, config, "head")
-    assert (await peer.refresh()) == old
+    # The stored revision is indexed by the upgrade, so its attempt can still be replayed.
+    assert (await peer.call("config_head"))["revision"] == old["revision"]
     assert (await peer.call("start_attempt", a.request_id, attempt, 1, UUID(dep["id"])))["replayed"]
     assert admin.execute(
         "SELECT expected_usage_format FROM billing.request_attempts WHERE id=%s", (attempt,)

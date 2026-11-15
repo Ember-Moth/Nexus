@@ -64,3 +64,23 @@ BEGIN
  RETURN jsonb_build_object('revision',rev::text,'applied',applied);
 END $function$;
 
+CREATE OR REPLACE FUNCTION publication.v1_principal(for_ack boolean DEFAULT false)
+ RETURNS publication.gateway_principals
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog', 'pg_temp'
+AS $function$
+DECLARE p publication.gateway_principals; cid uuid;
+BEGIN
+ SELECT cluster_id INTO cid FROM publication.gateway_principals WHERE database_role=session_user;
+ PERFORM id FROM publication.gateway_clusters WHERE id=cid AND active FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'gateway_unauthorized'; END IF;
+ IF for_ack THEN
+  SELECT * INTO p FROM publication.gateway_principals WHERE database_role=session_user AND cluster_id=cid AND active FOR UPDATE;
+ ELSE
+  SELECT * INTO p FROM publication.gateway_principals WHERE database_role=session_user AND cluster_id=cid AND active FOR SHARE;
+ END IF;
+ IF NOT FOUND THEN RAISE EXCEPTION 'gateway_unauthorized'; END IF;
+ RETURN p;
+END $function$;
+

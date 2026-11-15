@@ -136,9 +136,14 @@ def rounds():
 
 
 def selected(profiles, name=lambda p: p[0]):
-    """Profiles whose name contains one of the RELAY_LOAD_PROFILES substrings (default all)."""
+    """Profiles whose name contains one of the RELAY_LOAD_PROFILES substrings (default all);
+    a substring ending in ``$`` must match the whole name."""
     wanted = [w for w in os.environ.get("RELAY_LOAD_PROFILES", "").split(",") if w]
-    return [p for p in profiles if not wanted or any(w in name(p) for w in wanted)]
+
+    def match(w, n):
+        return n == w[:-1] if w.endswith("$") else w in n
+
+    return [p for p in profiles if not wanted or any(match(w, name(p)) for w in wanted)]
 
 
 @asynccontextmanager

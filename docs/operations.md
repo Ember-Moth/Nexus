@@ -171,3 +171,34 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 | `relay stopped with an error` | error | 启动或运行失败，进程以非零状态退出 |
 
 生产环境保持依赖库在 `info` 或更高级别。临时开启 `debug` 排查时，依赖库的字段仍被替换，但事件数量会显著增加。
+
+## 数据库迁移
+
+### 锁等待与超时
+
+升级时每个修订各自在一个事务中提交，修订取得的锁在提交时释放，不会一直持有到整次升级结束。降级仍在一个事务内完成：某个修订因保留数据而拒绝降级时，整次降级回滚，不会留下已被删除的上层表。迁移连接在取得迁移咨询锁之后设置：
+
+| 参数 | 默认 | 作用 |
+| --- | --- | --- |
+| `NEXUS_MIGRATION_LOCK_TIMEOUT_MS` | 5000 | 语句等待表锁超过该时长即失败，0 表示无限等待 |
+| `NEXUS_MIGRATION_STATEMENT_TIMEOUT_MS` | 0 | 单条语句的最长执行时间，0 表示不限 |
+
+`lock_timeout` 防止的是锁排队：`ALTER TABLE` 一旦在长事务后面等待 ACCESS EXCLUSIVE 锁，之后所有读写该表的请求都会排在它后面。升级时超时，当前修订回滚，之前的修订已经提交；排查长事务（`pg_stat_activity`）后重新执行 `nexus migrate` 即可从失败的修订继续。在业务流量下升级时，可以把 `NEXUS_MIGRATION_STATEMENT_TIMEOUT_MS` 设为能接受的最长阻塞时间，让意外的长时间重写失败，而不是长时间锁表。
+
+### 0017 需要维护窗口
+
+`0017_request_correlation` 已经发布，不再改写。它在同一个修订内对 5 张审计表执行 `ADD COLUMN` 和非 CONCURRENTLY 的 `CREATE INDEX`：建索引期间持有 SHARE 锁，阻塞对 `billing.audit_events` 等表的写入，Relay 的 `reserve_request` 和 `start_attempt` 会因此停住。尚未执行 0017 的部署：
+
+- 在维护窗口内升级，或先停止 Relay 流量（从负载均衡摘除节点，或发送 SIGTERM 让节点排空，见下文“存活与就绪”），等在途请求和完成上报结束后再执行迁移；
+- 审计表很大时，按行数估算建索引时间，并临时调高 `NEXUS_MIGRATION_LOCK_TIMEOUT_MS`，以免在长事务后面反复超时；
+- 执行完 0017 后恢复流量，其余修订可以照常执行。
+
+已经执行过 0017 的部署无需处理。
+
+### 大表迁移规范
+
+- 一个修订只做一件可以整体回滚的事；数据回填与约束、索引分开成不同的修订。
+- 加列不带易变默认值（PostgreSQL 11 起常量或 `now()` 这类稳定默认值不重写表）；需要非空约束时，先回填，再以 `NOT VALID` 添加 CHECK 约束并单独 `VALIDATE CONSTRAINT`。
+- 业务表上的索引在 `upgrade()` 中用 `nexus.infrastructure.migrations.create_index_concurrently` 建立，删除用 `drop_index_concurrently`；`downgrade()` 不使用它们，以保持降级的原子性。辅助函数会提交修订中之前的语句，在 autocommit 下执行 `CONCURRENTLY`，并在该语句上取消迁移级超时（并发建索引只取 SHARE UPDATE EXCLUSIVE 锁，不阻塞读写，但要等待库内所有更早的事务结束）。中断留下的 INVALID 索引在重跑时会被删除重建。
+- 大批量回填分批提交，每批按主键范围更新，避免长事务和长时间行锁。
+- 会被 Relay 访问的表（`billing.*` 的请求、尝试和审计表，`catalog.deployments` 等）上的锁表操作，按 0017 的方式安排维护窗口或先摘流。

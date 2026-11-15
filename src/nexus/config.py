@@ -196,6 +196,10 @@ class MigrationSettings(BaseSettings):
         env_prefix="NEXUS_", frozen=True, extra="ignore", hide_input_in_errors=True
     )
     migration_database_url: SecretStr
+    # Longest wait for a table lock before a migration statement fails; 0 waits indefinitely.
+    migration_lock_timeout_ms: int = Field(default=5000, ge=0, le=3_600_000)
+    # Longest run time of one migration statement; 0 (the default) does not limit it.
+    migration_statement_timeout_ms: int = Field(default=0, ge=0, le=86_400_000)
 
     @field_validator("migration_database_url")
     @classmethod

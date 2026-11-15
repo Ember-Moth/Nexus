@@ -200,3 +200,62 @@ def test_m3p_upgrade_keeps_existing_manual_funding(migration_settings, admin):
         (funding_id,),
     ).fetchone() == ("manual", None, None, user_id, user_id, Decimal(5), "posted")
     assert admin.execute("SELECT count(*) FROM billing.ledger_entries").fetchone()[0] == 1
+
+
+def test_migrations_fail_fast_instead_of_queueing_behind_a_busy_table(
+    migration_settings, admin, service_directory
+):
+    import json
+    import threading
+    from time import monotonic
+
+    from nexus.shared.storage import SCHEMA_REVISION
+
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.attributes["settings"] = migration_settings.model_copy(
+        update={"migration_lock_timeout_ms": 300}
+    )
+    # 0030 alters billing.request_attempts, which Relay writes through start_attempt.
+    command.downgrade(config, "0029_guardrail_units")
+    data = json.loads((service_directory / "services.json").read_text())
+    outcome = {}
+
+    def upgrade():
+        started = monotonic()
+        try:
+            command.upgrade(config, "head")
+            outcome["error"] = None
+        except Exception as error:
+            outcome["error"] = error
+        outcome["elapsed"] = monotonic() - started
+
+    try:
+        with psycopg.connect(
+            host="127.0.0.1",
+            port=data["pg_port"],
+            dbname=data["database"],
+            user="nexus_local_admin",
+            password=data["admin_password"],
+        ) as holder:
+            # A long transaction holds the table. Without lock_timeout the ALTER would wait for it
+            # and, while waiting, block every later reader and writer of the table.
+            holder.execute("SELECT count(*) FROM billing.request_attempts")
+            worker = threading.Thread(target=upgrade)
+            worker.start()
+            worker.join(30)
+            stuck = worker.is_alive()
+            holder.rollback()
+            worker.join()
+        assert not stuck, "the migration queued behind the lock holder"
+        assert isinstance(outcome["error"], Exception)
+        assert "lock timeout" in str(outcome["error"])
+        assert outcome["elapsed"] < 10
+        # The failed revision rolled back alone; nothing after it ran.
+        assert admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchall() == [
+            ("0029_guardrail_units",)
+        ]
+    finally:
+        command.upgrade(config, "head")
+    assert admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchall() == [
+        (SCHEMA_REVISION,)
+    ]

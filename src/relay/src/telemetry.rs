@@ -50,6 +50,8 @@ pub const LOG_FIELDS: &[&str] = &[
     "purge_id",
     "resource_kind",
     "provider_id",
+    // Number of API keys in an applied snapshot (a count, never key material).
+    "keys",
 ];
 
 /// Replacement value for fields outside [`LOG_FIELDS`].

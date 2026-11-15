@@ -105,9 +105,7 @@ def upgrade():
 
 
 def downgrade():
-    drops = "".join(
-        f"DROP FUNCTION gateway_v1.{s};\n" for s in GATEWAY_PUBLIC + GATEWAY_PRIVATE
-    )
+    drops = "".join(f"DROP FUNCTION gateway_v1.{s};\n" for s in GATEWAY_PUBLIC + GATEWAY_PRIVATE)
     install(
         "gateway_v1",
         "nexus_bridge",

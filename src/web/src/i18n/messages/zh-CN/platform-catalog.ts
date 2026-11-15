@@ -427,7 +427,7 @@ const pc = {
       tools: { label: "工具调用", hint: "模型也需开启工具调用。" },
       continuation: { label: "续接", hint: "只有经过验证的 WebSocket 部署才声明。" },
       cancellation: { label: "原生取消", hint: "只有经过验证的 WebSocket 部署才声明。" },
-      auto_prompt_cache: { label: "自动提示词缓存", hint: "模型需有缓存读取和默认写入维度；节点需登记 relay.prompt-cache.v1。" },
+      auto_prompt_cache: { label: "自动提示词缓存", hint: "模型需有缓存读取和默认写入维度；节点需登记 relay.prompt-cache.v1。开启后，自动产生的缓存写入按写入价计入客户费用。" },
       web_search_ceiling: { label: "Web Search 次数上限", hint: "每个请求的搜索次数上限，0 表示关闭。模型需有 web_search_requests 维度。" },
       web_search_variant: { label: "Web Search 版本", hint: "Preview 仅用于开启了搜索的 Responses 部署。" },
       file_search_ceiling: { label: "File Search 次数上限", hint: "0 表示关闭。仅原生 Responses 且开启工具；模型需有检索和存储维度。" },

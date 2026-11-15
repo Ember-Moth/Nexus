@@ -46,9 +46,20 @@ export const KNOWN_CAPABILITIES = [
   "relay.file-search.v1",
   "relay.claude-execution.v1",
   "relay.openai-containers.v1",
+  "relay.provider-features.v1",
+  "relay.stored-responses.v1",
+  "relay.background-responses.v1",
+  "relay.conversations.v1",
+  "relay.files.v1",
+  "relay.vector-stores.v1",
+  "relay.message-batches.v1",
+  "relay.code-execution.v1",
+  "relay.remote-mcp.v1",
+  "relay.web-fetch.v1",
 ];
 
 const BASE64_KEY = /^[A-Za-z0-9+/]{43}=$/;
+const SCOPES = ["listed", "all", "personal"] as const;
 
 function MultiCheck({
   items,
@@ -101,6 +112,8 @@ const clusterSchema = z.object({
   rotateKey: z.boolean(),
   graceSeconds: z.coerce.number().int().min(0).max(86400),
   active: z.boolean(),
+  organizationScope: z.enum(SCOPES),
+  autoPublish: z.boolean(),
 });
 type ClusterValues = z.input<typeof clusterSchema>;
 type ClusterParsed = z.output<typeof clusterSchema>;
@@ -135,10 +148,15 @@ export function ClusterDialog({
       rotateKey: !editing,
       graceSeconds: 3600,
       active: editing?.active ?? true,
+      organizationScope: editing?.organization_scope ?? "listed",
+      autoPublish: editing?.auto_publish ?? true,
     },
   });
   const rotateKey = useWatch({ control: form.control, name: "rotateKey" });
+  const scope = useWatch({ control: form.control, name: "organizationScope" });
   const [keyError, setKeyError] = useState(false);
+  const [orgsError, setOrgsError] = useState(false);
+  const paused = editing?.auto_publish_status.paused;
 
   const save = useMutation({
     mutationFn: async (values: ClusterParsed) => {
@@ -148,9 +166,12 @@ export function ClusterDialog({
             body: {
               name: values.name,
               region: values.region,
-              organization_ids: values.organizationIds,
+              organization_scope: values.organizationScope,
+              // Rule-based scopes resolve organizations at each release and take no list.
+              organization_ids: values.organizationScope === "listed" ? values.organizationIds : [],
               deployment_ids: values.deploymentIds,
               public_key: values.publicKey,
+              auto_publish: values.autoPublish,
             },
           }),
         );
@@ -163,8 +184,11 @@ export function ClusterDialog({
           },
           body: {
             active: values.active,
-            organization_ids: values.organizationIds,
+            organization_scope: values.organizationScope,
+            ...(values.organizationScope === "listed" ? { organization_ids: values.organizationIds } : {}),
             deployment_ids: values.deploymentIds,
+            // true also resumes automatic publication paused by a rollback.
+            auto_publish: values.autoPublish,
             // Only read by the API when public_key changes.
             key_grace_seconds: values.graceSeconds,
             ...(values.rotateKey ? { public_key: values.publicKey } : {}),
@@ -186,6 +210,11 @@ export function ClusterDialog({
       return;
     }
     setKeyError(false);
+    if (values.organizationScope === "listed" && values.organizationIds.length === 0) {
+      setOrgsError(true);
+      return;
+    }
+    setOrgsError(false);
     save.mutate(values);
   });
 
@@ -220,16 +249,48 @@ export function ClusterDialog({
           </div>
           <Controller
             control={form.control}
-            name="organizationIds"
+            name="organizationScope"
             render={({ field }) => (
-              <MultiCheck
-                label={t("clusters.organizations")}
-                items={(organizations.data ?? []).map((org) => ({ id: org.id, label: org.label }))}
-                value={field.value}
-                onChange={field.onChange}
-              />
+              <fieldset className="grid gap-1.5">
+                <legend className="mb-1.5 text-sm font-medium">{t("clusters.scopeLabel")}</legend>
+                <RadioGroup value={field.value} onValueChange={field.onChange} className="grid gap-1.5">
+                  {SCOPES.map((value) => (
+                    <label
+                      key={value}
+                      htmlFor={`cluster-scope-${value}`}
+                      className="flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2 has-[[data-state=checked]]:border-foreground/40 has-[[data-state=checked]]:bg-muted/40"
+                    >
+                      <RadioGroupItem id={`cluster-scope-${value}`} value={value} className="mt-0.5" />
+                      <span className="flex flex-col gap-0.5">
+                        <span className="text-sm font-medium">
+                          {t(`clusters.scopes.${value}.label`)} <code className="font-mono text-[11px] font-normal text-muted-foreground">{value}</code>
+                        </span>
+                        <span className="text-xs text-muted-foreground">{t(`clusters.scopes.${value}.hint`)}</span>
+                      </span>
+                    </label>
+                  ))}
+                </RadioGroup>
+                {editing ? <span className="text-xs text-muted-foreground">{t("clusters.scopeNarrowing")}</span> : null}
+              </fieldset>
             )}
           />
+          {scope === "listed" ? (
+            <Controller
+              control={form.control}
+              name="organizationIds"
+              render={({ field }) => (
+                <div className="grid gap-1">
+                  <MultiCheck
+                    label={t("clusters.organizations")}
+                    items={(organizations.data ?? []).map((org) => ({ id: org.id, label: org.label }))}
+                    value={field.value}
+                    onChange={field.onChange}
+                  />
+                  {orgsError ? <span className="text-xs text-destructive">{t("clusters.organizationsRequired")}</span> : null}
+                </div>
+              )}
+            />
+          ) : null}
           <Controller
             control={form.control}
             name="deploymentIds"
@@ -240,6 +301,24 @@ export function ClusterDialog({
                 value={field.value}
                 onChange={field.onChange}
               />
+            )}
+          />
+          <Controller
+            control={form.control}
+            name="autoPublish"
+            render={({ field }) => (
+              <div className="flex items-start justify-between gap-4 rounded-md border px-3 py-2.5">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <Label htmlFor="cluster-auto-publish">{t("clusters.autoPublish")}</Label>
+                  <span className="text-xs text-muted-foreground">{t("clusters.autoPublishHint")}</span>
+                  {paused ? (
+                    <span className="text-xs text-amber-700">
+                      {t("clusters.autoPublishPausedHint", { revision: paused.revision })}
+                    </span>
+                  ) : null}
+                </div>
+                <Switch id="cluster-auto-publish" checked={field.value} onCheckedChange={field.onChange} className="mt-0.5" />
+              </div>
             )}
           />
           {editing ? (
@@ -320,7 +399,7 @@ export function NodeDialog({ clusterId, node, onClose }: { clusterId: string; no
     defaultValues: {
       nodeId: node?.node_id ?? crypto.randomUUID(),
       databaseRole: node?.database_role ?? "",
-      capabilities: (node?.capabilities ?? ["reservation.v1", "usage-events.v1", "relay.native.v1"]).filter((c) => known.has(c)),
+      capabilities: (node?.capabilities ?? ["reservation.v1", "usage-events.v1", "relay.native.v1", "relay.provider-features.v1"]).filter((c) => known.has(c)),
       extra: (node?.capabilities ?? []).filter((c) => !known.has(c)).join(", "),
       active: node?.active ?? true,
     },
@@ -473,6 +552,9 @@ export function ReleaseDialog({
                   onChange={(event) => setRollback(event.target.value)}
                   className="h-8 w-32 font-mono"
                 />
+              ) : null}
+              {mode === "rollback" && cluster.auto_publish ? (
+                <span className="text-xs text-amber-700">{t("clusters.rollbackPausesAuto")}</span>
               ) : null}
             </span>
           </Label>

@@ -10,7 +10,7 @@ import { useMemo, useState } from "react";
 import { DataTable } from "@/components/data-table";
 import { EmptyState, ErrorAlert, LoadingRows } from "@/components/feedback";
 import { LoadMoreFooter, PageContainer, PageHeader } from "@/components/page";
-import { useWorkspace } from "@/components/shell/workspace";
+import { useUserLabels } from "@/components/platform-finance/scope";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -20,6 +20,7 @@ import { useCursorList } from "@/lib/api/hooks";
 import type { components } from "@/lib/api/schema";
 import { formatDateTime, shortId } from "@/lib/format";
 
+import { AutoPublishCard, useScopeSummary } from "../auto-publish";
 import { ClusterDialog, NodeDialog, ReleaseDialog } from "../cluster-dialogs";
 import { ReleaseSheet } from "../release-sheet";
 
@@ -28,7 +29,8 @@ type ReleaseRecord = components["schemas"]["ReleaseRecord"];
 
 export default function ClusterDetailPage() {
   const t = useT();
-  const { me } = useWorkspace();
+  const userLabel = useUserLabels();
+  const scopeSummary = useScopeSummary();
   const { clusterId } = useParams<{ clusterId: string }>();
   const [dialog, setDialog] = useState<"edit" | "node" | "release" | null>(null);
   const [editingNode, setEditingNode] = useState<PrincipalView | null>(null);
@@ -150,17 +152,17 @@ export default function ClusterDetailPage() {
       },
       {
         header: t("clusters.historyColumns.actor"),
-        accessorKey: "actor_id",
-        // Automated releases may have no person behind them.
+        accessorKey: "initiator",
+        // Releases by the auto-publisher have no person behind them.
         cell: ({ row }) =>
-          row.original.actor_id === null || row.original.actor_id === undefined ? (
+          row.original.initiator === "auto_publisher" || !row.original.actor_id ? (
             <StatusBadge tone="info">{t("clusters.systemActor")}</StatusBadge>
-          ) : row.original.actor_id === me.user.id ? (
-            me.user.login
           ) : (
-            <code className="font-mono text-xs" title={row.original.actor_id}>
-              {shortId(row.original.actor_id)}
-            </code>
+            (userLabel(row.original.actor_id) ?? (
+              <code className="font-mono text-xs" title={row.original.actor_id}>
+                {shortId(row.original.actor_id)}
+              </code>
+            ))
           ),
       },
       {
@@ -198,7 +200,7 @@ export default function ClusterDetailPage() {
         ),
       },
     ],
-    [t, me.user.id, me.user.login],
+    [t, userLabel],
   );
 
   if (cluster.error) {
@@ -227,7 +229,7 @@ export default function ClusterDetailPage() {
                 {data.active ? t("clusters.active") : t("clusters.paused")}
               </StatusBadge>
             }
-            description={`${data.region} · ${t("clusters.scope", { orgs: data.organization_ids.length, deployments: data.deployment_ids.length })} · ${t("clusters.columns.key")} v${data.key_version}`}
+            description={`${data.region} · ${scopeSummary(data)} · ${t("clusters.columns.key")} v${data.key_version}`}
             actions={
               <>
                 <Button variant="outline" onClick={() => setDialog("edit")}>
@@ -257,6 +259,7 @@ export default function ClusterDetailPage() {
               </span>
             </div>
           </section>
+          <AutoPublishCard cluster={data} etag={cluster.data?.etag} />
         </>
       )}
       <Tabs defaultValue="nodes">

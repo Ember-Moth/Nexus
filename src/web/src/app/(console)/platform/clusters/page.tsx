@@ -21,11 +21,13 @@ import { call, nexus } from "@/lib/api/client";
 import { useCursorList } from "@/lib/api/hooks";
 import type { GatewayCluster } from "@/lib/api/types";
 
+import { AutoPublishBadge, useScopeSummary } from "./auto-publish";
 import { ClusterDialog, NodeDialog, ReleaseDialog } from "./cluster-dialogs";
 import { ReleaseSheet } from "./release-sheet";
 
 export default function ClustersPage() {
   const t = useT();
+  const scopeSummary = useScopeSummary();
   const [viewing, setViewing] = useState<{ cluster: GatewayCluster; revision: string } | null>(null);
   const [editing, setEditing] = useState<GatewayCluster | "new" | null>(null);
   const [registering, setRegistering] = useState<GatewayCluster | null>(null);
@@ -79,13 +81,14 @@ export default function ClustersPage() {
         ),
       },
       {
+        id: "auto",
+        header: t("clusters.columns.auto"),
+        cell: ({ row }) => <AutoPublishBadge cluster={row.original} />,
+      },
+      {
         id: "scope",
         header: t("clusters.columns.scope"),
-        cell: ({ row }) =>
-          t("clusters.scope", {
-            orgs: row.original.organization_ids.length,
-            deployments: row.original.deployment_ids.length,
-          }),
+        cell: ({ row }) => scopeSummary(row.original),
       },
       {
         header: t("clusters.columns.key"),
@@ -125,7 +128,7 @@ export default function ClustersPage() {
         ),
       },
     ],
-    [t],
+    [t, scopeSummary],
   );
 
   return (

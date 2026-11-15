@@ -554,4 +554,18 @@ Python 模拟器的每个节点只有一个连接，同一时刻只处理一个�
 - **Relay 不预热连接池**：冷启动后的第一个突发会同时建立全部连接。部署环境的监听队列较大，问题不明显，但可以考虑把 `min_connections` 设为连接池大小。
 - **Key 首次读取的内存**：节点按页取回全部变化后才应用，10 万个 Key 时 RSS 峰值约 80 MiB。改为逐页应用可以再降一些。
 
+### 检查结果
+
+- **Python**：`uv run ruff check .`、`uv run ruff format --check .` 通过；`uv run pytest -m 'not integration' -q` 201 个通过。
+- **Rust**：在 `src/relay` 下，`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings` 通过；`cargo test --locked` 118 个通过。
+- **迁移**：`uv run alembic heads` 只有一个 head `0044_indexed_admission`。
+- **完整集成测试**：`LC_ALL=en_US.UTF-8 TMPDIR=/tmp/nxa uv run python scripts/run_integration.py`，294 个通过、15 个跳过（需要真实上游或压测开关），1 个失败。
+  - 失败的是 `test_relay_failover.py::test_failover_to_backup_deployment`：上游在 SSE 流中途断开时，客户端在收到第一行之前就读到了连接重置。
+  - 同一测试在前一次完整运行中通过，单独重跑两次均为 6/6 通过，判定为偶发。
+  - 这一段的中断写出逻辑本次没有改动。
+- **前一次完整运行**：除上述测试外，另有两个失败，都是测试本身没有跟上这次的改动，已经修正，并用相关测试文件复核通过（21 个）：
+  - WebSocket 的第一轮仍会调用 `start_attempt`；
+  - 降级到旧 schema 后需要在 manifest 中列出 Key。
+- **Helm**：本机没有 helm，没有运行 `helm lint`，只改了 values 和注释。
+
 原始数据：`results.jsonl` 和各轮日志保存在会话共享目录的 `admission-perf-load-data/` 下。

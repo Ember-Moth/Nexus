@@ -244,7 +244,7 @@ async fn operation(
             .map_err(|_| Failure::unavailable())?;
         seg.pop().push("conversations");
         if let Some(pid) = &pid {
-            seg.push(pid).extend(path[1..2].iter().copied());
+            seg.push(pid).extend(path.get(1).copied());
             if let Some(item) = path.get(2) {
                 // Item IDs were issued bound to this key; the conversation is the key's own.
                 seg.push(node.ownership.open_id(kid, item).unwrap_or(item));

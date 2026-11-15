@@ -8,7 +8,7 @@ use super::Node;
 use crate::{
     control::{
         limits::{Admission, Lease, LimitError, Limits},
-        snapshot::{Index, Key},
+        snapshot::{Index, Key, Metric, Quota},
     },
     protocol::tokens::ReservationBounds,
     request::Failure,
@@ -89,8 +89,9 @@ impl Drop for Admitted {
     }
 }
 
-/// Admit a resource API call. It counts toward the organization's RPM and concurrency
-/// policies like a generation, without tokens; the lease is released when the call ends.
+/// Admit a resource API call. It counts one request toward the organization's RPM policies.
+/// Concurrency is bounded by the node's organization slots: the Redis concurrency quota
+/// governs generations, which metered resource calls such as batches lease separately.
 pub(super) async fn admit(node: &Node, index: &Index, key: &Key) -> Result<Admitted, Failure> {
     let tenant = node
         .tenant_requests
@@ -101,6 +102,12 @@ pub(super) async fn admit(node: &Node, index: &Index, key: &Key) -> Result<Admit
         .clone()
         .try_acquire_owned()
         .map_err(|_| Failure::unavailable())?;
+    let rpm: Vec<Quota> = index
+        .quotas
+        .iter()
+        .filter(|q| matches!(q.metric, Metric::Rpm))
+        .cloned()
+        .collect();
     let lease = node
         .limits
         .acquire(Admission {
@@ -119,7 +126,7 @@ pub(super) async fn admit(node: &Node, index: &Index, key: &Key) -> Result<Admit
                 inputs: 0,
                 outputs: 0,
             },
-            quotas: &index.quotas,
+            quotas: &rpm,
             ttl_ms: node.lease_ms,
         })
         .await

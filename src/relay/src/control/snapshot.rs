@@ -105,7 +105,7 @@ impl Metric {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Quota {
     pub id: Uuid,
     pub organization_id: Uuid,

@@ -522,10 +522,10 @@ P5 报告的“每笔 7–13 ms CPU、积压时每秒 45–143 笔”由以下�
 
 Relay 在 `upstream::refusal` 中把上游的 429、503、529 分成三类：`Declined`（厂商文档列明的准入拒绝，例如 OpenAI 的 `rate_limit_exceeded`、`server_is_overloaded`，Anthropic 的 `rate_limit_error`、`overloaded_error`，Bedrock 的 `ThrottlingException`），`Refused`（信封中类型未列明的 429），`Unknown`（其他，例如中间层的 502）。连接没有建立、签名失败也算没有发出。但上报时，`Declined` 和 `Refused` 的尝试都记为 `outcome: "failed"`、`raw_usage: null`，与执行中出错的失败尝试（上游 5xx 错误信封、`response.failed`、Bedrock 错误）没有区别；`Unknown` 记为 `unknown`。所以控制平面不能只凭 `failed` 判定“没有执行”。
 
-可以作为证明的是尝试序列：Relay 只在 `Opened::Declined` 分支调用 `fail_over`，只有 `fail_over` 会开始序号大于 1 的尝试，而且先提交新尝试、再上报旧尝试的 `attempt.finished`。因此，一个没有用量的 `failed` 尝试只要之后还有同一请求的尝试，就是 Relay 证明了没有执行的尝试。Worker 对这种尝试按零成本确认（归一化规则 `relay.declined/1`，成本 0，写审计 `attempt.cost_confirmed`），不再开 `missing_usage` 核对项。这条约定写进了[协议](plane-protocol.md#用量事件)。另外新增了尝试结果 `declined`，`raw_usage` 只能为 null 或全零，Worker 同样按零成本确认；Relay 目前还不会发送它（Relay 不在本次修改范围内）。
+可以作为证明的是尝试序列：Relay 只在 `Opened::Declined` 分支调用 `fail_over`，只有 `fail_over` 会开始序号大于 1 的尝试，而且先提交新尝试、再上报旧尝试的 `attempt.finished`。因此，一个没有用量的 `failed` 尝试只要之后还有同一请求的尝试，就是 Relay 证明了没有执行的尝试。Worker 对这种尝试按零成本确认（归一化规则 `relay.declined/1`，成本 0，写审计 `attempt.cost_confirmed`），不再开 `missing_usage` 核对项。这条约定写进了[协议](plane-protocol.md#用量事件)。另外新增了尝试结果 `declined`，`raw_usage` 只能为 null 或全零，Worker 同样按零成本确认；Relay 当时还不会发送它（Relay 不在本次修改范围内），之后已改为发送，见下。
 
 仍然逐个核对的情况：
-- 最后一次尝试被拒绝（没有备用部署、达到 `max_attempts`、故障转移预算用完）：线上仍是 `failed` 加 null，无法与执行后的失败区分。Relay 对这类尝试改报 `declined` 后，这部分核对也会消失。
+- 最后一次尝试被拒绝（没有备用部署、达到 `max_attempts`、故障转移预算用完）：线上仍是 `failed` 加 null，无法与执行后的失败区分。已修改：Relay 现在对这类尝试（以及已登记但没有发出的备用尝试）上报 `declined`，这部分核对已经消失。
 - `Refused`、执行中出错、未知结果：可能已经执行并计费，需要按尝试对照账单。
 
 按部署和时段汇总这些剩余事项没有实现。现在每个核对事项都绑定一个尝试，财务用这个尝试的账单（`confirm_cost`）或用量（`supplement_usage`）关闭它；汇总需要新的批量决定动作，会改动管理 API、OpenAPI 快照和控制台，超出结算侧。主部署持续返回 429 且有备用部署时（P5 的场景），新逻辑下已经没有剩余事项。
@@ -544,5 +544,5 @@ Relay 在 `upstream::refusal` 中把上游的 429、503、529 分成三类：`De
 
 - **钱包核对持有钱包行锁。** Worker 每小时对每个钱包运行一次 `check_account`：先 `FOR UPDATE` 锁住钱包，再把该钱包的全部流水和请求读进 Python 核对。压测中一个钱包有几千笔请求时，这一步要约 1 秒，期间这家企业的预留和结算都要等待；历史越长越慢。这次没有修改，建议改为在快照中核对、不持有钱包锁。
 - **剩余的成本核对事项没有按部署和时段汇总。** 理由见[故障转移的核对事项](#故障转移的核对事项)。
-- **Relay 还不发送 `declined`。** 最后一次被拒绝的尝试仍会各开一个核对事项，需要 Relay 在 `upstream::refusal` 判为 `Declined` 或请求没有发出时上报 `declined`。
+- **Relay 还不发送 `declined`。** 最后一次被拒绝的尝试仍会各开一个核对事项，需要 Relay 在 `upstream::refusal` 判为 `Declined` 或请求没有发出时上报 `declined`。已修改：Relay 现在上报 `declined`。
 - **主机负载。** 优化后的压测与另一个会话的测试同时运行，load1 比优化前高 1–4（control 组第一次运行时达到 12–29，已重跑），准入相关的数字因此偏高；Worker 相关的数字（清空速度、Worker CPU）差距远大于主机负载的影响。`helm lint` 没有运行：本机没有 helm。

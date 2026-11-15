@@ -84,6 +84,24 @@ pub enum Refusal {
     Unknown,
 }
 
+/// The `attempt.finished` outcome of an attempt the upstream provably did not execute: a
+/// documented rejection ([`Refusal::Declined`]), or a request that never left this node
+/// ([`UpstreamError::unsent`], or a committed attempt that was never sent). The control plane
+/// confirms its cost as zero instead of opening a cost review (docs/plane-protocol.md).
+pub const DECLINED: &str = "declined";
+
+impl Refusal {
+    /// The `attempt.finished` outcome this answer proves. A refused 429 delivered nothing, but
+    /// does not prove that nothing ran, so it stays `failed` and its missing usage is reviewed.
+    pub fn outcome(self) -> &'static str {
+        match self {
+            Self::Declined => DECLINED,
+            Self::Refused => "failed",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 // Anthropic: https://platform.claude.com/docs/en/api/errors documents 429 rate_limit_error
 // (rate, tier spend cap, workspace spend limit) and 529 overloaded_error. Overloaded errors are
 // also accepted with 503, as the SSE error event uses the same type.

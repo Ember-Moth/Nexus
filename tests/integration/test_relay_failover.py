@@ -358,10 +358,15 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             assert result.status_code == 503 and result.json() == OVERLOADED
             rid = ledger.new()
             await settled(2)
+            ((a1, _, _, cost1),) = ledger.attempts(rid)
             assert [a[2] for a in ledger.attempts(rid)] == [first]
             assert ledger.closed(rid)["delivery_outcome"] == "upstream_failed"
             assert second_upstream.received == []
             assert (await ledger.status(rid))["reservation_state"] == "released"
+            # The vendor documents the 503 overloaded_error as declined before execution.
+            assert ledger.finished(rid)[a1]["outcome"] == "declined"
+            assert cost1 == Decimal(0) and ledger.reviews(rid) == {}
+            assert ledger.rules(rid) == {a1: "relay.declined/1"}
 
         # Following the defaults again, the snapshot carries no policy; nodes use their own.
         await release_policy(http, cid, max_attempts=None)
@@ -386,7 +391,7 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             (a1, seq1, dep1, cost1), (a2, seq2, dep2, cost2) = ledger.attempts(rid)
             assert (seq1, dep1, seq2, dep2) == (1, first, 2, second)
             facts = ledger.finished(rid)
-            assert facts[a1]["outcome"] == "failed" and facts[a1]["raw_usage"] is None
+            assert facts[a1]["outcome"] == "declined" and facts[a1]["raw_usage"] is None
             assert facts[a2]["outcome"] == "succeeded"
             assert ledger.closed(rid) == {
                 "delivery_outcome": "succeeded",
@@ -398,8 +403,7 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             assert status["reservation_state"] == "captured"
             assert ledger.debits(rid) == [(Decimal(-5),)]
             # Each attempt's cost stands alone: the backup's priced usage, and zero for the
-            # primary. The Relay fails over only from an attempt the vendor declined before
-            # executing it, so its missing usage is a proven zero and needs no review.
+            # primary, which the vendor declined before executing it: no review needed.
             assert cost1 == Decimal(0) and cost2 == Decimal("1.0")
             assert ledger.reviews(rid) == {}
             assert ledger.rules(rid) == {a1: "relay.declined/1", a2: "anthropic.messages.v1/1"}
@@ -433,9 +437,9 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             rid = ledger.new()
             await settled(3)
             assert first_upstream.count("fail") == 1 and second_upstream.count("fail") == 1
-            (a1, _, dep1, _), (a2, _, dep2, _) = ledger.attempts(rid)
+            (a1, _, dep1, cost1), (a2, _, dep2, cost2) = ledger.attempts(rid)
             assert (dep1, dep2) == (first, second)
-            assert {f["outcome"] for f in ledger.finished(rid).values()} == {"failed"}
+            assert {f["outcome"] for f in ledger.finished(rid).values()} == {"declined"}
             assert ledger.closed(rid) == {
                 "delivery_outcome": "upstream_failed",
                 "attempt_ids": [str(a1), str(a2)],
@@ -444,10 +448,10 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             status = await ledger.status(rid)
             assert status["reservation_state"] == "released" and ledger.debits(rid) == []
             assert status["charged_amount"] == "0.000000000000"
-            # The backup's 529 is the last attempt: nothing on the wire proves it was declined,
-            # so only it keeps a cost review. The primary it failed over from costs zero.
-            assert ledger.reviews(rid) == {a2: "missing_usage"}
-            assert ledger.rules(rid)[a1] == "relay.declined/1"
+            # The backup's 529 at the attempt limit is a documented rejection too: neither
+            # attempt ran, so both cost zero and no review is opened.
+            assert cost1 == cost2 == Decimal(0) and ledger.reviews(rid) == {}
+            assert ledger.rules(rid) == {a1: "relay.declined/1", a2: "relay.declined/1"}
 
             result = await hanging
             assert result.status_code == 502
@@ -466,7 +470,7 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             await settled(3)
             (a1, _, dep1, _), (a2, _, dep2, _) = ledger.attempts(rid)
             assert (dep1, dep2) == (first, second)
-            assert ledger.finished(rid)[a1]["outcome"] == "failed"
+            assert ledger.finished(rid)[a1]["outcome"] == "declined"
             assert ledger.closed(rid)["delivered_attempt_id"] == str(a2)
             assert ledger.debits(rid) == [(Decimal(-5),)]
 
@@ -528,7 +532,7 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
                 assert secret not in logs
 
         # One attempt sends no backup, but a refused connection was provably never sent:
-        # the attempt fails and the reservation is released instead of waiting for review.
+        # the attempt is declined, the reservation is released and its cost is a proven zero.
         await release_policy(http, cid, max_attempts=1)
         async with relay() as client:
             calls = len(second_upstream.received)
@@ -536,10 +540,15 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             assert result.status_code == 502
             rid = ledger.new()
             await settled(2)
+            ((a1, _, _, cost1),) = ledger.attempts(rid)
             assert [a[2] for a in ledger.attempts(rid)] == [first]
             assert ledger.closed(rid)["delivery_outcome"] == "upstream_failed"
             assert (await ledger.status(rid))["reservation_state"] == "released"
             assert len(second_upstream.received) == calls
+            fact = ledger.finished(rid)[a1]
+            assert fact["outcome"] == "declined" and fact["raw_usage"] is None
+            assert cost1 == Decimal(0) and ledger.reviews(rid) == {}
+            assert ledger.rules(rid) == {a1: "relay.declined/1"}
         await second_upstream.stop()
 
 
@@ -608,11 +617,13 @@ async def test_failover_rechecks_after_attempt_commit(
                     ledger.closed(rid)["delivered_attempt_id"] is None and ledger.debits(rid) == []
                 )
                 assert ledger.closed(rid)["delivery_outcome"] == "upstream_failed"
-                assert ledger.finished(rid)[a2]["outcome"] == (
-                    "cancelled" if gate == "disconnect" else "failed"
-                )
+                # The primary declined and the committed backup was never sent, whatever
+                # stopped it: both are proven zeros without a review.
+                assert {f["outcome"] for f in ledger.finished(rid).values()} == {"declined"}
                 assert (await ledger.status(rid))["reservation_state"] == "released"
                 assert ledger.finished(rid)[a2]["raw_usage"] is None
+                assert ledger.reviews(rid) == {}
+                assert ledger.rules(rid) == {a1: "relay.declined/1", a2: "relay.declined/1"}
     finally:
         await one.stop()
         await two.stop()
@@ -725,6 +736,9 @@ async def test_documented_quota_rejections_switch_and_unknown_429_releases(
                 assert [a[2] for a in ledger.attempts(rid)] == [first, second]
                 assert ledger.closed(rid)["delivered_attempt_id"] is not None
                 assert (await ledger.status(rid))["reservation_state"] == "captured"
+                a1 = ledger.attempts(rid)[0][0]
+                assert ledger.finished(rid)[a1]["outcome"] == "declined"
+                assert ledger.reviews(rid) == {}
 
                 result = await client.post(
                     "/v1/responses", headers=hdr, json=body | {"input": "novel"}
@@ -740,6 +754,11 @@ async def test_documented_quota_rejections_switch_and_unknown_429_releases(
                 assert ledger.closed(rid)["delivery_outcome"] == "upstream_failed"
                 assert ledger.debits(rid) == []
                 assert (await ledger.status(rid))["reservation_state"] == "released"
+                # Without a documented type the 429 is no proof that nothing ran: the attempt
+                # stays failed and its missing usage goes to review.
+                a1 = ledger.attempts(rid)[0][0]
+                assert ledger.finished(rid)[a1]["outcome"] == "failed"
+                assert ledger.reviews(rid) == {a1: "missing_usage"}
     finally:
         await one.stop()
         await two.stop()

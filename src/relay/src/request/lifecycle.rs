@@ -229,10 +229,11 @@ impl Run {
         self.reservation.usage_format
     }
     /// Commit the next attempt of this request, bound to `next`, after the current attempt
-    /// provably did not execute. The rejected attempt then reports its own `attempt.finished`;
-    /// only the close lists every attempt. On `Err` no new attempt can be sent and the caller
-    /// finishes this run. An attempt committed with an unknown reply is reported as failed
-    /// and listed by that close; when even its existence is unknown the close is withheld.
+    /// provably did not execute. The rejected attempt then reports its own `attempt.finished`
+    /// as `declined`; only the close lists every attempt. On `Err` no new attempt can be sent
+    /// and the caller finishes this run. An attempt committed with an unknown reply was never
+    /// sent: it is reported as declined and listed by that close; when even its existence is
+    /// unknown the close is withheld.
     pub async fn fail_over(
         &mut self,
         next: Target,
@@ -274,7 +275,7 @@ impl Run {
                             v.iter().any(|r| r["id"] == attempt.attempt.to_string())
                         }) {
                             attempt
-                                .failed(
+                                .declined(
                                     &node.db,
                                     None,
                                     UsageEvidence {
@@ -295,7 +296,7 @@ impl Run {
             .spent
             .zip(confirmed_tokens(self.reservation.endpoint, &evidence))
             .map(|(a, b)| a + b);
-        self.attempt.failed(&node.db, response_id, evidence).await;
+        self.attempt.declined(&node.db, response_id, evidence).await;
         // The request's tally follows its open attempt and is recorded once, at the close.
         attempt.tally = std::mem::take(&mut self.attempt.tally);
         attempt.tally.deployment = Some(next.deployment);
@@ -414,8 +415,26 @@ impl Run {
 fn delivery(outcome: &str, written: bool) -> &'static str {
     match (outcome, written) {
         ("succeeded", true) => "succeeded",
-        ("failed", _) => "upstream_failed",
+        ("failed" | "declined", _) => "upstream_failed",
         ("cancelled", true) => "client_cancelled",
         _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::delivery;
+    use crate::upstream::DECLINED;
+
+    #[test]
+    fn declined_and_failed_attempts_deliver_upstream_failed() {
+        for written in [true, false] {
+            assert_eq!(delivery(DECLINED, written), "upstream_failed");
+            assert_eq!(delivery("failed", written), "upstream_failed");
+            assert_eq!(delivery("unknown", written), "unknown");
+        }
+        assert_eq!(delivery("succeeded", true), "succeeded");
+        assert_eq!(delivery("cancelled", true), "client_cancelled");
+        assert_eq!(delivery("succeeded", false), "unknown");
     }
 }

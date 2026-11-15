@@ -18,7 +18,7 @@ use crate::{
         usage::UsageEvidence,
     },
     server::Node,
-    upstream::{ErrorContract, Refusal, Reply, UpstreamError, refusal},
+    upstream::{DECLINED, ErrorContract, Refusal, Reply, UpstreamError, refusal},
 };
 use http::StatusCode;
 use std::{sync::Arc, time::Duration};
@@ -209,8 +209,9 @@ enum Opened {
     /// The existing delivery path handles this response, including non-retryable errors.
     Answer(reqwest::Response),
     Buffered(Reply),
-    /// The upstream provably did not execute the generation. A declined status keeps its
-    /// buffered reply as cost evidence and as the client's error if no attempt follows.
+    /// The upstream provably did not execute the generation; the attempt reports
+    /// [`DECLINED`]. A declined status keeps its buffered reply as cost evidence and as the
+    /// client's error if no attempt follows.
     Declined(Option<Reply>, FailoverReason),
     /// No usable answer; the generation may have executed or the client has left.
     Lost,
@@ -362,12 +363,11 @@ async fn open(
             } else {
                 Refusal::Unknown
             };
+            reply.outcome = refusal.outcome();
             if refusal == Refusal::Unknown {
-                reply.outcome = "unknown";
                 return Opened::Buffered(reply);
             }
             // Nothing was delivered: the customer is not charged for this attempt.
-            reply.outcome = "failed";
             if request.interpreter.is_some() {
                 let _ = node
                     .db
@@ -580,15 +580,11 @@ pub async fn run(
                                         let _ = sender.send(Err(Failure::upstream()));
                                     }
                                 };
-                                let outcome = if matches!(stop, FailoverResult::ClientGone) {
-                                    "cancelled"
-                                } else {
-                                    "failed"
-                                };
-                                // Every earlier attempt was declined and the backup was never sent.
+                                // Every earlier attempt was declined and the backup was never
+                                // sent, so it is declined as well, whatever stopped it.
                                 tokio::join!(
                                     respond,
-                                    run.finish_unsent(outcome, "upstream_failed")
+                                    run.finish_unsent(DECLINED, "upstream_failed")
                                 );
                                 return;
                             }
@@ -603,7 +599,8 @@ pub async fn run(
                     result = FailoverResult::CredentialUnavailable;
                 }
                 trace.failover(attempt, candidate, reason, result);
-                // The last declined attempt is the client's answer; nothing was executed.
+                // The last declined attempt is the client's answer; nothing was executed, so it
+                // reports `declined` like the attempts before it.
                 match reply {
                     Some(reply) => {
                         deliver(
@@ -621,7 +618,7 @@ pub async fn run(
                         let _ = sender.send(Err(Failure::upstream()));
                         let format = run.usage_format();
                         run.finish(
-                            "failed",
+                            DECLINED,
                             "upstream_failed",
                             None,
                             UsageEvidence {
@@ -863,12 +860,7 @@ async fn deliver(
             return;
         }
     };
-    let delivery = match (reply.outcome, written) {
-        ("succeeded", _) if !reply.status.is_success() => "upstream_failed",
-        ("succeeded", true) => "succeeded",
-        ("failed", _) => "upstream_failed",
-        _ => "unknown",
-    };
+    let delivery = delivery(&reply, written);
     run.finish(
         reply.outcome,
         delivery,
@@ -876,6 +868,17 @@ async fn deliver(
         reply.usage,
     )
     .await;
+}
+
+/// The request's delivery outcome once a buffered reply was offered to the client.
+fn delivery(reply: &Reply, written: bool) -> &'static str {
+    match (reply.outcome, written) {
+        ("succeeded", _) if !reply.status.is_success() => "upstream_failed",
+        ("succeeded", true) => "succeeded",
+        // A declined attempt was not executed; the client got its error and nothing else.
+        ("failed" | "declined", _) => "upstream_failed",
+        _ => "unknown",
+    }
 }
 
 async fn write_reply(
@@ -952,4 +955,37 @@ async fn write_reply(
         .is_ok();
     let written = sent && received.await.is_ok();
     Ok((reply, written))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reply(status: u16, outcome: &'static str) -> Reply {
+        Reply {
+            status: StatusCode::from_u16(status).unwrap(),
+            body: Vec::new(),
+            outcome,
+            response_id: None,
+            usage: UsageEvidence {
+                usage_format: "anthropic.messages.v1",
+                raw_usage: None,
+            },
+        }
+    }
+
+    #[test]
+    fn a_declined_last_attempt_closes_its_request_as_upstream_failed() {
+        for written in [true, false] {
+            assert_eq!(delivery(&reply(529, DECLINED), written), "upstream_failed");
+            assert_eq!(delivery(&reply(429, "failed"), written), "upstream_failed");
+            assert_eq!(delivery(&reply(503, "unknown"), written), "unknown");
+            assert_eq!(
+                delivery(&reply(400, "succeeded"), written),
+                "upstream_failed"
+            );
+        }
+        assert_eq!(delivery(&reply(200, "succeeded"), true), "succeeded");
+        assert_eq!(delivery(&reply(200, "succeeded"), false), "unknown");
+    }
 }

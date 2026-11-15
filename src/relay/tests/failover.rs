@@ -8,7 +8,7 @@ use nexus_relay::{
         snapshot::{Index, Selection},
     },
     protocol::{Endpoint, request::Generate, tokens::ReservationBounds},
-    upstream::{ErrorContract, Refusal, Upstream, UpstreamError, declined, refusal},
+    upstream::{DECLINED, ErrorContract, Refusal, Upstream, UpstreamError, declined, refusal},
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -566,6 +566,24 @@ fn documented_vendor_rejections_are_declined_and_unknown_429s_are_refused() {
             String::from_utf8_lossy(&body)
         );
     }
+}
+
+#[test]
+fn only_proof_that_nothing_ran_reports_a_declined_attempt() {
+    // The control plane confirms a declined attempt at zero cost without a review.
+    assert_eq!(DECLINED, "declined");
+    assert_eq!(Refusal::Declined.outcome(), DECLINED);
+    // A new 429 type refused the request but is no proof: its missing usage is reviewed.
+    assert_eq!(Refusal::Refused.outcome(), "failed");
+    // An intermediary's error may follow execution.
+    assert_eq!(Refusal::Unknown.outcome(), "unknown");
+    let status = |n| StatusCode::from_u16(n).unwrap();
+    let overloaded = br#"{"type":"error","error":{"type":"overloaded_error"}}"#;
+    let anthropic = |code, body: &[u8]| refusal(ErrorContract::Anthropic, status(code), None, body);
+    assert_eq!(anthropic(529, overloaded).outcome(), "declined");
+    assert_eq!(anthropic(503, b"<html>busy</html>").outcome(), "unknown");
+    let novel = br#"{"type":"error","error":{"type":"acceleration_limit_error"}}"#;
+    assert_eq!(anthropic(429, novel).outcome(), "failed");
 }
 
 async fn send(port: u16) -> UpstreamError {

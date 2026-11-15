@@ -5,6 +5,7 @@ use crate::{
     },
     metrics::{self, Abandoned, Outcome, RequestTally},
     protocol::{Endpoint, usage::UsageEvidence},
+    upstream::DECLINED,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -110,9 +111,10 @@ impl Attempt {
         )
         .await;
     }
-    /// Report an attempt which failed while its request continues with another attempt.
-    pub async fn failed(&self, db: &Gateway, response_id: Option<&str>, usage: UsageEvidence) {
-        let finished = self.finished("failed", response_id, usage);
+    /// Report an attempt the upstream provably did not execute while its request continues
+    /// with another attempt. Its usage evidence is null or all zeros.
+    pub async fn declined(&self, db: &Gateway, response_id: Option<&str>, usage: UsageEvidence) {
+        let finished = self.finished(DECLINED, response_id, usage);
         self.submit(db, [Some(("attempt.finished", finished))])
             .await;
     }

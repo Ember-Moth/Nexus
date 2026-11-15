@@ -11,10 +11,31 @@ from nexus.shared.reporting import key_cursor
 STATUS = """a.pending_since,a.checked_at,a.published_revision,a.published_at,a.published_trigger,
     a.failure_code,a.failure_message,a.failure_at,a.paused_revision,a.paused_at,
     a.failed IS NOT NULL AS failing,a.content_digest,a.content_revision"""
-CLUSTER = (
-    "SELECT c.*," + STATUS + " FROM publication.gateway_clusters c "
-    "LEFT JOIN publication.cluster_automation a ON a.cluster_id=c.id "
+# The cluster's effective Relay and auto-publish policy: its override, else the platform default.
+POLICY_COLUMNS = (
+    "max_attempts",
+    "failover_budget_ms",
+    "purge_grace_seconds",
+    "stream_lifetime_seconds",
+    "auto_publish_quiet_seconds",
+    "auto_publish_max_delay_seconds",
 )
+POLICY = (
+    ",".join(f"coalesce(p.{name},d.{name}) AS {name}" for name in POLICY_COLUMNS)
+    + ",p.version AS policy_version,d.version AS defaults_version"
+)
+CLUSTER = (
+    "SELECT c.*," + STATUS + "," + POLICY + " FROM publication.gateway_clusters c "
+    "LEFT JOIN publication.cluster_automation a ON a.cluster_id=c.id "
+    "LEFT JOIN publication.cluster_policies p ON p.cluster_id=c.id "
+    "CROSS JOIN publication.cluster_policy_defaults d "
+)
+LOCK = (
+    ",managed_sha256=:managed,managed_at=CASE WHEN CAST(:managed AS text) IS NULL "
+    "THEN NULL ELSE clock_timestamp() END"
+)
+# Sentinel: an administrator's write leaves the policy lock as it is (it is refused while set).
+KEEP = object()
 # Columns the auto-publisher may write between claims; JSON documents are cast explicitly.
 TRACKED = {
     "observed": True,
@@ -105,6 +126,54 @@ class PublicationRepository:
         await self.execute(
             "INSERT INTO publication.cluster_automation(cluster_id) VALUES(:cid)", cid=cid
         )
+        await self.execute(
+            "INSERT INTO publication.cluster_policies(cluster_id) VALUES(:cid)", cid=cid
+        )
+
+    async def defaults(self, lock=False):
+        return (
+            await self.rows(
+                f"SELECT {','.join(POLICY_COLUMNS)},version,managed_sha256,managed_at "
+                "FROM publication.cluster_policy_defaults" + (" FOR UPDATE" if lock else "")
+            )
+        )[0]
+
+    async def set_defaults(self, values, version, *, managed=KEEP):
+        """Replace the defaults at ``version``; ``managed`` locks (SHA-256) or unlocks (None)."""
+        extra = {} if managed is KEEP else {"managed": managed}
+        rows = await self.rows(
+            "UPDATE publication.cluster_policy_defaults SET "
+            + ",".join(f"{name}=:{name}" for name in POLICY_COLUMNS)
+            + ",version=version+1"
+            + ("" if managed is KEEP else LOCK)
+            + " WHERE version=:version RETURNING version",
+            version=version,
+            **values,
+            **extra,
+        )
+        return bool(rows)
+
+    async def overrides(self, cid, lock=False):
+        rows = await self.rows(
+            f"SELECT cluster_id,{','.join(POLICY_COLUMNS)},version "
+            "FROM publication.cluster_policies WHERE cluster_id=:cid"
+            + (" FOR UPDATE" if lock else ""),
+            cid=cid,
+        )
+        if not rows:
+            raise ServiceError("not_found", "Cluster not found", 404)
+        return rows[0]
+
+    async def set_overrides(self, cid, values, version):
+        rows = await self.rows(
+            "UPDATE publication.cluster_policies SET "
+            + ",".join(f"{name}=:{name}" for name in POLICY_COLUMNS)
+            + ",version=version+1 WHERE cluster_id=:cid AND version=:version RETURNING version",
+            cid=cid,
+            version=version,
+            **values,
+        )
+        return bool(rows)
 
     async def register(self, cid, body):
         roles = await self.rows(
@@ -419,9 +488,7 @@ class PublicationRepository:
         )
         if not claimed:
             return None
-        cluster = await self.rows(
-            "SELECT * FROM publication.gateway_clusters WHERE id=:cid", cid=cid
-        )
+        cluster = await self.rows(CLUSTER + "WHERE c.id=:cid", cid=cid)
         return cluster[0], claimed[0]
 
     async def defer(self, cid, code, message, seconds):

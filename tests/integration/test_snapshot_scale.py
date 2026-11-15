@@ -79,7 +79,8 @@ async def test_snapshot_scale(http, admin, tls, relay):  # noqa: F811 - pytest f
     async with provision_plane(http, admin, auto_publish=False) as values:
         peer, private, org, model, dep, admission, raw, cid = values
         service = app.state.publication
-        auto = AutoPublisher(service, service.tx, instant, quiet=0, max_delay=30, poll=30)
+        admin.execute("UPDATE publication.cluster_policy_defaults SET auto_publish_quiet_seconds=0")
+        auto = AutoPublisher(service, service.tx, instant, poll=30)
         node = admin.execute(
             "SELECT node_id FROM publication.gateway_principals WHERE cluster_id=%s", (cid,)
         ).fetchone()[0]

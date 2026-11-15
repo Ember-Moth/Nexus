@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 
 from nexus.http import (
+    business_errors,
     credentials,
     error_responses,
     expected_version,
@@ -15,6 +16,10 @@ from nexus.shared.errors import ServiceError
 
 from ..application.schemas import (
     Cluster,
+    ClusterDefaultsView,
+    ClusterOverrides,
+    ClusterPolicy,
+    ClusterPolicyView,
     ClusterUpdate,
     ClusterView,
     Page,
@@ -80,6 +85,36 @@ def create_router(get_service):
         response.headers["ETag"] = f'"{result["version"]}"'
         return result
 
+    @router.get("/{cluster_id}/policy", response_model=ClusterPolicyView)
+    async def cluster_policy(cluster_id: UUID, response: Response, token: Token, service: Service):
+        """Relay and automatic publication policy of the cluster."""
+        result = await service.policy(token, cluster_id)
+        response.headers["ETag"] = f'"{result["version"]}"'
+        return result
+
+    @router.put(
+        "/{cluster_id}/policy",
+        response_model=ClusterPolicyView,
+        responses=business_errors("version_conflict", "invalid_cluster_policy"),
+    )
+    async def update_cluster_policy(
+        cluster_id: UUID,
+        body: ClusterOverrides,
+        response: Response,
+        token: Token,
+        version: Annotated[int, Depends(expected_version)],
+        service: Service,
+    ):
+        """Replace the cluster's overrides; a null value follows the platform default.
+
+        Automatic publication delivers a Relay policy change like any other source change;
+        a cluster without auto_publish applies it at its next release. An effective Relay
+        policy other than the Relay's built-in one requires relay.cluster-policy.v1 on every node.
+        """
+        result = await service.update_policy(token, cluster_id, body, version)
+        response.headers["ETag"] = f'"{result["version"]}"'
+        return result
+
     @router.put("/{cluster_id}/principals/{node_id}", response_model=Principal, responses=CONFLICT)
     async def principal(
         cluster_id: UUID, node_id: UUID, body: Principal, token: Token, service: Service
@@ -117,5 +152,38 @@ def create_router(get_service):
     @router.get("/{cluster_id}/releases/{revision}", response_model=ReleaseStatus)
     async def status(cluster_id: UUID, revision: int, token: Token, service: Service):
         return await service.status(token, cluster_id, revision)
+
+    return router
+
+
+def create_settings_router(get_service):
+    """The cluster policy defaults, one of the platform settings."""
+    router = APIRouter(prefix="/api/v1/settings", tags=["gateway publication"])
+    Token = Annotated[str, Depends(credentials)]
+    Service = Annotated[PublicationService, Depends(get_service)]
+
+    @router.get("/cluster-defaults", response_model=ClusterDefaultsView)
+    async def cluster_defaults(response: Response, token: Token, service: Service):
+        """The Relay and auto-publish policy every cluster follows unless it overrides a value."""
+        result = await service.cluster_defaults(token)
+        response.headers["ETag"] = f'"{result["version"]}"'
+        return result
+
+    @router.put(
+        "/cluster-defaults",
+        response_model=ClusterDefaultsView,
+        responses=business_errors("version_conflict", "policy_managed_externally"),
+    )
+    async def update_cluster_defaults(
+        body: ClusterPolicy,
+        response: Response,
+        token: Token,
+        version: Annotated[int, Depends(expected_version)],
+        service: Service,
+    ):
+        """Replace the defaults; clusters without overrides publish the change automatically."""
+        result = await service.update_cluster_defaults(token, body, version)
+        response.headers["ETag"] = f'"{result["version"]}"'
+        return result
 
     return router

@@ -36,17 +36,13 @@ def create_service(database, administrator, identity, catalog, prices, cache, or
     )
 
 
-def create_auto_publisher(database, service, notifications, *, quiet, max_delay, poll):
-    """notifications(seconds) must wait on SOURCE_CHANNEL, returning early when notified."""
+def create_auto_publisher(database, service, notifications, *, poll):
+    """notifications(seconds) must wait on SOURCE_CHANNEL, returning early when notified.
+
+    Each cluster's quiet window and maximum delay come from its cluster policy.
+    """
     database.require_module(ModuleName.PUBLICATION)
-    return AutoPublisher(
-        service,
-        lambda: transaction(database),
-        notifications,
-        quiet=quiet,
-        max_delay=max_delay,
-        poll=poll,
-    )
+    return AutoPublisher(service, lambda: transaction(database), notifications, poll=poll)
 
 
 def create_resource_service(database, access):

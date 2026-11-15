@@ -3,13 +3,24 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from nexus.shared.errors import ServiceError
+from nexus.shared.policy import ImportPlan, changes, plan
+from nexus.shared.views import managed_source
 
 from .ports import OrganizationSource
-from .schemas import CAPABILITIES, FEATURE_CAPABILITIES
+from .schemas import (
+    AUTO_PUBLISH_DEFAULTS,
+    CAPABILITIES,
+    CLUSTER_POLICY_CAPABILITY,
+    FEATURE_CAPABILITIES,
+    RELAY_POLICY_DEFAULTS,
+    ClusterPolicy,
+)
 
+# Audit resource of changes to the singleton cluster policy defaults.
+POLICY_RESOURCE = UUID(int=0)
 # The audit identity of releases made by the auto-publisher. Request handlers always
 # resolve a person from a session token, so no HTTP caller can act as this actor.
 AUTO_PUBLISHER = "auto_publisher"
@@ -36,6 +47,45 @@ def scope_digest(cluster):
     )
 
 
+def relay_policy(cluster):
+    """The cluster's effective Relay policy, as read with the cluster."""
+    return {name: cluster[name] for name in RELAY_POLICY_DEFAULTS}
+
+
+def auto_publish_timing(cluster):
+    """Quiet window and maximum delay of the cluster's automatic releases, in seconds."""
+    quiet = float(cluster["auto_publish_quiet_seconds"])
+    # An override can meet a later default; the maximum delay never undercuts the quiet window.
+    return {
+        "quiet_seconds": quiet,
+        "max_delay_seconds": max(float(cluster["auto_publish_max_delay_seconds"]), quiet),
+    }
+
+
+def grouped(row):
+    """A policy row as {"relay": {...}, "auto_publish": {...}}."""
+    return {
+        "relay": {name: row[name] for name in RELAY_POLICY_DEFAULTS},
+        "auto_publish": {name: row[f"auto_publish_{name}"] for name in AUTO_PUBLISH_DEFAULTS},
+    }
+
+
+def columns(policy) -> dict:
+    values = dict(policy["relay"])
+    values.update({f"auto_publish_{k}": v for k, v in policy["auto_publish"].items()})
+    return values
+
+
+def effective(defaults, overrides):
+    return {
+        group: {
+            name: defaults[group][name] if value is None else value
+            for name, value in overrides[group].items()
+        }
+        for group in overrides
+    }
+
+
 def source_vector(cluster, identity, catalog, billing, prices):
     return {
         "scope_generation": cluster["scope_generation"],
@@ -45,6 +95,7 @@ def source_vector(cluster, identity, catalog, billing, prices):
         "catalog": catalog,
         "billing": billing,
         "effective_prices": sorted(v[0] for v in prices.values()),
+        "relay_policy": short_digest(relay_policy(cluster)),
     }
 
 
@@ -120,6 +171,9 @@ def required_capabilities(current):
         required.append("relay.file-search.v1")
     if any(p.get("auto_prompt_cache") for p in profiles):
         required.append("relay.prompt-cache.v1")
+    # Nodes without the capability would run with their built-in policy instead.
+    if "cluster_policy" in current or "resource_limits" in current:
+        required.append(CLUSTER_POLICY_CAPABILITY)
     if profiles:
         required.append("relay.native.v1")
         # Nodes must enforce provider feature switches before serving any profile.
@@ -319,6 +373,101 @@ class PublicationService:
             await repo.audit(actor, "cluster.updated", cid, {"previous_version": version})
             return self.public(await repo.cluster(cid))
 
+    async def cluster_defaults(self, token):
+        await self.admin(token)
+        async with self.tx() as repo:
+            return self._defaults_view(await repo.defaults())
+
+    @staticmethod
+    def _defaults_view(row):
+        return {**grouped(row), "managed": managed_source(row), "version": row["version"]}
+
+    async def update_cluster_defaults(self, token, body, version):
+        actor = await self.admin(token)
+        async with self.tx() as repo:
+            current = await repo.defaults(True)
+            if current["managed_sha256"] is not None:
+                raise ServiceError(
+                    "policy_managed_externally",
+                    "The cluster policy defaults are managed by a policy file",
+                    409,
+                )
+            if current["version"] != version or not await repo.set_defaults(
+                columns(body.model_dump()), version
+            ):
+                raise ServiceError("version_conflict", "Cluster policy defaults changed", 412)
+            found = changes(grouped(current), body.model_dump(mode="json"))
+            await repo.audit(actor, "cluster_defaults.updated", POLICY_RESOURCE, found)
+            return self._defaults_view(await repo.defaults())
+
+    async def plan_import(self, mode, values, file_sha256):
+        """Plan the ``publication.cluster_defaults`` group of a policy file."""
+        group = "publication.cluster_defaults"
+        async with self.tx() as repo:
+            current = await repo.defaults()
+        target, found, skipped = plan(
+            group,
+            mode,
+            grouped(current),
+            current["version"],
+            current["managed_sha256"] is not None,
+            values,
+            ClusterPolicy,
+        )
+
+        async def write(details):
+            async with self.tx() as repo:
+                if not await repo.set_defaults(
+                    columns(target),
+                    current["version"],
+                    managed=file_sha256 if mode == "managed" else None,
+                ):
+                    raise ServiceError("version_conflict", "Cluster policy defaults changed", 412)
+                await repo.audit(
+                    None, "cluster_defaults.updated", POLICY_RESOURCE, {**details, **found}
+                )
+
+        return ImportPlan(group, mode, mode == "managed", found, skipped, write if found else None)
+
+    @staticmethod
+    def _policy_view(defaults, row):
+        overrides = grouped(row)
+        return {
+            "cluster_id": row["cluster_id"],
+            "overrides": overrides,
+            "effective": effective(grouped(defaults), overrides),
+            "version": row["version"],
+        }
+
+    async def policy(self, token, cid):
+        await self.admin(token)
+        async with self.tx() as repo:
+            return self._policy_view(await repo.defaults(), await repo.overrides(cid))
+
+    async def update_policy(self, token, cid, body, version):
+        """Replace the cluster's overrides; null values follow the platform defaults."""
+        actor = await self.admin(token)
+        async with self.tx() as repo:
+            defaults = await repo.defaults()
+            current = await repo.overrides(cid, True)
+            proposed = body.model_dump(mode="json")
+            try:
+                ClusterPolicy.model_validate(effective(grouped(defaults), proposed))
+            except ValueError:
+                raise ServiceError(
+                    "invalid_cluster_policy",
+                    "max_delay_seconds must not be shorter than quiet_seconds",
+                    422,
+                ) from None
+            if current["version"] != version or not await repo.set_overrides(
+                cid, columns(proposed), version
+            ):
+                raise ServiceError("version_conflict", "Cluster policy changed", 412)
+            await repo.audit(
+                actor, "cluster.policy_updated", cid, changes(grouped(current), proposed)
+            )
+            return self._policy_view(defaults, await repo.overrides(cid))
+
     async def principal(self, token, cid, body):
         actor = await self.admin(token)
         async with self.tx() as repo:
@@ -363,9 +512,11 @@ class PublicationService:
             raise ValueError("Every scoped deployment needs an explicit route")
         for policy in identity["access_policies"]:
             policy["allowed_models"] = [m for m in policy["allowed_models"] if m in models]
+        policy = relay_policy(c)
+        extra = {"cluster_policy": policy} if policy != RELAY_POLICY_DEFAULTS else {}
         return Sources(
             source_vector(c, identity_rev, catalog_rev, pricing_rev, prices),
-            json.loads(serialize({**identity, **catalog})),
+            json.loads(serialize({**identity, **catalog, **extra})),
             envelopes,
             orgs,
             models,
@@ -437,6 +588,8 @@ class PublicationService:
         automatic = actor is None
         if (
             locked["version"] != cluster["version"]
+            or locked["policy_version"] != cluster["policy_version"]
+            or locked["defaults_version"] != cluster["defaults_version"]
             or locked["desired_revision"] != cluster["desired_revision"]
             or not locked["active"]
             or (automatic and not locked["auto_publish"])

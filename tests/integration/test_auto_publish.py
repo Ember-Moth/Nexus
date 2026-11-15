@@ -36,9 +36,15 @@ async def instant(seconds):
     return False
 
 
-def publisher(app, quiet=0.0, max_delay=30.0):
+def publisher(app, admin, quiet=0.0, max_delay=30.0):
+    """A worker's auto-publisher; the cluster policy defaults get the given timing."""
+    admin.execute(
+        "UPDATE publication.cluster_policy_defaults SET auto_publish_quiet_seconds=%s,"
+        "auto_publish_max_delay_seconds=%s",
+        (quiet, max_delay),
+    )
     service = app.state.publication
-    return AutoPublisher(service, service.tx, instant, quiet=quiet, max_delay=max_delay, poll=30)
+    return AutoPublisher(service, service.tx, instant, poll=30)
 
 
 async def cluster(client, root, cid):
@@ -202,7 +208,7 @@ async def test_personal_organization_is_served_by_an_all_cluster(http, admin, si
         assert created["organization_ids"] == [] and created["auto_publish"] is True
         assert created["auto_publish_status"]["state"] == "unknown"
         dsn = await register_node(client, root, admin, cid)
-        auto = publisher(app)
+        auto = publisher(app, admin)
         assert (await auto.tick())[0] == 1
         user = await signup("self-service-" + uuid4().hex[:6])
         personal = {"id": user["personal_organization_id"]}
@@ -237,7 +243,7 @@ async def test_personal_organization_is_served_by_an_all_cluster(http, admin, si
         rule = await create_cluster(
             client, root, dep, PrivateKey.generate(), organization_scope="personal"
         )
-        assert (await publisher(app).tick())[0] >= 1
+        assert (await publisher(app, admin).tick())[0] >= 1
         manifest = admin.execute(
             "SELECT manifest FROM publication.config_snapshots WHERE cluster_id=%s",
             (rule["id"],),
@@ -263,7 +269,7 @@ async def test_suspended_organization_leaves_an_all_cluster(http, admin):
         private = PrivateKey.generate()
         cid = (await create_cluster(client, root, dep, private, organization_scope="all"))["id"]
         dsn = await register_node(client, root, admin, cid)
-        auto = publisher(app)
+        auto = publisher(app, admin)
         await auto.tick()
         async with GatewaySimulator.connect(
             dsn, settings.redis_url.get_secret_value(), settings.redis_namespace
@@ -295,7 +301,7 @@ async def test_rollback_pauses_auto_publish_until_resumed(plane, http, admin):
         json={"auto_publish": True},
     )
     assert enabled.status_code == 200, enabled.text
-    auto = publisher(app)
+    auto = publisher(app, admin)
     assert (await auto.tick())[0] == 0  # the manual release already matches the sources
     await new_key(client, root, org, admission.service_account_id)
     assert (await auto.tick())[0] == 1 and revisions(admin, cid) == [1, 2]
@@ -350,7 +356,7 @@ async def test_validation_failure_is_recorded_and_recovers(plane, http, admin):
         json={"candidates": [{"deployment_id": dep["id"]}, {"deployment_id": other["id"]}]},
     )
     assert route.status_code == 200, route.text
-    auto = publisher(app)
+    auto = publisher(app, admin)
     assert await auto.tick() == (0, None)
     status = (await cluster(client, root, cid))["auto_publish_status"]
     assert status["state"] == "failing" and status["last_failure"]["code"] == "invalid_snapshot"
@@ -378,7 +384,7 @@ async def test_debounce_waits_for_quiet_sources_up_to_the_maximum_delay(plane, h
         headers=auth(root, current["version"]),
         json={"auto_publish": True},
     )
-    auto = publisher(app, quiet=0.8, max_delay=2.0)
+    auto = publisher(app, admin, quiet=0.8, max_delay=2.0)
     assert await auto.tick() == (0, None)
     started = monotonic()
     while monotonic() - started < 1.2:
@@ -406,7 +412,7 @@ async def test_auto_and_manual_releases_race_without_gaps(plane, http, admin):
         headers=auth(root, current["version"]),
         json={"auto_publish": True},
     )
-    workers = [publisher(app), publisher(app)]
+    workers = [publisher(app, admin), publisher(app, admin)]
     for round_ in range(4):
         await new_key(client, root, org, admission.service_account_id)
         manual = [
@@ -451,7 +457,7 @@ async def test_disabled_auto_publish_keeps_manual_releases(plane, http, admin, s
         await new_key(client, root, org, admission.service_account_id)
         await asyncio.sleep(3)
         assert revisions(admin, cid) == [1]
-    assert await publisher(app).tick() == (0, None)
+    assert await publisher(app, admin).tick() == (0, None)
     response = await client.post(
         f"/api/v1/gateway-clusters/{cid}/releases", headers=headers(root, "manual"), json={}
     )
@@ -469,7 +475,7 @@ async def test_overlapping_all_clusters_seal_credentials_per_cluster(http, admin
             for k in keys
         ]
         nodes = [await register_node(client, root, admin, cid) for cid in clusters]
-        assert (await publisher(app).tick())[0] == 2
+        assert (await publisher(app, admin).tick())[0] == 2
         while await app.state.publication.distribute():
             pass
         snapshots = []

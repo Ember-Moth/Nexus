@@ -6,7 +6,7 @@ from nacl.exceptions import CryptoError
 from nacl.public import PublicKey, SealedBox
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from nexus.shared.views import Timestamp, View
+from nexus.shared.views import ManagedSource, Timestamp, View
 
 CAPABILITIES = ("reservation.v1", "usage-events.v1")
 # Node capability a release requires once any deployment enables the provider feature.
@@ -293,3 +293,93 @@ class PurgeRequestView(View):
     pending: int
     purged: int
     failed: int
+
+
+# The Relay's built-in cluster policy, used when a snapshot carries no cluster_policy. A snapshot
+# only carries it, and then requires relay.cluster-policy.v1, once a value differs.
+RELAY_POLICY_DEFAULTS = {
+    "max_attempts": 2,
+    "failover_budget_ms": 10000,
+    "purge_grace_seconds": 604800,
+    "stream_lifetime_seconds": 1800,
+}
+AUTO_PUBLISH_DEFAULTS = {"quiet_seconds": 3.0, "max_delay_seconds": 30.0}
+CLUSTER_POLICY_CAPABILITY = "relay.cluster-policy.v1"
+
+
+class RelayPolicy(Command):
+    """Applied by every node of the cluster from the release that carries it."""
+
+    max_attempts: int = Field(
+        ge=1, le=4, description="Attempts per HTTP generation; 1 disables failover"
+    )
+    failover_budget_ms: int = Field(
+        ge=100, le=60000, description="No further attempt starts once this much time has passed"
+    )
+    purge_grace_seconds: int = Field(
+        ge=0,
+        le=2147483647,
+        description="How long a key stays unusable before its upstream copies are deleted",
+    )
+    stream_lifetime_seconds: int = Field(
+        ge=1, le=2147483647, description="Longest time a resumed response stream may stay open"
+    )
+
+
+class AutoPublishTiming(Command):
+    """When the worker publishes a cluster with auto_publish after its sources change."""
+
+    quiet_seconds: float = Field(ge=0, le=300, description="Sources unchanged for this long")
+    max_delay_seconds: float = Field(
+        gt=0, le=3600, description="At most this long after the first unpublished change"
+    )
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.max_delay_seconds < self.quiet_seconds:
+            raise ValueError("max_delay_seconds must not be shorter than quiet_seconds")
+        return self
+
+
+class ClusterPolicy(Command):
+    relay: RelayPolicy
+    auto_publish: AutoPublishTiming
+
+
+class ClusterDefaultsView(View):
+    """The policy every cluster follows unless it overrides a value."""
+
+    relay: RelayPolicy
+    auto_publish: AutoPublishTiming
+    managed: ManagedSource | None = Field(
+        description="The policy file that locked the defaults; writes are refused while set"
+    )
+    version: int
+
+
+class RelayOverrides(Command):
+    """Null follows the platform default."""
+
+    max_attempts: int | None = Field(default=None, ge=1, le=4)
+    failover_budget_ms: int | None = Field(default=None, ge=100, le=60000)
+    purge_grace_seconds: int | None = Field(default=None, ge=0, le=2147483647)
+    stream_lifetime_seconds: int | None = Field(default=None, ge=1, le=2147483647)
+
+
+class AutoPublishOverrides(Command):
+    """Null follows the platform default."""
+
+    quiet_seconds: float | None = Field(default=None, ge=0, le=300)
+    max_delay_seconds: float | None = Field(default=None, gt=0, le=3600)
+
+
+class ClusterOverrides(Command):
+    relay: RelayOverrides
+    auto_publish: AutoPublishOverrides
+
+
+class ClusterPolicyView(View):
+    cluster_id: UUID
+    overrides: ClusterOverrides
+    effective: ClusterPolicy = Field(description="The overrides applied to the platform defaults")
+    version: int

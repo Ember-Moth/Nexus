@@ -1,9 +1,10 @@
 """Publish a cluster after its sources change, once they have been quiet for a short window.
 
 A cluster is pending while its probe vector differs from the vector its desired snapshot
-represents (``settled``). The release waits until the probe has not moved for ``quiet``
-seconds, but never longer than ``max_delay`` after the first unpublished change. A release
-that fails validation is not retried until the sources or the cluster configuration change.
+represents (``settled``). The release waits until the probe has not moved for the cluster's quiet
+window, but never longer than its maximum delay after the first unpublished change; both come from
+the cluster policy and take effect at the next check. A release that fails validation is not
+retried until the sources or the cluster configuration change.
 """
 
 import asyncio
@@ -14,21 +15,27 @@ from time import monotonic
 from nexus.shared.errors import ServiceError
 from nexus.shared.telemetry import event
 
+from .schemas import AUTO_PUBLISH_DEFAULTS
+from .service import auto_publish_timing
+
 logger = logging.getLogger("nexus.publication")
 # Races with an administrator, moving sources and storage outages resolve on their own.
 TRANSIENT = frozenset({"cluster_changed", "source_changed", "storage_unavailable"})
 MIN_SPACING = 0.5
 
 
+def retry_delay(quiet_seconds):
+    return timedelta(seconds=max(quiet_seconds, 1.0))
+
+
 class AutoPublisher:
-    def __init__(self, service, transactions, wakeups, *, quiet, max_delay, poll, lease=120):
+    def __init__(self, service, transactions, wakeups, *, poll, lease=120):
         self.service = service
         self.tx = transactions
         # wakeups(timeout) returns once a source may have changed or the timeout elapsed.
         self.wakeups = wakeups
-        self.quiet = timedelta(seconds=quiet)
-        self.max_delay = timedelta(seconds=max_delay)
-        self.retry = timedelta(seconds=max(quiet, 1.0))
+        # Backoff after an unexpected failure, before the cluster's own policy is known.
+        self.retry = retry_delay(AUTO_PUBLISH_DEFAULTS["quiet_seconds"])
         self.poll = poll
         self.lease = lease
         self._wake_at = monotonic()
@@ -92,6 +99,10 @@ class AutoPublisher:
 
     async def _advance(self, cluster, state, revisions):
         cid, now = cluster["id"], state["now"]
+        timing = auto_publish_timing(cluster)
+        quiet = timedelta(seconds=timing["quiet_seconds"])
+        max_delay = timedelta(seconds=timing["max_delay_seconds"])
+        retry_after = retry_delay(timing["quiet_seconds"])
         probe = await self.service.probe(cluster, revisions, state["price_models"])
         failure = {"sources": probe, "version": cluster["version"]}
         if probe == state["settled"]:
@@ -112,7 +123,7 @@ class AutoPublisher:
         if probe != state["observed"] or changed_at is None:
             changed_at = now
         pending_since = state["pending_since"] or now
-        due = min(changed_at + self.quiet, pending_since + self.max_delay)
+        due = min(changed_at + quiet, pending_since + max_delay)
         if state["retry_after"]:
             due = max(due, state["retry_after"])
         if now < due:
@@ -129,7 +140,7 @@ class AutoPublisher:
             release = await self.service.publish_automatically(cluster, state["settled"])
         except ServiceError as error:
             if error.code in TRANSIENT:
-                retry = now + self.retry
+                retry = now + retry_after
                 await self._track(
                     cid,
                     observed=observed,

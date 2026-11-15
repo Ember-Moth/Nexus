@@ -9,6 +9,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from nexus.shared.errors import ServiceError
 from nexus.shared.reporting import predicates
 
+# The public view of an export job; a copy past its expiry reads as expired before cleanup.
+JOB = """id,organization_id,actor_id,kind,filters,
+    CASE WHEN expires_at<=clock_timestamp() THEN 'expired' ELSE state END state,
+    row_count,error_code,created_at,completed_at,expires_at"""
+
 
 @asynccontextmanager
 async def transaction(database):
@@ -199,16 +204,32 @@ class ReportingRepository:
 
     async def job(self, org, id):
         rows = await self.rows(
-            """SELECT id,organization_id,actor_id,kind,filters,
-            CASE WHEN expires_at<=clock_timestamp() THEN 'expired' ELSE state END state,
-            row_count,error_code,created_at,completed_at,expires_at FROM reporting.export_jobs
-            WHERE organization_id=:org AND id=:id""",
+            f"SELECT {JOB} FROM reporting.export_jobs WHERE organization_id=:org AND id=:id",
             org=org,
             id=id,
         )
         if not rows:
             raise ServiceError("not_found", "Export not found", 404)
         return dict(rows[0])
+
+    async def jobs(self, org, actor, finance, limit, cursor):
+        """Newest jobs first; `actor` limits them to one requester's, `finance` admits costs."""
+        conditions, values = ["organization_id=:org"], {"org": org, "limit": limit}
+        if actor is not None:
+            conditions.append("actor_id=:actor")
+            values["actor"] = actor
+        if not finance:
+            conditions.append("kind<>'attempt_costs'")
+        if cursor:
+            conditions.append("(created_at,id)<(:at,:rid)")
+            values.update(at=cursor[0], rid=cursor[1])
+        rows = await self.rows(
+            f"SELECT {JOB} FROM reporting.export_jobs WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY created_at DESC,id DESC LIMIT :limit",
+            **values,
+        )
+        return [dict(row) for row in rows]
 
     async def download(self, org, id):
         result = await self.execute(

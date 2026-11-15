@@ -183,6 +183,27 @@ class NodeStatus(View):
     last_ack: NodeAck | None
 
 
+class PrincipalView(NodeStatus):
+    database_role: str
+    capabilities: list[str]
+    applied_at: Timestamp | None
+
+
+class ReleaseRecord(View):
+    revision: Revision
+    sha256: str
+    created_at: Timestamp
+    actor_id: UUID | None = Field(description="Platform administrator who requested it, if any")
+    initiator: Literal["operator", "auto_publisher"] = Field(
+        description="operator: requested through the release endpoint; "
+        "auto_publisher: published by the worker after a source change"
+    )
+    rollback_revision: Revision | None = Field(
+        description="Historical revision whose resources this release republished"
+    )
+    distribution: ReleaseDelivery
+
+
 class ReleaseStatus(View):
     revision: Revision
     sha256: str

@@ -253,6 +253,38 @@ class PublicationService:
         # Moving to a narrower rule or to a fixed list can drop organizations.
         return True
 
+    async def cluster(self, token, cid):
+        await self.admin(token)
+        async with self.tx() as repo:
+            return self.public(await repo.cluster(cid))
+
+    async def principals(self, token, cid, limit, cursor):
+        await self.admin(token)
+        async with self.tx() as repo:
+            await repo.cluster(cid)
+            rows, next_cursor = await repo.list_principals(cid, limit, cursor)
+        items = [{**row, "applied_revision": str(row["applied_revision"])} for row in rows]
+        return {"items": items, "next_cursor": next_cursor}
+
+    async def releases(self, token, cid, limit, cursor):
+        await self.admin(token)
+        async with self.tx() as repo:
+            await repo.cluster(cid)
+            rows, next_cursor = await repo.list_releases(cid, limit, cursor)
+        items = [
+            {
+                "revision": str(row["revision"]),
+                "sha256": row["sha256"],
+                "created_at": row["created_at"],
+                "actor_id": row["actor_id"],
+                "initiator": "operator" if row["manual"] else AUTO_PUBLISHER,
+                "rollback_revision": row["rollback_revision"],
+                "distribution": {"attempts": row["attempts"], "delivered_at": row["delivered_at"]},
+            }
+            for row in rows
+        ]
+        return {"items": items, "next_cursor": next_cursor}
+
     async def update(self, token, cid, body, version):
         actor = await self.admin(token)
         async with self.tx() as repo:

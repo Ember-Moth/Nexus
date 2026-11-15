@@ -204,3 +204,26 @@ def test_client_ip_signature_matches_the_bff():
         client_ip_signature("b" * 32, "203.0.113.7")
         == "Sb_Xt0ss0yLjAefla7Bec6e6uqvKbhdHjeLA4a1nQY0"
     )
+
+
+def test_key_cursors_round_trip_typed_positions():
+    import base64
+    import json
+    from uuid import uuid4
+
+    import pytest
+
+    from nexus.http import key_cursor_value
+    from nexus.modules.publication.api.routes import revision_key
+    from nexus.shared.errors import ServiceError
+    from nexus.shared.reporting import key_cursor
+
+    node = uuid4()
+    assert key_cursor_value(key_cursor(node), 1) == (node,)
+    assert key_cursor_value(key_cursor(2**63 - 1), 1, revision_key) == (2**63 - 1,)
+    for values in [["0"], ["-1"], ["01"], ["1e3"], ["٣"], [3], [str(2**63)], ["1", "2"]]:
+        cursor = base64.urlsafe_b64encode(json.dumps(values).encode()).decode()
+        with pytest.raises(ServiceError, match="pagination cursor"):
+            key_cursor_value(cursor, 1, revision_key)
+    with pytest.raises(ServiceError, match="pagination cursor"):
+        key_cursor_value(key_cursor(node), 1, revision_key)

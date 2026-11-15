@@ -153,6 +153,13 @@ async def test_new_key_reaches_the_gateway_without_a_release(http, admin, servic
         ).fetchone()
         assert actor is None and details["actor"] == "auto_publisher"
         assert details["trigger"]["identity"][0] != details["trigger"]["identity"][1]
+        history = await client.get(f"/api/v1/gateway-clusters/{cid}/releases", headers=auth(root))
+        assert [
+            (r["revision"], r["initiator"], r["actor_id"] is None) for r in history.json()["items"]
+        ] == [
+            ("2", "auto_publisher", True),
+            ("1", "operator", False),
+        ]
         assert key_id in {k["id"] for k in peer.snapshot["resources"]["key_verifiers"]}
 
 

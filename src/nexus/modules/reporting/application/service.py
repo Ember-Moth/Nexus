@@ -176,6 +176,19 @@ class Reports:
         async with self.tx() as repo:
             return await repo.enqueue(org, actor, body, self.ttl, self.rate)
 
+    async def exports(self, token, org, limit, cursor):
+        # export() admits the requester or a platform role, and cost jobs only to platform finance.
+        # Job filters were validated when queued and projects and keys are never deleted.
+        actor, _, platform, finance = await self.access(token, org, operation="export")
+        async with self.tx() as repo:
+            rows = await repo.jobs(org, None if platform else actor, finance, limit + 1, cursor)
+        return {
+            "items": rows[:limit],
+            "next_cursor": next_cursor(rows[limit - 1]["created_at"], rows[limit - 1]["id"])
+            if len(rows) > limit
+            else None,
+        }
+
     async def export(self, token, org, id, download=False):
         actor, _, platform, _ = await self.access(token, org, operation="export")
         async with self.tx() as repo:

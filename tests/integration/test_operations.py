@@ -4,18 +4,22 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+from test_api_contract import exact, pages
 from test_billing import (
     adjustment,
     balance,
+    finance_role,
     headers,
     make_budget,
     settle_success,
     setup_model,
     setup_wallet,
 )
-from test_identity_api import auth, create_user, login
+from test_identity_api import auth, create_org, create_user, login
 from test_plane import plane  # noqa: F401
 from test_project_credentials import developer, project
+
+from nexus.modules.reporting.application.schemas import ExportJob
 
 pytestmark = pytest.mark.integration
 
@@ -88,6 +92,64 @@ async def test_usage_project_projection_finance_and_export(http, admin):
     assert text.status_code == 200, text.text
     assert text.headers["content-type"].startswith("text/plain; version=0.0.4")
     assert "\nnexus_billing_usage_backlog " in text.text and org["id"] not in text.text
+
+
+async def test_export_list_shows_only_jobs_the_caller_may_read(http):
+    client, root, _, _ = http
+    await finance_role(client, root)
+    org = await create_org(client, root, "Export history")
+    base = f"/api/v1/organizations/{org['id']}"
+    member = await create_user(client, root, "export-finance")
+    added = await client.post(
+        base + "/members",
+        headers=auth(root),
+        json={"user_id": member["user"]["id"], "role": "org_finance"},
+    )
+    assert added.status_code == 201, added.text
+    finance = await login(client, "export-finance")
+    operator = await create_user(client, root, "export-operator")
+    await finance_role(client, root, operator["user"]["id"], ["platform_admin"])
+    operator = await login(client, "export-operator")
+    dev, _, _ = await developer(client, root, org, (await project(client, root, org))["id"])
+    await create_user(client, root, "export-outsider")
+    outsider = await login(client, "export-outsider")
+    jobs = []
+    for token, kind in [
+        (root, "ledger"),
+        (finance, "requests"),
+        (root, "attempt_costs"),
+        (finance, "charges"),
+        (root, "charges"),
+    ]:
+        queued = await client.post(base + "/exports", headers=auth(token), json={"kind": kind})
+        assert queued.status_code == 202, queued.text
+        jobs.append(queued.json()["id"])
+
+    listed = await pages(client, root, base + "/exports", 2)
+    assert [job["id"] for job in listed] == jobs[::-1]
+    for job in listed:
+        exact(ExportJob, job)
+        single = await client.get(base + "/exports/" + job["id"], headers=auth(root))
+        assert single.json() == job
+    # The requester sees only their own jobs, as the single read hides the others.
+    own = await pages(client, finance, base + "/exports", 1)
+    assert [job["id"] for job in own] == [jobs[3], jobs[1]]
+    assert (
+        await client.get(base + "/exports/" + jobs[0], headers=auth(finance))
+    ).status_code == 404
+    # Without platform finance, procurement cost exports are neither listed nor readable.
+    visible = await pages(client, operator, base + "/exports", 50)
+    assert [job["id"] for job in visible] == [jobs[4], jobs[3], jobs[1], jobs[0]]
+    cost = await client.get(base + "/exports/" + jobs[2], headers=auth(operator))
+    assert cost.status_code == 403
+    for token, status in [(dev, 403), (outsider, 404)]:
+        response = await client.get(base + "/exports", headers=auth(token))
+        assert response.status_code == status, response.text
+    unknown = await client.get(f"/api/v1/organizations/{uuid4()}/exports", headers=auth(finance))
+    assert unknown.status_code == 404
+    malformed = await client.get(base + "/exports", headers=auth(root), params={"cursor": "x"})
+    assert malformed.status_code == 422
+    assert malformed.json()["error"]["code"] == "invalid_cursor"
 
 
 async def test_review_waiver_replay_and_unfreeze(http, admin):

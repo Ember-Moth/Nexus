@@ -26,7 +26,7 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 
 ## 导出和审计
 
-向 `POST /organizations/{org}/exports` 提交 kind 和 filters，取得 202 与任务标识。kind 可选 requests、charges、ledger 和平台财务专用的 attempt_costs。通过同一路径下的 `/{id}` 查看状态，ready 后访问 `/{id}/download` 获取 UTF-8 CSV。下载重新核验管理会话、组织角色、请求者和筛选范围。过期副本由 Worker 清除。CSV 文本处理表格公式前缀。任务使用短事务和租约代次，过期执行者的结果无法替换新的文件。
+向 `POST /organizations/{org}/exports` 提交 kind 和 filters，取得 202 与任务标识。kind 可选 requests、charges、ledger 和平台财务专用的 attempt_costs。通过同一路径下的 `/{id}` 查看状态，ready 后访问 `/{id}/download` 获取 UTF-8 CSV。`GET /organizations/{org}/exports` 按提交时间从新到旧分页列出任务，可见范围与单个读取一致：组织 owner 和财务只见本人提交的任务，平台角色可见全部，attempt_costs 任务仅平台财务可见。下载重新核验管理会话、组织角色、请求者和筛选范围。过期副本由 Worker 清除。CSV 文本处理表格公式前缀。任务使用短事务和租约代次，过期执行者的结果无法替换新的文件。
 
 默认每组织每分钟可创建 10 个任务，每份最多 10000 行，文件保留 86400 秒，可分别通过 NEXUS_EXPORT_PER_ORG_MINUTE、NEXUS_EXPORT_MAX_ROWS 和 NEXUS_EXPORT_TTL_SECONDS 设置。文件上限为 16 MiB，超限任务报告失败，可缩短查询期间后重新导出。
 

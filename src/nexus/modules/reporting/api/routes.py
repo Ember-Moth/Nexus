@@ -138,6 +138,17 @@ def create_router(get_service):
     async def enqueue(organization_id: UUID, body: ExportRequest, token: Token, service: Service):
         return await service.queue_export(token, organization_id, body)
 
+    @router.get("/organizations/{organization_id}/exports", response_model=Page[ExportJob])
+    async def list_exports(
+        organization_id: UUID,
+        token: Token,
+        service: Service,
+        limit: Limit = 50,
+        cursor: Cursor = None,
+    ):
+        """Export jobs the caller may read, newest first."""
+        return await service.exports(token, organization_id, limit, cursor_value(cursor))
+
     @router.get("/organizations/{organization_id}/exports/{export_id}", response_model=ExportJob)
     async def export(organization_id: UUID, export_id: UUID, token: Token, service: Service):
         return await service.export(token, organization_id, export_id)

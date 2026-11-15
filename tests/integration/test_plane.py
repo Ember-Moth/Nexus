@@ -14,10 +14,16 @@ import psycopg
 import pytest
 from nacl.public import PrivateKey
 from psycopg import sql
+from test_api_contract import exact, pages
 from test_billing import account_amounts, headers, setup_model, setup_wallet
-from test_identity_api import auth
+from test_identity_api import auth, create_user, login
 
 from nexus.gateway_simulator import GatewaySimulator
+from nexus.modules.publication.application.schemas import (
+    ClusterView,
+    PrincipalView,
+    ReleaseRecord,
+)
 
 pytestmark = pytest.mark.integration
 RELAY_CRATE = Path(__file__).resolve().parents[2] / "src" / "relay"
@@ -276,6 +282,77 @@ async def test_configuration_recovery_rollback_and_old_ack(plane, http, admin):
     )
     await app.state.publication.distribute()
     assert await peer.redis.get(prefix + ":current") == "2"
+
+
+async def test_cluster_read_principals_and_release_history(plane, http, admin):
+    peer, _, _, _, _, _, _, cid = plane
+    client, root, app, _ = http
+    base = f"/api/v1/gateway-clusters/{cid}"
+    read = await client.get(base, headers=auth(root))
+    assert read.status_code == 200, read.text
+    version = exact(ClusterView, read.json()).version
+    assert read.headers["etag"] == f'"{version}"'
+    assert await pages(client, root, "/api/v1/gateway-clusters", 1) == [read.json()]
+    patch = {**auth(root), "If-Match": read.headers["etag"]}
+    updated = await client.patch(base, headers=patch, json={"active": True})
+    assert updated.status_code == 200, updated.text
+    assert updated.headers["etag"] == f'"{version + 1}"'
+    assert (await client.get(base, headers=auth(root))).json() == updated.json()
+
+    await app.state.publication.distribute()
+    await peer.refresh()
+    for _ in range(2):
+        await register_node(client, root, admin, cid)
+    nodes = await pages(client, root, base + "/principals", 2)
+    assert len(nodes) == 3 and [n["node_id"] for n in nodes] == sorted(n["node_id"] for n in nodes)
+    views = {node["node_id"]: exact(PrincipalView, node) for node in nodes}
+    applied = views.pop(peer.node_id)
+    assert applied.applied_revision == "1" and applied.applied_at is not None
+    assert applied.last_ack.model_dump() == {"revision": "1", "applied": True, "error_code": ""}
+    for node in views.values():
+        assert (node.applied_revision, node.applied_at, node.last_ack) == ("0", None, None)
+        assert node.active and node.database_role.startswith("nexus_node_")
+        assert node.capabilities == ["reservation.v1", "usage-events.v1"]
+
+    me = (await client.get("/api/v1/me", headers=auth(root))).json()["user"]["id"]
+    rollback = await client.post(
+        base + "/releases", headers=headers(root, "history-rollback"), json={"rollback_revision": 1}
+    )
+    assert rollback.status_code == 202 and rollback.json()["revision"] == "2", rollback.text
+    latest = await client.post(base + "/releases", headers=headers(root, "history"), json={})
+    assert latest.status_code == 202 and latest.json()["revision"] == "3", latest.text
+    assert await app.state.publication.distribute() == 1
+    history = await pages(client, root, base + "/releases", 2)
+    records = [exact(ReleaseRecord, release) for release in history]
+    assert [r.revision for r in records] == ["3", "2", "1"]
+    assert [r.rollback_revision for r in records] == [None, "1", None]
+    assert {str(r.actor_id) for r in records} == {me}
+    assert {r.initiator for r in records} == {"operator"}
+    assert [r.sha256 for r in records[:2]] == [latest.json()["sha256"], rollback.json()["sha256"]]
+    assert (records[0].distribution.attempts, records[0].distribution.delivered_at) == (0, None)
+    assert all(r.distribution.delivered_at and r.distribution.attempts for r in records[1:])
+    status = (await client.get(base + "/releases/2", headers=auth(root))).json()
+    assert (status["sha256"], status["distribution"]) == (
+        history[1]["sha256"],
+        history[1]["distribution"],
+    )
+
+    await create_user(client, root, "cluster-viewer")
+    viewer = await login(client, "cluster-viewer")
+    unknown = f"/api/v1/gateway-clusters/{uuid4()}"
+    for suffix in ["", "/principals", "/releases"]:
+        denied = await client.get(base + suffix, headers=auth(viewer))
+        assert denied.status_code == 403 and denied.json()["error"]["code"] == "forbidden"
+        missing = await client.get(unknown + suffix, headers=auth(root))
+        assert missing.status_code == 404 and missing.json()["error"]["code"] == "not_found"
+    # A node cursor is not a release position.
+    first = await client.get(base + "/principals", headers=auth(root), params={"limit": 1})
+    for cursor in ["not-a-cursor", first.json()["next_cursor"]]:
+        malformed = await client.get(
+            base + "/releases", headers=auth(root), params={"cursor": cursor}
+        )
+        assert malformed.status_code == 422
+        assert malformed.json()["error"]["code"] == "invalid_cursor"
 
 
 async def test_atomic_multiscope_limits_and_lease_ownership(plane, http):

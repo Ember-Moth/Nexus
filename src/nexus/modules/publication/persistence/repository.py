@@ -208,6 +208,44 @@ class PublicationRepository:
         )
         return jobs[0], nodes
 
+    async def list_principals(self, cid, limit, cursor):
+        rows = await self.rows(
+            """SELECT n.node_id,n.database_role,n.capabilities,n.active,n.applied_revision,
+            n.applied_at,(SELECT jsonb_build_object('revision',a.revision::text,
+            'applied',a.applied,'error_code',a.error_code) FROM publication.node_config_acks a
+            WHERE a.node_id=n.node_id ORDER BY a.created_at DESC LIMIT 1) last_ack
+            FROM publication.gateway_principals n WHERE n.cluster_id=:cid """
+            + ("AND n.node_id>:after " if cursor else "")
+            + "ORDER BY n.node_id LIMIT :limit",
+            cid=cid,
+            after=cursor and cursor[0],
+            limit=limit + 1,
+        )
+        last = rows[limit - 1] if len(rows) > limit else None
+        return rows[:limit], last and key_cursor(last["node_id"])
+
+    async def list_releases(self, cid, limit, cursor):
+        # Every snapshot is written with its outbox job; only operator releases also store a
+        # release command, so a snapshot without one was published automatically.
+        rows = await self.rows(
+            """SELECT s.revision,s.sha256,s.created_at,
+            s.source_revision->>'rollback_revision' rollback_revision,
+            (SELECT r.actor_id FROM publication.release_commands r
+             WHERE r.cluster_id=s.cluster_id AND r.revision=s.revision LIMIT 1) actor_id,
+            EXISTS(SELECT FROM publication.release_commands r
+             WHERE r.cluster_id=s.cluster_id AND r.revision=s.revision) manual,
+            o.attempts,o.delivered_at FROM publication.config_snapshots s
+            JOIN publication.config_outbox o USING(cluster_id,revision)
+            WHERE s.cluster_id=:cid """
+            + ("AND s.revision<:before " if cursor else "")
+            + "ORDER BY s.revision DESC LIMIT :limit",
+            cid=cid,
+            before=cursor and cursor[0],
+            limit=limit + 1,
+        )
+        last = rows[limit - 1] if len(rows) > limit else None
+        return rows[:limit], last and key_cursor(last["revision"])
+
     async def claim_release(self):
         jobs = await self.rows("""WITH candidate AS (
             SELECT o.cluster_id,o.revision FROM publication.config_outbox o

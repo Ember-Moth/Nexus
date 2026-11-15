@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from typing import Annotated, Any
@@ -221,15 +222,20 @@ def cursor_value(cursor: str | None):
         raise ServiceError("invalid_cursor", "Invalid pagination cursor", 422) from None
 
 
-def key_cursor_value(cursor: str | None, size: int) -> tuple[UUID, ...] | None:
-    """Decode a cursor for lists ordered by `size` UUID key columns."""
+def key_cursor_value(
+    cursor: str | None, size: int, parse: Callable[[str], Any] = UUID
+) -> tuple[Any, ...] | None:
+    """Decode a cursor for lists ordered by `size` key columns, UUIDs unless `parse` differs.
+
+    `parse` receives each decoded JSON value and raises ValueError or TypeError to reject it.
+    """
     if cursor is None:
         return None
     try:
         values = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
         if not isinstance(values, list) or len(values) != size:
             raise ValueError
-        return tuple(UUID(value) for value in values)
+        return tuple(parse(value) for value in values)
     except ValueError, TypeError, AttributeError, binascii.Error:
         raise ServiceError("invalid_cursor", "Invalid pagination cursor", 422) from None
 

@@ -9,7 +9,7 @@ def next_cursor(at, row_id):
 
 
 def key_cursor(*keys):
-    """Cursor for lists ordered by their identifying UUID columns instead of creation time."""
+    """Cursor for lists ordered by their identifying key columns instead of creation time."""
     return base64.urlsafe_b64encode(json.dumps([str(key) for key in keys]).encode()).decode()
 
 

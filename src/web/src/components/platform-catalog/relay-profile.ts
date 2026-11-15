@@ -8,7 +8,7 @@ import type { CatalogModel, ProtocolFamily, RelayProfile, Upstream } from "./typ
 // pc.relay.fields. Keys the list does not know yet are kept unchanged on save.
 
 export type RelayKey = keyof RelayProfile;
-export type RelayGroup = "core" | "capabilities" | "tools" | "bedrock";
+export type RelayGroup = "core" | "capabilities" | "provider" | "tools" | "bedrock";
 
 interface FieldBase {
   key: RelayKey;
@@ -25,6 +25,12 @@ export interface Option {
   value: string;
   /** Option label; raw values (e.g. rule identifiers) are shown in monospace when omitted. */
   label?: MessageKey;
+  /** One-line explanation shown under the option (switch display). */
+  hint?: MessageKey;
+  /** Endpoints that accept this option; others disable it. Omitted means every endpoint. */
+  endpoints?: readonly RelayProfile["endpoint"][];
+  /** Node capability a release requires once the option is on (shown next to the label). */
+  capability?: string;
 }
 
 export type RelayField =
@@ -32,7 +38,14 @@ export type RelayField =
   | (FieldBase & { kind: "integer"; default?: number; min: number; max: number })
   | (FieldBase & { kind: "string"; default?: string; maxLength: number; placeholder?: string })
   | (FieldBase & { kind: "enum"; options: readonly Option[]; default?: string; nullable?: boolean })
-  | (FieldBase & { kind: "multi"; options: readonly Option[]; default: string[]; minItems?: number })
+  | (FieldBase & {
+      kind: "multi";
+      options: readonly Option[];
+      default: string[];
+      minItems?: number;
+      /** Render one switch per option (with hints) instead of a checkbox row. */
+      display?: "switches";
+    })
   | (FieldBase & { kind: "json"; shape: "object" | "array"; nullable?: boolean; placeholder?: string });
 
 const MAX = 1_000_000_000;
@@ -43,6 +56,28 @@ const ENDPOINTS: readonly Option[] = [
   { value: "openai_chat_completions", label: "pc.relay.options.openai_chat_completions" },
   { value: "bedrock_converse", label: "pc.relay.options.bedrock_converse" },
 ];
+
+const RESPONSES = ["openai_responses"] as const;
+const MESSAGES = ["anthropic_messages"] as const;
+const BOTH = ["openai_responses", "anthropic_messages"] as const;
+
+/** RelayProfile.provider_features, with the endpoints the API accepts (catalog PROVIDER_FEATURES). */
+const PROVIDER_FEATURES: readonly Option[] = [
+  { value: "stored_responses", endpoints: RESPONSES, capability: "relay.stored-responses.v1" },
+  { value: "background", endpoints: RESPONSES, capability: "relay.background-responses.v1" },
+  { value: "conversations", endpoints: RESPONSES, capability: "relay.conversations.v1" },
+  { value: "files", endpoints: BOTH, capability: "relay.files.v1" },
+  { value: "vector_stores", endpoints: RESPONSES, capability: "relay.vector-stores.v1" },
+  { value: "batches", endpoints: MESSAGES, capability: "relay.message-batches.v1" },
+  { value: "code_execution", endpoints: BOTH, capability: "relay.code-execution.v1" },
+  { value: "remote_mcp", endpoints: BOTH, capability: "relay.remote-mcp.v1" },
+  { value: "web_fetch", endpoints: MESSAGES, capability: "relay.web-fetch.v1" },
+  { value: "web_search", endpoints: BOTH, capability: "relay.web-search.v1" },
+].map((option) => ({
+  ...option,
+  label: `pc.relay.features.${option.value}.label` as MessageKey,
+  hint: `pc.relay.features.${option.value}.hint` as MessageKey,
+}));
 
 export const RELAY_FIELDS: readonly RelayField[] = [
   // Endpoint and bounds
@@ -78,6 +113,13 @@ export const RELAY_FIELDS: readonly RelayField[] = [
   { key: "continuation", group: "capabilities", kind: "boolean", default: false, label: "pc.relay.fields.continuation.label", hint: "pc.relay.fields.continuation.hint" },
   { key: "cancellation", group: "capabilities", kind: "boolean", default: false, label: "pc.relay.fields.cancellation.label", hint: "pc.relay.fields.cancellation.hint" },
   { key: "auto_prompt_cache", group: "capabilities", kind: "boolean", default: false, label: "pc.relay.fields.auto_prompt_cache.label", hint: "pc.relay.fields.auto_prompt_cache.hint" },
+
+  // Provider-hosted features: off by default; customer content then lives in the upstream account.
+  {
+    key: "provider_features", group: "provider", kind: "multi", default: [], display: "switches", wide: true,
+    options: PROVIDER_FEATURES,
+    label: "pc.relay.fields.provider_features.label", hint: "pc.relay.fields.provider_features.hint",
+  },
 
   // Hosted tools and their billing ceilings
   { key: "web_search_ceiling", group: "tools", kind: "integer", default: 0, min: 0, max: MAX, label: "pc.relay.fields.web_search_ceiling.label", hint: "pc.relay.fields.web_search_ceiling.hint" },
@@ -122,7 +164,7 @@ export const RELAY_FIELDS: readonly RelayField[] = [
   },
 ];
 
-export const RELAY_GROUPS: readonly RelayGroup[] = ["core", "capabilities", "tools", "bedrock"];
+export const RELAY_GROUPS: readonly RelayGroup[] = ["core", "capabilities", "provider", "tools", "bedrock"];
 
 /** Editor state: text for numbers, strings and JSON; booleans; string arrays for multi-selects. */
 export type DraftValue = string | boolean | string[];
@@ -313,6 +355,19 @@ function cacheDimensions(endpoint: RelayProfile["endpoint"]) {
 }
 
 export const RELAY_RULES: readonly RelayRule[] = [
+  {
+    message: "pc.relay.rules.featureEndpoint",
+    check: (p) => {
+      const unsupported = (p.provider_features ?? []).filter(
+        (feature) => !PROVIDER_FEATURES.find((o) => o.value === feature)?.endpoints?.includes(p.endpoint as RelayProfile["endpoint"]),
+      );
+      return unsupported.length ? { features: unsupported.join(", ") } : false;
+    },
+  },
+  {
+    message: "pc.relay.rules.backgroundNeedsStore",
+    check: (p) => Boolean(p.provider_features?.includes("background") && !p.provider_features.includes("stored_responses")),
+  },
   {
     message: "pc.relay.rules.container",
     check: (p) =>

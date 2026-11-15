@@ -71,6 +71,47 @@ export function RelayProfileEditor({
           <SwitchRow key={field.key} id={id} label={label} hint={hint} checked={raw === true} onChange={(next) => set(field.key, next)} />
         );
       case "multi":
+        if (field.display === "switches") {
+          const selected = Array.isArray(raw) ? raw : [];
+          const endpoint = typeof value.endpoint === "string" ? value.endpoint : "";
+          return (
+            <Field key={field.key} label={label} hint={hint} error={error} className="sm:col-span-2">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {field.options.map((option) => {
+                  const on = selected.includes(option.value);
+                  const supported = !option.endpoints || option.endpoints.some((e) => e === endpoint);
+                  return (
+                    <SwitchRow
+                      key={option.value}
+                      id={`${id}-${option.value}`}
+                      label={
+                        <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
+                          {option.label ? t(option.label) : option.value}
+                          <code className="font-mono text-[11px] font-normal text-muted-foreground">{option.value}</code>
+                        </span>
+                      }
+                      hint={
+                        <>
+                          {option.hint ? t(option.hint) : null}
+                          {!supported ? <span className="block text-amber-700">{t("pc.relay.featureUnsupported")}</span> : null}
+                          {option.capability ? (
+                            <span className="block font-mono text-[11px]">{t("pc.relay.featureCapability", { capability: option.capability })}</span>
+                          ) : null}
+                        </>
+                      }
+                      checked={on}
+                      // An unsupported feature that is already on can still be switched off.
+                      disabled={!supported && !on}
+                      onChange={(next) =>
+                        set(field.key, next ? [...selected, option.value] : selected.filter((v) => v !== option.value))
+                      }
+                    />
+                  );
+                })}
+              </div>
+            </Field>
+          );
+        }
         return (
           <Field key={field.key} label={label} hint={hint} error={error} className={field.wide ? "sm:col-span-2" : undefined}>
             <CheckboxGroup
@@ -165,6 +206,12 @@ export function RelayProfileEditor({
         return (
           <fieldset key={group} className="grid gap-3">
             <legend className="mb-1 text-sm font-semibold">{t(`pc.relay.groups.${group}`)}</legend>
+            {group === "provider" ? (
+              <p className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-amber-700" aria-hidden />
+                {t("pc.relay.providerNotice")}
+              </p>
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-2">{fields.map(renderField)}</div>
           </fieldset>
         );

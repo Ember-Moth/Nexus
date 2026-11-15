@@ -78,10 +78,31 @@ async function forward(request: NextRequest, context: Context): Promise<NextResp
   const body = upstream.status === 204 || upstream.status === 304 ? null : await upstream.arrayBuffer();
   const response = new NextResponse(body, { status: upstream.status, headers: responseHeaders });
   if (upstream.status === 401) {
-    // Expired or revoked session: drop the cookies so the app returns to the login page.
-    clearSessionCookies(response);
+    if (await sessionStillValid(token)) {
+      // A 401 about a credential in the request body (e.g. a wrong email or invitation
+      // token), not about the session: keep the cookies and tell the app not to sign out.
+      response.headers.set(SESSION_VALID_HEADER, "1");
+    } else {
+      // Expired or revoked session: drop the cookies so the app returns to the login page.
+      clearSessionCookies(response);
+    }
   }
   return response;
+}
+
+/** Response header set when an upstream 401 did not come from the session itself. */
+const SESSION_VALID_HEADER = "x-nexus-session-valid";
+
+async function sessionStillValid(token: string): Promise<boolean> {
+  try {
+    const probe = await fetch(`${nexusApiUrl()}/api/v1/me`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    return probe.ok;
+  } catch {
+    return false;
+  }
 }
 
 export const GET = forward;

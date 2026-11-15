@@ -52,7 +52,8 @@ const csrfMiddleware: Middleware = {
     return request;
   },
   onResponse({ response }) {
-    if (response.status === 401) {
+    // The BFF marks 401s that concern a credential in the request body (the session is fine).
+    if (response.status === 401 && response.headers.get("x-nexus-session-valid") !== "1") {
       csrfToken = null;
       unauthorizedListeners.forEach((listener) => listener());
     }

@@ -12,6 +12,9 @@ import { useI18n } from "@/i18n/provider";
 import { isApiError } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
 
+/** Codes whose server message carries the specific reason; shown after the translation. */
+const DETAILED_CODES = new Set(["invalid_snapshot", "invalid_catalog_config", "invalid_deployment", "invalid_gateway_configuration"]);
+
 /** Localized description of an API error: known codes first, then the server message. */
 export function useErrorText() {
   const { t, maybeT } = useI18n();
@@ -19,8 +22,12 @@ export function useErrorText() {
     if (!isApiError(error)) return t("errors.network");
     if (error.status === 0) return t("errors.network");
     if (error.status === 412) return t("errors.conflictBody");
-    if (error.status === 503) return t("errors.unavailable");
-    return maybeT(`errors.codes.${error.code}`) ?? error.message;
+    const known = maybeT(`errors.codes.${error.code}`);
+    // A 503 with a specific code (mail_unavailable, gateway_unavailable…) says more than the generic text.
+    if (error.status === 503) return known ?? t("errors.unavailable");
+    // For these codes the server message names the exact problem (e.g. which route is missing).
+    if (known && DETAILED_CODES.has(error.code) && error.message) return `${known}：${error.message}`;
+    return known ?? error.message;
   };
 }
 
@@ -40,11 +47,14 @@ export function TraceId({ traceId, className }: { traceId?: string; className?: 
 export function ErrorAlert({
   error,
   title,
+  description,
   onRetry,
   className,
 }: {
   error: unknown;
   title?: string;
+  /** Replaces the text derived from the error code, e.g. when the caller knows better. */
+  description?: string;
   onRetry?: () => void;
   className?: string;
 }) {
@@ -55,7 +65,7 @@ export function ErrorAlert({
       <CircleAlertIcon />
       <AlertTitle>{title ?? t("errors.title")}</AlertTitle>
       <AlertDescription className="gap-2">
-        <span>{text}</span>
+        <span>{description ?? text}</span>
         <TraceId traceId={isApiError(error) ? error.traceId : undefined} />
         {onRetry ? (
           <Button type="button" variant="outline" size="sm" onClick={onRetry} className="mt-1">

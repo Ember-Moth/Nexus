@@ -18,8 +18,20 @@ declare module "@tanstack/react-table" {
   interface ColumnMeta<TData extends RowData, TValue> {
     className?: string;
     align?: "right";
+    /** Keep the column visible at the right edge while the table scrolls sideways. */
+    sticky?: "right";
   }
 }
+
+/** Columns with id "actions" stay pinned so row actions are clickable without scrolling. */
+function isSticky(column: { id: string; columnDef: { meta?: { sticky?: "right" } } }): boolean {
+  return column.id === "actions" || column.columnDef.meta?.sticky === "right";
+}
+
+// Opaque versions of the header tint and row hover, so scrolled content does not show through.
+const STICKY_HEAD = "sticky right-0 z-10 bg-[color-mix(in_oklab,var(--muted)_50%,var(--card))] shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.15)]";
+const STICKY_CELL =
+  "sticky right-0 z-10 bg-card shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.15)] [tr:hover>&]:bg-[color-mix(in_oklab,var(--muted)_50%,var(--card))]";
 
 /**
  * TanStack Table rendered with shadcn table primitives. Pagination is cursor based and lives
@@ -86,6 +98,7 @@ export function DataTable<T>({
                     className={cn(
                       "h-10 px-4 text-xs font-medium text-muted-foreground",
                       header.column.columnDef.meta?.align === "right" && "text-right",
+                      isSticky(header.column) && STICKY_HEAD,
                       header.column.columnDef.meta?.className,
                     )}
                   >
@@ -105,6 +118,7 @@ export function DataTable<T>({
                       className={cn(
                         "h-12 px-4 text-[13px]",
                         cell.column.columnDef.meta?.align === "right" && "text-right",
+                        isSticky(cell.column) && STICKY_CELL,
                         cell.column.columnDef.meta?.className,
                       )}
                     >

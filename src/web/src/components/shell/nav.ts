@@ -63,7 +63,7 @@ export const orgNav: NavGroup[] = [
     label: "nav.groups.workspace",
     items: [
       { segment: "overview", label: "nav.items.overview", icon: LayoutDashboardIcon, roles: [O, D, F, PA, PF] },
-      { segment: "usage", label: "nav.items.usage", icon: BarChart3Icon, roles: [O, D, F, PA, PF], skeleton: true },
+      { segment: "usage", label: "nav.items.usage", icon: BarChart3Icon, roles: [O, D, F, PA, PF] },
       { segment: "requests", label: "nav.items.requests", icon: ListIcon, roles: [O, D, F, PA, PF] },
     ],
   },
@@ -73,7 +73,7 @@ export const orgNav: NavGroup[] = [
       { segment: "projects", label: "nav.items.projects", icon: FolderIcon, roles: [O, D, F, PA, PF] },
       { segment: "service-accounts", label: "nav.items.serviceAccounts", icon: CpuIcon, roles: [O, D, PA] },
       { segment: "keys", label: "nav.items.keys", icon: KeyRoundIcon, roles: [O, D, PA] },
-      { segment: "models", label: "nav.items.models", icon: BoxIcon, roles: [O, D, F, PA], skeleton: true },
+      { segment: "models", label: "nav.items.models", icon: BoxIcon, roles: [O, D, F, PA] },
     ],
   },
   {
@@ -81,15 +81,15 @@ export const orgNav: NavGroup[] = [
     items: [
       { segment: "wallet", label: "nav.items.wallet", icon: CreditCardIcon, roles: [O, F, PA, PF] },
       { segment: "recharge", label: "nav.items.recharge", icon: ReceiptIcon, roles: [O, F] },
-      { segment: "charges", label: "nav.items.charges", icon: FileTextIcon, roles: [O, D, F, PA, PF], skeleton: true },
-      { segment: "budgets", label: "nav.items.budgets", icon: TargetIcon, roles: [O, F, PA, PF], skeleton: true },
+      { segment: "charges", label: "nav.items.charges", icon: FileTextIcon, roles: [O, D, F, PA, PF] },
+      { segment: "budgets", label: "nav.items.budgets", icon: TargetIcon, roles: [O, F, PA, PF] },
     ],
   },
   {
     label: "nav.groups.manage",
     items: [
-      { segment: "members", label: "nav.items.members", icon: UsersIcon, roles: [O, PA], skeleton: true },
-      { segment: "policies", label: "nav.items.policies", icon: ShieldIcon, roles: [O, D, PA], skeleton: true },
+      { segment: "members", label: "nav.items.members", icon: UsersIcon, roles: [O, PA] },
+      { segment: "policies", label: "nav.items.policies", icon: ShieldIcon, roles: [O, D, PA] },
       { segment: "quotas", label: "nav.items.quotas", icon: GaugeIcon, roles: [O, PA] },
       { segment: "audit", label: "nav.items.audit", icon: FileTextIcon, roles: [O, F, PA, PF] },
     ],
@@ -101,24 +101,24 @@ export const platformNav: NavGroup[] = [
     label: "nav.groups.tenants",
     items: [
       { segment: "organizations", label: "nav.items.organizations", icon: Building2Icon, roles: [PA, PF] },
-      { segment: "users", label: "nav.items.users", icon: UserIcon, roles: [PA], skeleton: true },
+      { segment: "users", label: "nav.items.users", icon: UserIcon, roles: [PA] },
     ],
   },
   {
     label: "nav.groups.catalog",
     items: [
-      { segment: "models", label: "nav.items.catalogModels", icon: BoxIcon, roles: [PA], skeleton: true },
-      { segment: "upstreams", label: "nav.items.upstreams", icon: ServerIcon, roles: [PA], skeleton: true },
-      { segment: "deployments", label: "nav.items.deployments", icon: GitBranchIcon, roles: [PA], skeleton: true },
+      { segment: "models", label: "nav.items.catalogModels", icon: BoxIcon, roles: [PA] },
+      { segment: "upstreams", label: "nav.items.upstreams", icon: ServerIcon, roles: [PA] },
+      { segment: "deployments", label: "nav.items.deployments", icon: GitBranchIcon, roles: [PA] },
       { segment: "routes", label: "nav.items.routes", icon: SplitIcon, roles: [PA] },
     ],
   },
   {
     label: "nav.groups.pricing",
     items: [
-      { segment: "sale-prices", label: "nav.items.salePrices", icon: TagIcon, roles: [PA], skeleton: true },
-      { segment: "cost-prices", label: "nav.items.costPrices", icon: TagIcon, roles: [PA], skeleton: true },
-      { segment: "discounts", label: "nav.items.discounts", icon: PercentIcon, roles: [PA], skeleton: true },
+      { segment: "sale-prices", label: "nav.items.salePrices", icon: TagIcon, roles: [PA] },
+      { segment: "cost-prices", label: "nav.items.costPrices", icon: TagIcon, roles: [PA] },
+      { segment: "discounts", label: "nav.items.discounts", icon: PercentIcon, roles: [PA] },
     ],
   },
   {
@@ -128,19 +128,19 @@ export const platformNav: NavGroup[] = [
   {
     label: "nav.groups.finance",
     items: [
-      { segment: "receiving", label: "nav.items.receiving", icon: LandmarkIcon, roles: [PF], skeleton: true },
-      { segment: "funding", label: "nav.items.funding", icon: FilePlusIcon, roles: [PF], skeleton: true },
-      { segment: "adjustments", label: "nav.items.adjustments", icon: SlidersHorizontalIcon, roles: [PF], skeleton: true },
-      { segment: "reconciliation", label: "nav.items.reconciliation", icon: TriangleAlertIcon, roles: [PF], skeleton: true },
-      { segment: "payment-cases", label: "nav.items.paymentCases", icon: FlagIcon, roles: [PF], skeleton: true },
-      { segment: "channels", label: "nav.items.channels", icon: PlugIcon, roles: [PA], skeleton: true },
+      { segment: "receiving", label: "nav.items.receiving", icon: LandmarkIcon, roles: [PF] },
+      { segment: "funding", label: "nav.items.funding", icon: FilePlusIcon, roles: [PF] },
+      { segment: "adjustments", label: "nav.items.adjustments", icon: SlidersHorizontalIcon, roles: [PF] },
+      { segment: "reconciliation", label: "nav.items.reconciliation", icon: TriangleAlertIcon, roles: [PF] },
+      { segment: "payment-cases", label: "nav.items.paymentCases", icon: FlagIcon, roles: [PF] },
+      { segment: "channels", label: "nav.items.channels", icon: PlugIcon, roles: [PA] },
     ],
   },
   {
     label: "nav.groups.ops",
     items: [
-      { segment: "audit", label: "nav.items.platformAudit", icon: FileTextIcon, roles: [PA, PF], skeleton: true },
-      { segment: "metrics", label: "nav.items.metrics", icon: ActivityIcon, roles: [PA], skeleton: true },
+      { segment: "audit", label: "nav.items.platformAudit", icon: FileTextIcon, roles: [PA, PF] },
+      { segment: "metrics", label: "nav.items.metrics", icon: ActivityIcon, roles: [PA] },
     ],
   },
 ];

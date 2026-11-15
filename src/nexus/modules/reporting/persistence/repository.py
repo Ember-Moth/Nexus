@@ -8,7 +8,12 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.shared.errors import ServiceError
 from nexus.shared.reporting import predicates
+from nexus.shared.views import managed_source
 
+from ..application.schemas import ReportingPolicyView
+
+# Sentinel: an administrator's write leaves the policy lock as it is (it is refused while set).
+KEEP = object()
 # The public view of an export job; a copy past its expiry reads as expired before cleanup.
 JOB = """id,organization_id,actor_id,kind,filters,
     CASE WHEN expires_at<=clock_timestamp() THEN 'expired' ELSE state END state,
@@ -170,7 +175,41 @@ class ReportingRepository:
             details=json.dumps(details),
         )
 
-    async def enqueue(self, org, actor, body, ttl, rate):
+    async def policy(self, *, lock=False):
+        row = (
+            await self.rows(
+                "SELECT per_org_minute,ttl_seconds,max_rows,version,managed_sha256,managed_at "
+                "FROM reporting.export_policy" + (" FOR UPDATE" if lock else "")
+            )
+        )[0]
+        return ReportingPolicyView(
+            exports={k: row[k] for k in ("per_org_minute", "ttl_seconds", "max_rows")},
+            managed=managed_source(row),
+            version=row["version"],
+        )
+
+    async def set_policy(self, policy, version, *, managed=KEEP):
+        """``managed`` is the SHA-256 of the locking policy file, or None to unlock."""
+        lock = (
+            ""
+            if managed is KEEP
+            else ",managed_sha256=:managed,managed_at=CASE WHEN CAST(:managed AS text) IS NULL "
+            "THEN NULL ELSE clock_timestamp() END"
+        )
+        extra = {} if managed is KEEP else {"managed": managed}
+        result = await self.execute(
+            f"""UPDATE reporting.export_policy SET per_org_minute=:per_org_minute,
+                ttl_seconds=:ttl_seconds,max_rows=:max_rows,version=version+1{lock}
+             WHERE version=:version RETURNING version""",
+            **policy.exports.model_dump(),
+            version=version,
+            **extra,
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def enqueue(self, org, actor, body):
+        policy = (await self.policy()).exports
+        ttl, rate = policy.ttl_seconds, policy.per_org_minute
         await self.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:org AS text),95631))", org=str(org)
         )

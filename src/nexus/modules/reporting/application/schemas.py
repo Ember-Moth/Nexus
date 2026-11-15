@@ -4,7 +4,14 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from nexus.shared.views import ByteSeconds, DecimalString, MeterCounts, Timestamp, View
+from nexus.shared.views import (
+    ByteSeconds,
+    DecimalString,
+    ManagedSource,
+    MeterCounts,
+    Timestamp,
+    View,
+)
 
 # Plain aliases: unlike ``type`` statements they do not become named OpenAPI components.
 TimeBasis = Literal["occurred_at", "posted_at"]
@@ -255,3 +262,22 @@ class ExportJob(View):
     created_at: Timestamp
     completed_at: Timestamp | None
     expires_at: Timestamp
+
+
+class ExportPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    per_org_minute: int = Field(ge=1, le=1000, description="Exports one organization may queue")
+    ttl_seconds: int = Field(ge=60, le=2592000, description="How long a finished export is kept")
+    max_rows: int = Field(ge=1, le=100000, description="Larger exports fail as export_too_large")
+
+
+class ReportingPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    exports: ExportPolicy
+
+
+class ReportingPolicyView(ReportingPolicy):
+    managed: ManagedSource | None = Field(
+        description="The policy file that locked this policy; writes are refused while set"
+    )
+    version: int

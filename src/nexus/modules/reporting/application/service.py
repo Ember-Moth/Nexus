@@ -3,11 +3,23 @@ import csv
 import io
 import json
 import re
+from uuid import UUID
 
 from nexus.shared.errors import ServiceError
+from nexus.shared.policy import ImportPlan, plan
 from nexus.shared.reporting import next_cursor
 
-from .schemas import ReportFilter
+from .schemas import ReportFilter, ReportingPolicy
+
+GROUP = "reporting.export_policy"
+# Audit resource of changes to the singleton export policy.
+POLICY_RESOURCE = UUID(int=0)
+
+
+def policy_changes(before, after):
+    old, new = before.exports.model_dump(), after.exports.model_dump()
+    return {f"exports.{k}": [old[k], new[k]] for k in new if old[k] != new[k]}
+
 
 CSV_FIELDS = {
     "requests": (
@@ -93,9 +105,70 @@ def csv_field(value):
 
 
 class Reports:
-    def __init__(self, transactions, access, source, audits, *, ttl, rate, max_rows):
+    def __init__(self, transactions, access, source, audits, administrator):
         self.tx, self.access, self.source, self.audits = transactions, access, source, audits
-        self.ttl, self.rate, self.max_rows = ttl, rate, max_rows
+        self.administrator = administrator
+
+    async def policy(self, token):
+        await self.administrator(token)
+        async with self.tx() as repo:
+            return await repo.policy()
+
+    async def update_policy(self, token, body, version):
+        actor = await self.administrator(token)
+        async with self.tx() as repo:
+            current = await repo.policy(lock=True)
+            if current.managed is not None:
+                raise ServiceError(
+                    "policy_managed_externally",
+                    "The export policy is managed by a policy file",
+                    409,
+                )
+            await self._write_policy(repo, current, body, version)
+            await repo.audit(
+                actor,
+                "reporting_policy.updated",
+                POLICY_RESOURCE,
+                None,
+                policy_changes(current, body),
+            )
+            return await repo.policy()
+
+    async def plan_import(self, mode, values, file_sha256):
+        """Plan the ``reporting.export_policy`` group of a policy file; nothing is written yet."""
+        async with self.tx() as repo:
+            current = await repo.policy()
+        target, found, skipped = plan(
+            GROUP,
+            mode,
+            current.model_dump(mode="json", exclude={"version", "managed"}),
+            current.version,
+            current.managed is not None,
+            values,
+            ReportingPolicy,
+        )
+        body = ReportingPolicy.model_validate(target)
+
+        async def write(details):
+            async with self.tx() as repo:
+                locked = await repo.policy(lock=True)
+                await self._write_policy(
+                    repo,
+                    locked,
+                    body,
+                    current.version,
+                    managed=file_sha256 if mode == "managed" else None,
+                )
+                await repo.audit(
+                    None, "reporting_policy.updated", POLICY_RESOURCE, None, {**details, **found}
+                )
+
+        return ImportPlan(GROUP, mode, mode == "managed", found, skipped, write if found else None)
+
+    @staticmethod
+    async def _write_policy(repo, current, body, version, **lock):
+        if current.version != version or not await repo.set_policy(body, version, **lock):
+            raise ServiceError("version_conflict", "Reporting policy has changed", 412)
 
     async def scope(self, token, org, filters, operation):
         return await self.access(
@@ -141,7 +214,7 @@ class Reports:
             "organization_id": org,
             "group_by": group_by,
             "filters": filters.model_dump(mode="json"),
-            "currency": self.source.currency,
+            "currency": await self.source.currency(),
         }
 
     async def cache_usage(self, token, org, filters):
@@ -174,7 +247,7 @@ class Reports:
             token, org, body.filters, "finance" if body.kind == "attempt_costs" else "export"
         )
         async with self.tx() as repo:
-            return await repo.enqueue(org, actor, body, self.ttl, self.rate)
+            return await repo.enqueue(org, actor, body)
 
     async def exports(self, token, org, limit, cursor):
         # export() admits the requester or a platform role, and cost jobs only to platform finance.
@@ -211,6 +284,7 @@ class Reports:
     async def process_export(self):
         async with self.tx() as repo:
             job = await repo.claim()
+            max_rows = (await repo.policy()).exports.max_rows
         if job is None:
             return 0
         data = None
@@ -222,7 +296,7 @@ class Reports:
                 None,
                 job["kind"],
                 ReportFilter.model_validate(job["filters"]),
-                self.max_rows,
+                max_rows,
             )
             if page["next_cursor"]:
                 raise ValueError("export_too_large")

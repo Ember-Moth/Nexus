@@ -4,7 +4,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import AwareDatetime
 
-from nexus.http import business_errors, credentials, cursor_value, error_responses
+from nexus.http import (
+    business_errors,
+    credentials,
+    cursor_value,
+    error_responses,
+    expected_version,
+)
 from nexus.shared.errors import ServiceError
 
 from ..application.schemas import (
@@ -17,6 +23,8 @@ from ..application.schemas import (
     LedgerRecord,
     Page,
     ReportFilter,
+    ReportingPolicy,
+    ReportingPolicyView,
     ReportPage,
     RequestRecord,
     UsageReport,
@@ -35,6 +43,7 @@ def create_router(get_service):
     Token = Annotated[str, Depends(credentials)]
     Limit = Annotated[int, Query(ge=1, le=100)]
     Cursor = Annotated[str | None, Query(max_length=512)]
+    Version = Annotated[int, Depends(expected_version)]
 
     # FastAPI's flattened query models cannot be combined with separate controls.
     def filter_by(
@@ -171,5 +180,25 @@ def create_router(get_service):
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{export_id}.csv"'},
         )
+
+    @router.get("/settings/reporting", response_model=ReportingPolicyView)
+    async def reporting_policy(service: Service, token: Token, response: Response):
+        """Export limits; platform administrators only."""
+        result = await service.policy(token)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.put(
+        "/settings/reporting",
+        response_model=ReportingPolicyView,
+        responses=business_errors("version_conflict", "policy_managed_externally"),
+    )
+    async def update_reporting_policy(
+        body: ReportingPolicy, service: Service, token: Token, version: Version, response: Response
+    ):
+        """Replace the export limits; new exports use them at once."""
+        result = await service.update_policy(token, body, version)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
 
     return router

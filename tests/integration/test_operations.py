@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+from policies import put_policy
 from test_api_contract import exact, pages
 from test_billing import (
     adjustment,
@@ -328,7 +329,7 @@ async def test_projection_crash_replays_and_export_is_fenced_and_expires(http, a
     assert await reports.project() == 1
     assert admin.execute("SELECT count(*) FROM reporting.request_facts").fetchone()[0] == 1
     base = f"/api/v1/organizations/{org['id']}/exports"
-    reports.rate = 1
+    await put_policy(client, root, "/api/v1/settings/reporting", {"exports": {"per_org_minute": 1}})
     out = await client.post(base, headers=auth(root), json={"kind": "ledger"})
     assert out.status_code == 202, out.text
     assert (await client.post(base, headers=auth(root), json={"kind": "ledger"})).status_code == 429

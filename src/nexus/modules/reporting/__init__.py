@@ -7,14 +7,13 @@ from .persistence.repository import transaction
 __all__ = ["create_service", "api"]
 
 
-def create_service(database, access, source, audits, settings):
+def create_service(database, access, source, audits, administrator):
+    """``administrator`` resolves a session to a platform administrator or refuses it."""
     database.require_module(ModuleName.REPORTING)
     return Reports(
         lambda: transaction(database),
         access,
         source,
         [*audits, audit_reader(database, ModuleName.REPORTING)],
-        ttl=settings.export_ttl_seconds,
-        rate=settings.export_per_org_minute,
-        max_rows=settings.export_max_rows,
+        administrator,
     )

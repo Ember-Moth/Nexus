@@ -192,6 +192,8 @@ const zhCN = {
       receiving_unavailable: "收款账户不可用",
       record_immutable: "记录已过账或发布，不能修改",
       registration_closed: "当前不开放自助注册",
+      registration_requires_email_verification: "注册需要验证邮箱，请填写邮箱或使用邮箱格式的登录名",
+      registration_unavailable: "当前不开放自助注册",
       relay_profile_required: "该部署需要 Relay 配置",
       request_conflict: "请求冲突",
       request_not_executable: "请求不能执行",

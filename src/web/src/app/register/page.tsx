@@ -25,6 +25,8 @@ type Created = components["schemas"]["RegistrationCreated"] & { csrf_token: stri
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const CLOSED_CODES = new Set(["registration_closed", "registration_unavailable"]);
+
 const schema = z
   .object({
     login: z.string().trim().min(3).max(254).regex(/^\S+$/),
@@ -87,7 +89,10 @@ export default function RegisterPage() {
     }
   });
 
-  const closed = isApiError(error) && (error.code === "registration_closed" || (error.status === 403 && error.code === "forbidden"));
+  // registration_unavailable is the code the auth hardening branch returns when sign-up is off.
+  const closed =
+    isApiError(error) &&
+    (CLOSED_CODES.has(error.code) || (error.status === 403 && error.code === "forbidden"));
 
   return (
     <AuthLayout>

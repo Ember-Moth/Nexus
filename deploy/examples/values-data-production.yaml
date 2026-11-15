@@ -1,0 +1,11 @@
+# Example production values for the nexus-data chart: backups to Cloudflare R2.
+postgresql:
+  backup:
+    bucket: nexus-backups
+    prefix: postgres/production
+    # https://<account_id>.eu.r2.cloudflarestorage.com for a bucket in the EU jurisdiction.
+    endpointURL: https://<account_id>.r2.cloudflarestorage.com
+    credentialsSecret: nexus-backup-r2
+    # Keep the R2 lifecycle rule on postgres/ longer than this plus one base backup interval
+    # (deploy/examples/r2/lifecycle-backups.json uses 45 days).
+    retentionPolicy: 30d

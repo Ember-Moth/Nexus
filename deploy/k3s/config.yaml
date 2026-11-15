@@ -12,19 +12,26 @@ write-kubeconfig-mode: "0600"
 #   - k3s.example.internal
 # node-ip: 10.0.0.10
 
-# Scheduled etcd snapshots, kept locally and uploaded to S3-compatible storage. A snapshot
-# contains every Secret; the bucket must be private and encrypted (SSE-KMS or equivalent).
+# Scheduled etcd snapshots, kept locally and uploaded to Cloudflare R2: the backup bucket,
+# under etcd/<folder>, next to the PostgreSQL backups under postgres/. k3s prunes both the local
+# and the R2 copies down to etcd-snapshot-retention (28 x 6 h = 7 days).
+# A snapshot contains every Secret. They are encrypted with the secrets-encryption key, which a
+# restore needs as well: back up the server token and
+# /var/lib/rancher/k3s/server/cred/encryption-config.json outside the cluster.
 etcd-snapshot-schedule-cron: "0 */6 * * *"
 etcd-snapshot-retention: 28
 etcd-snapshot-compress: true
 etcd-s3: true
-etcd-s3-endpoint: s3.example.com
-etcd-s3-region: us-east-1
-etcd-s3-bucket: nexus-etcd-snapshots
-etcd-s3-folder: production
-# Credentials: either here (keep this file 0600), or in the Secret named by
-# etcd-s3-config-secret in kube-system. Keep an offline copy as well: a restore onto a new
-# host happens before the cluster (and its Secrets) exists.
+# <account_id>.r2.cloudflarestorage.com (no scheme), or <account_id>.eu.r2.cloudflarestorage.com
+# for a bucket in the EU jurisdiction.
+etcd-s3-endpoint: ACCOUNT_ID.r2.cloudflarestorage.com
+etcd-s3-region: auto
+etcd-s3-bucket: nexus-backups
+etcd-s3-folder: etcd/production
+# Credentials of the backup bucket's R2 API token (Object Read & Write on that bucket only):
+# either here (keep this file 0600), or in the Secret named by etcd-s3-config-secret in
+# kube-system. Keep an offline copy too: a restore onto a new host happens before the cluster
+# and its Secrets exist.
 # etcd-s3-access-key: ...
 # etcd-s3-secret-key: ...
 

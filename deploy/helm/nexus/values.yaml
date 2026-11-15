@@ -111,6 +111,21 @@ redis:
   caSecret: nexus-redis-tls
   caConfigMap: ""
 
+# Application object storage (Cloudflare R2): export files, once the reporting module stores them
+# there. A bucket of its own, separate from the backup bucket, with its own R2 API token
+# (Object Read & Write on this bucket only). The variable names injected into the API and Worker
+# are provisional until that change lands:
+#   ConfigMap  NEXUS_OBJECT_STORAGE_ENDPOINT_URL, NEXUS_OBJECT_STORAGE_BUCKET,
+#              NEXUS_OBJECT_STORAGE_REGION
+#   Secret     NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID, NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY
+#              (keys ACCESS_KEY_ID and ACCESS_SECRET_KEY of credentialsSecret)
+objectStorage:
+  enabled: false
+  endpointURL: https://ACCOUNT_ID.r2.cloudflarestorage.com
+  bucket: nexus-app
+  region: auto
+  credentialsSecret: nexus-app-r2
+
 # ---------------------------------------------------------------------------------------------
 # Layer 2: ConfigMaps. Non-secret startup parameters and per-node resource limits, one ConfigMap
 # per component. The chart adds the derived keys listed in docs/deployment.md (URLs, listen

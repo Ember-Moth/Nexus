@@ -30,8 +30,10 @@ jobs:
         run: |
           helm lint deploy/helm/nexus-data -f deploy/smoke/values-data.yaml
           helm lint deploy/helm/nexus -f deploy/smoke/values-app.yaml
-          helm template nexus-data deploy/helm/nexus-data -n nexus > /dev/null
-          helm template nexus deploy/helm/nexus -n nexus -f deploy/examples/values-production.yaml > /dev/null
+          helm template nexus-data deploy/helm/nexus-data -n nexus \
+            -f deploy/examples/values-data-production.yaml > /dev/null
+          helm template nexus deploy/helm/nexus -n nexus -f deploy/examples/values-production.yaml \
+            --set objectStorage.enabled=true > /dev/null
           helm template nexus deploy/helm/nexus -n nexus -f deploy/smoke/values-app.yaml \
             --set relay.clusterId=00000000-0000-4000-8000-000000000001 --set relay.replicas=2 \
             > /dev/null

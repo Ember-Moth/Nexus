@@ -21,8 +21,10 @@ mkdir -p "$STATE" && chmod 700 "$STATE"
 
 log() { printf '\n== %s\n' "$*"; }
 
-# --- S3-compatible stand-in (outside the cluster it backs up) ----------------------------------
-log "S3 stand-in (versitygw) on $NODE_IP:7070"
+# --- Stand-in for Cloudflare R2 (outside the cluster it backs up) -----------------------------
+# versitygw, an S3-compatible gateway, with R2's region "auto" and the same two buckets. Moving to
+# R2 changes only the endpoint (and the credentials).
+log "R2 stand-in (versitygw) on $NODE_IP:7070"
 if [ ! -f "$STATE/s3.env" ]; then
   umask 077
   printf 'S3_ACCESS_KEY=%s\nS3_SECRET_KEY=%s\n' "$(openssl rand -hex 10)" "$(openssl rand -hex 20)" > "$STATE/s3.env"
@@ -34,13 +36,14 @@ if ! nerdctl ps --format '{{.Names}}' | grep -qx nexus-s3; then
   nerdctl rm -f nexus-s3 >/dev/null 2>&1 || true
   nerdctl run -d --name nexus-s3 --restart always -p 7070:7070 \
     -v "$STATE/s3data:/data" "$VERSITYGW_IMAGE" \
-    --access "$S3_ACCESS_KEY" --secret "$S3_SECRET_KEY" posix /data >/dev/null
+    --access "$S3_ACCESS_KEY" --secret "$S3_SECRET_KEY" --region auto posix /data >/dev/null
 fi
 # --noproxy: Lima passes the host's proxy settings into the VM.
 for _ in $(seq 1 30); do curl --noproxy '*' -s -o /dev/null "http://$NODE_IP:7070/" && break; sleep 1; done
-for bucket in nexus-etcd-snapshots nexus-pg-backups; do
-  status=$(curl --noproxy '*' -s -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:us-east-1:s3" \
-    --user "$S3_ACCESS_KEY:$S3_SECRET_KEY" -X PUT "http://$NODE_IP:7070/$bucket")
+for bucket in nexus-backups nexus-app; do
+  status=$(curl --noproxy '*' -s -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" \
+    --user "$S3_ACCESS_KEY:$S3_SECRET_KEY" -X PUT "http://$NODE_IP:7070/$bucket" \
+    -d '<CreateBucketConfiguration><LocationConstraint>auto</LocationConstraint></CreateBucketConfiguration>')
   case $status in 200|409) ;; *) echo "creating bucket $bucket failed: HTTP $status" >&2; exit 1 ;; esac
 done
 
@@ -61,9 +64,9 @@ etcd-snapshot-compress: true
 etcd-s3: true
 etcd-s3-endpoint: $NODE_IP:7070
 etcd-s3-insecure: true
-etcd-s3-region: us-east-1
-etcd-s3-bucket: nexus-etcd-snapshots
-etcd-s3-folder: smoke
+etcd-s3-region: auto
+etcd-s3-bucket: nexus-backups
+etcd-s3-folder: etcd/smoke
 etcd-s3-access-key: $S3_ACCESS_KEY
 etcd-s3-secret-key: $S3_SECRET_KEY
 kubelet-arg:
@@ -144,8 +147,8 @@ kubectl -n cert-manager wait --for=condition=Ready certificate/smoke-root-ca --t
 
 # The namespace and the backup credentials (this script owns the S3 stand-in's keys).
 kubectl create namespace nexus --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl -n nexus create secret generic nexus-backup-s3 \
-  --from-env-file=<(printf 'ACCESS_KEY_ID=%s\nACCESS_SECRET_KEY=%s\n' "$S3_ACCESS_KEY" "$S3_SECRET_KEY") \
+kubectl -n nexus create secret generic nexus-backup-r2 \
+  --from-env-file=<(printf 'ACCESS_KEY_ID=%s\nACCESS_SECRET_KEY=%s\nACCESS_REGION=auto\n' "$S3_ACCESS_KEY" "$S3_SECRET_KEY") \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 # --- Images --------------------------------------------------------------------------------------

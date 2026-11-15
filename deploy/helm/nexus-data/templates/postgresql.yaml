@@ -98,22 +98,23 @@ metadata:
 spec:
   retentionPolicy: {{ $pg.backup.retentionPolicy | quote }}
   configuration:
-    destinationPath: {{ $pg.backup.destinationPath }}
-    {{- with $pg.backup.endpointURL }}
-    endpointURL: {{ . }}
-    {{- end }}
+    destinationPath: s3://{{ $pg.backup.bucket }}/{{ $pg.backup.prefix }}
+    endpointURL: {{ $pg.backup.endpointURL }}
     s3Credentials:
-      accessKeyId: {name: {{ $pg.backup.s3CredentialsSecret }}, key: ACCESS_KEY_ID}
-      secretAccessKey: {name: {{ $pg.backup.s3CredentialsSecret }}, key: ACCESS_SECRET_KEY}
-      {{- with $pg.backup.region }}
-      region: {name: {{ $pg.backup.s3CredentialsSecret }}, key: ACCESS_REGION}
-      {{- end }}
+      accessKeyId: {name: {{ $pg.backup.credentialsSecret }}, key: ACCESS_KEY_ID}
+      secretAccessKey: {name: {{ $pg.backup.credentialsSecret }}, key: ACCESS_SECRET_KEY}
+      region: {name: {{ $pg.backup.credentialsSecret }}, key: ACCESS_REGION}
     wal:
       compression: {{ $pg.backup.walCompression }}
       maxParallel: 2
     data:
       compression: {{ $pg.backup.dataCompression }}
       jobs: 2
+  {{- with $pg.backup.sidecarEnv }}
+  instanceSidecarConfiguration:
+    env:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup

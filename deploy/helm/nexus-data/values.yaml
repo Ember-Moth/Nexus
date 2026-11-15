@@ -40,17 +40,31 @@ postgresql:
   enableSuperuserAccess: true
   backup:
     enabled: true
-    # S3-compatible destination for WAL archiving and base backups (Barman Cloud plugin).
-    destinationPath: s3://nexus-pg-backups/production
-    endpointURL: ""
-    # Secret with keys ACCESS_KEY_ID and ACCESS_SECRET_KEY (and optionally ACCESS_SESSION_TOKEN).
-    s3CredentialsSecret: nexus-backup-s3
-    region: ""
+    # Cloudflare R2. Any S3-compatible store is configured the same way; only endpointURL differs
+    # (the smoke test points it at a local stand-in). One backup bucket for everything:
+    # PostgreSQL under <prefix>/, k3s etcd snapshots under etcd/ (deploy/k3s/config.yaml).
+    # The application bucket is separate (nexus chart, objectStorage).
+    bucket: nexus-backups
+    prefix: postgres/production
+    # https://<account_id>.r2.cloudflarestorage.com, or
+    # https://<account_id>.eu.r2.cloudflarestorage.com for a bucket in the EU jurisdiction.
+    endpointURL: https://ACCOUNT_ID.r2.cloudflarestorage.com
+    # Secret with ACCESS_KEY_ID, ACCESS_SECRET_KEY and ACCESS_REGION ("auto" for R2): an R2 API
+    # token with Object Read & Write on the backup bucket only.
+    credentialsSecret: nexus-backup-r2
+    # Recovery window. CloudNativePG keeps the newest base backup older than the window and every
+    # WAL file after it, and deletes the rest. Any R2 lifecycle rule on <prefix>/ must be longer
+    # than retentionPolicy + the base backup interval (docs/deployment.md#保留期).
     retentionPolicy: 30d
     # Six-field cron (seconds first): daily base backup at 03:00.
     schedule: "0 0 3 * * *"
     walCompression: gzip
     dataCompression: gzip
+    # Sent to the Barman Cloud sidecar. boto3 adds request checksums by default; computing them
+    # only where the API requires it keeps uploads compatible with S3-compatible stores.
+    sidecarEnv:
+      - {name: AWS_REQUEST_CHECKSUM_CALCULATION, value: when_required}
+      - {name: AWS_RESPONSE_CHECKSUM_VALIDATION, value: when_required}
   monitoring:
     podMonitor: false
 

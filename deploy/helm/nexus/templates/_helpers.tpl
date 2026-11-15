@@ -160,6 +160,14 @@ Usage: include "nexus.databaseEnv" (list . "api" "NEXUS_DATABASE_URL")
 - name: NEXUS_TURNSTILE_SECRET_KEY
   valueFrom:
     secretKeyRef: {name: {{ $root.Values.secrets.integrations }}, key: turnstile-secret-key, optional: true}
+{{- if $root.Values.objectStorage.enabled }}
+- name: NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef: {name: {{ $root.Values.objectStorage.credentialsSecret }}, key: ACCESS_KEY_ID}
+- name: NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef: {name: {{ $root.Values.objectStorage.credentialsSecret }}, key: ACCESS_SECRET_KEY}
+{{- end }}
 {{- end -}}
 
 {{/* CA files every database and Redis client mounts. */}}

@@ -1,5 +1,10 @@
 {{- /* Layer 2: API startup parameters. Derived keys come last and win. */}}
 {{- $data := mustMergeOverwrite (deepCopy .Values.config.controlPlane) (deepCopy .Values.config.api) (dict "NEXUS_HOST" "0.0.0.0" "NEXUS_PORT" "8000") }}
+{{- if .Values.objectStorage.enabled }}
+{{- $_ := set $data "NEXUS_OBJECT_STORAGE_ENDPOINT_URL" .Values.objectStorage.endpointURL }}
+{{- $_ := set $data "NEXUS_OBJECT_STORAGE_BUCKET" .Values.objectStorage.bucket }}
+{{- $_ := set $data "NEXUS_OBJECT_STORAGE_REGION" .Values.objectStorage.region }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

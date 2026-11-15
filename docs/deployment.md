@@ -1,6 +1,6 @@
 # k3s 部署手册
 
-Nexus 在 k3s 上从单节点起步：内置 etcd、一台 server 同时承载控制面和全部工作负载。之后加 agent 节点扩计算容量，加到 3 台 server 获得控制面高可用，不需要迁移数据存储。本文覆盖镜像、Helm chart、三层配置、安装、扩容、升级、回滚、密钥轮换、备份恢复和上线检查。仓库中的部署产物都在 [`deploy/`](../deploy) 下。
+Nexus 在 k3s 上从单节点起步：内置 etcd、一台 server 同时承载控制面和全部工作负载。之后加 agent 节点扩计算容量，加到 3 台 server 获得控制面高可用，不需要迁移数据存储。本文覆盖镜像、Helm chart、三层配置、安装、扩容、升级、回滚、密钥轮换、备份恢复和上线检查。项目尚未上线，本文按全新安装编写，不处理存量数据的迁移。仓库中的部署产物都在 [`deploy/`](../deploy) 下。
 
 ## 组成
 
@@ -63,7 +63,8 @@ chart 中不出现任何明文。生产用 [External Secrets 示例](../deploy/e
 | `nexus-relay-node-<序号>` | `username`、`password`、`node-id` | 只有该序号 Relay Pod 的 init 容器；由登记 Job 创建，也可预先由 External Secrets 提供 |
 | `nexus-integrations` | `smtp-password`、`resend-api-key`、`cloudflare-email-api-token`、`turnstile-secret-key`，均可选 | API、Worker |
 | `nexus-deployer` | `login`、`password` | Relay 节点登记 Job 用这个平台管理员登录 |
-| `nexus-backup-s3` | `ACCESS_KEY_ID`、`ACCESS_SECRET_KEY` | CloudNativePG 的 WAL 归档和备份 |
+| `nexus-backup-r2` | `ACCESS_KEY_ID`、`ACCESS_SECRET_KEY`、`ACCESS_REGION`（R2 为 `auto`） | CloudNativePG 的 WAL 归档和备份；备份 bucket 的 R2 API Token |
+| `nexus-app-r2` | `ACCESS_KEY_ID`、`ACCESS_SECRET_KEY` | API、Worker（`objectStorage.enabled` 时）；应用 bucket 的 R2 API Token |
 
 数据库和 Redis 口令通过 Kubernetes `$(VAR)` 展开拼进连接 URL，因此只能包含 URL 安全字符，例如 `openssl rand -hex 32` 的输出。需要整条连接串时，把 `secrets.database.<角色>.urlKey` 设为 Secret 中保存完整 URL 的键。
 
@@ -92,7 +93,7 @@ values 的 `policy.groups` 渲染成 ConfigMap `nexus-policy` 中的 `policy.yam
 
 `policy.dryRun: true` 只校验并报告差异，不写入。`policy.clusters` 按集群 UUID 配置集群策略。导入文件的格式是 `{version: 1, groups: {<组名>: {mode, values}}, clusters: {<集群 UUID>: {mode, values}}}`。
 
-> **依赖说明**：策略表、`nexus settings import --file` 和按策略组锁定由 settings-to-db 分支（`claude/settings-to-db-80fa79`）提供，该分支尚未合入 main。截至 2026-11-15，它已有 `nexus settings import-env [--cluster <集群 UUID>] [--dry-run]`，并在合入后忽略旧的策略环境变量（启动日志记为 `settings.environment_ignored`）；`import --file` 和 GitOps 锁定尚未出现。导入 Job 按约定的接口编写（`--file`、`--dry-run`，文件格式见上），镜像中没有该命令时，`policy.requireImporter: true`（默认）让发布失败，`false` 则跳过导入并在日志中说明。合入前，下表标为“策略”的变量仍由进程从环境变量读取，确有非默认值时可暂时写在 `config.*` 里；合入后先在旧配置仍生效时执行一次 `kubectl -n nexus exec deploy/nexus-api -- nexus settings import-env --dry-run`，确认后去掉 `--dry-run`，再从 `config.*` 删除这些键。
+> **依赖说明**：策略表、`nexus settings import --file` 和按策略组锁定由 settings-to-db 分支（`claude/settings-to-db-80fa79`）提供，该分支尚未合入 main。导入 Job 按约定的接口编写（`--file`、`--dry-run`，文件格式见上）。镜像中没有这个命令时，`policy.requireImporter: true`（默认）让发布失败，`false` 则跳过导入并在日志中说明。
 
 ### 环境变量归属
 
@@ -136,6 +137,8 @@ values 的 `policy.groups` 渲染成 ConfigMap `nexus-policy` 中的 `policy.yam
 | `NEXUS_RELAY_REQUESTS_PER_TENANT`、`NEXUS_RELAY_STREAMS_PER_TENANT`、`NEXUS_RELAY_STREAM_LIFETIME_SECONDS`、`NEXUS_RELAY_WS_SESSIONS_PER_TENANT`、`NEXUS_RELAY_WS_TURNS_PER_TENANT`、`NEXUS_RELAY_MAX_ATTEMPTS`、`NEXUS_RELAY_FAILOVER_BUDGET_MS`、`NEXUS_RELAY_PURGE_GRACE_SECONDS` | 策略 | 集群策略 `policy.clusters.<id>` |
 | `NEXUS_RELAY_RESOURCES_PER_KEY`、`NEXUS_RELAY_RESOURCES_PER_ORGANIZATION`、`NEXUS_RELAY_VECTOR_STORES_PER_KEY`、`NEXUS_RELAY_VECTOR_STORES_PER_ORGANIZATION` | 策略 | `resource-quotas` |
 | `SSL_CERT_FILE` | 派生 | Relay 的信任库：公共根证书加 Redis CA |
+| `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION` | 派生 | 来自 `objectStorage.*`，见[对象存储](#对象存储cloudflare-r2)；变量名以导出改造的最终实现为准 |
+| `NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID`、`NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY` | 密钥 | `nexus-app-r2` |
 | `NEXUS_GATEWAY_DSN`、`NEXUS_SIMULATION_API_KEY`、`RELAY_ACCEPTANCE_*` | — | 模拟器和验收测试，不部署 |
 
 ## 单节点安装
@@ -148,11 +151,11 @@ values 的 `policy.groups` 渲染成 ConfigMap `nexus-policy` 中的 `policy.yam
 
 ### 安装 k3s
 
-把 [`deploy/k3s/config.yaml`](../deploy/k3s/config.yaml) 复制到 `/etc/rancher/k3s/config.yaml`，填写 S3 设置和 `tls-san`，权限设为 0600。其中关键设置：
+把 [`deploy/k3s/config.yaml`](../deploy/k3s/config.yaml) 复制到 `/etc/rancher/k3s/config.yaml`，填写 R2 设置（account_id 和备份 bucket 的 Token）和 `tls-san`，权限设为 0600。其中关键设置：
 
 - `cluster-init: true`：从第一台就使用内置 etcd，以后加 server 不用迁移数据存储。
 - `secrets-encryption: true`：Secret 加密落盘。安装后执行 `k3s secrets-encrypt status`，确认 `Encryption Status: Enabled`。
-- `etcd-snapshot-schedule-cron: "0 */6 * * *"`、`etcd-snapshot-retention: 28`、`etcd-s3: true` 和 `etcd-s3-*`：每 6 小时做一次快照，本地和 S3 各保留 28 份。S3 凭据可以写在这个文件里，也可以放进 kube-system 下由 `etcd-s3-config-secret` 指定的 Secret。另外要离线保存一份：在新主机上恢复时，集群和它的 Secret 都还不存在。
+- `etcd-snapshot-schedule-cron: "0 */6 * * *"`、`etcd-snapshot-retention: 28`、`etcd-s3: true` 和 `etcd-s3-*`：每 6 小时做一次快照，上传到 R2 备份 bucket 的 `etcd/<环境>/` 前缀下（`etcd-s3-endpoint: <account_id>.r2.cloudflarestorage.com`、`etcd-s3-region: auto`、`etcd-s3-bucket`、`etcd-s3-folder`）。k3s 按保留份数同时清理本地和 R2 上的旧快照，28 份约等于 7 天。R2 凭据可以写在这个文件里，也可以放进 kube-system 下由 `etcd-s3-config-secret` 指定的 Secret。另外要离线保存一份：在新主机上恢复时，集群和它的 Secret 都还不存在。
 
 ```bash
 curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.36.6+k3s1 sh -s - server
@@ -166,7 +169,7 @@ sudo k3s secrets-encrypt status
 sudo cat /var/lib/rancher/k3s/server/token
 ```
 
-server token 用来解密 etcd 中的引导数据，恢复快照时必须提供，单独离线保存。
+etcd 快照包含全部 Secret。开启 `--secrets-encryption` 后，快照里的 Secret 是用加密密钥加密的，而这个密钥（`/var/lib/rancher/k3s/server/cred/encryption-config.json`）连同其他引导数据又由 server token 保护。没有 token 和加密密钥，快照就无法恢复，所以把 token 和 `encryption-config.json` 一起离线保存，与 R2 上的快照分开存放；每次执行 `k3s secrets-encrypt rotate-keys` 之后要重新保存 `encryption-config.json`。
 
 主机设置了 `HTTP_PROXY`/`HTTPS_PROXY` 时，安装脚本会把它们写进 `/etc/systemd/system/k3s.service.env`。k3s 会自动把集群网段加入 `NO_PROXY`，但不会加入节点自己的地址；API server 访问 kubelet 的请求（`kubectl logs`）于是经过代理并失败。把各节点地址、`.svc` 和 `.cluster.local` 追加到 `NO_PROXY`/`no_proxy`，然后重启 k3s。
 
@@ -208,9 +211,38 @@ Traefik 用 `X-Real-Ip` 传递客户端地址，来源有两种：
 
 管理后台按 `NEXUS_WEB_CLIENT_IP_HEADER=x-real-ip` 读取地址，用 `NEXUS_AUTH_PROXY_SECRET` 签名后转给 API。BFF Pod 每次重启都会换 IP，所以 `NEXUS_AUTH_PROXY_PEERS` 改为接受网段，默认是 k3s Pod 网段 `10.42.0.0/16`。API 仍然只采信签名正确的地址。Traefik 的 Pod 也在这个网段里，因此 API 的入口路由用一个 middleware 删除客户端自带的 `X-Nexus-Client-IP*` 头。冒烟测试会发送伪造的 `X-Real-Ip`，确认入口把它替换成了真实的来源地址。
 
+## 对象存储（Cloudflare R2）
+
+备份和应用各用一个 R2 bucket：
+
+| bucket | 前缀 | 内容 | 写入者 | Secret / 凭据 |
+| --- | --- | --- | --- | --- |
+| `nexus-backups` | `postgres/<环境>/` | WAL 归档和基础备份 | CloudNativePG（Barman Cloud 插件） | `nexus-backup-r2` |
+| `nexus-backups` | `etcd/<环境>/` | k3s etcd 快照 | k3s server | `config.yaml` 中的 `etcd-s3-access-key` 等 |
+| `nexus-app` | — | 导出文件（导出改存 R2 之后） | API、Worker | `nexus-app-r2` |
+
+- **端点**：`https://<account_id>.r2.cloudflarestorage.com`，region 固定为 `auto`。CloudNativePG 的 `endpointURL` 带 `https://`；k3s 的 `etcd-s3-endpoint` 不带协议。
+- **API Token**：在 Cloudflare 控制台的 R2 → Manage API Tokens 中签发，权限选 **Object Read & Write**，并限定到单个 bucket：备份 bucket 一个、应用 bucket 一个。CloudNativePG 和 k3s 可以共用备份 bucket 的 Token；分开签发则可以单独吊销。恢复演练另签一个只读（Object Read only）的 Token。Token 的 Access Key ID 和 Secret Access Key 只显示一次，直接存进密钥库。
+- **数据驻留**：有驻留要求时，创建 bucket 时就指定 jurisdiction，例如 `wrangler r2 bucket create nexus-backups --jurisdiction eu`。之后端点改为 `https://<account_id>.eu.r2.cloudflarestorage.com`。jurisdiction 创建后不能更改，数据也不能在 jurisdiction 之间搬移。
+- **其他 S3 兼容存储**：配置项完全相同，只换 endpoint 和凭据。冒烟用的本地替身就是这样配置的。
+
+### 保留期
+
+CloudNativePG 的 `retentionPolicy`（默认 `30d`）决定恢复窗口：它会保留恢复窗口之前最新的那一个基础备份，以及之后的全部 WAL，再删除更早的内容。所以需要保留的最旧对象，可能比 30 天还早一个基础备份周期。R2 的生命周期规则只作为兜底，过期天数必须大于“`retentionPolicy` + 基础备份间隔 + 余量”，否则 R2 会先删掉 CloudNativePG 恢复时还要用的基础备份或 WAL。
+
+[`deploy/examples/r2/lifecycle-backups.json`](../deploy/examples/r2/lifecycle-backups.json) 给出了按这个原则设置的规则：
+
+| 前缀 | 过期 | 依据 |
+| --- | --- | --- |
+| `postgres/` | 45 天 | 30 天窗口 + 每日基础备份 + 两周余量 |
+| `etcd/` | 30 天 | k3s 自己只保留约 7 天，这条规则只清理遗留的快照 |
+| 全部 | 未完成的分段上传 7 天后清理 | — |
+
+可以在控制台的 bucket 设置 → Object lifecycle rules 中录入这些规则，也可以用 S3 API（`aws s3api put-bucket-lifecycle-configuration --endpoint-url https://<account_id>.r2.cloudflarestorage.com --bucket nexus-backups --lifecycle-configuration file://lifecycle-backups.json`）。调大 `retentionPolicy` 或拉长基础备份间隔时，要同步调大 `postgres/` 的过期天数。
+
 ## 首次部署
 
-1. **Secret**：按[密钥](#密钥)一节创建全部 Secret，`nexus-deployer` 暂时留空。
+1. **R2 与 Secret**：按[对象存储](#对象存储cloudflare-r2)创建两个 bucket、两个 Token 和生命周期规则；再按[密钥](#密钥)一节创建全部 Secret，`nexus-deployer` 暂时留空。`nexus-data` 的 values 中填写 `postgresql.backup.endpointURL` 和 `prefix`（例如 `postgres/production`）。
 2. **数据层**：
 
    ```bash
@@ -221,7 +253,7 @@ Traefik 用 `X-Real-Ip` 传递客户端地址，来源有两种：
    kubectl -n nexus wait --for=condition=Ready cluster/nexus-pg --timeout=10m
    ```
 
-   CloudNativePG 创建数据库 `nexus` 和 managed roles：模块组角色和 `nexus_bridge`、`nexus_gateway` 都是 NOLOGIN；`nexus_api`、`nexus_worker`、`nexus_migrator` 是 NOINHERIT 的 LOGIN。同时开启 WAL 归档，并立即做一次基础备份，之后每天 03:00 一次。
+   CloudNativePG 创建数据库 `nexus` 和 managed roles：模块组角色和 `nexus_bridge`、`nexus_gateway` 都是 NOLOGIN；`nexus_api`、`nexus_worker`、`nexus_migrator` 是 NOINHERIT 的 LOGIN。同时开启到 R2 的 WAL 归档，并立即做一次基础备份，之后每天 03:00 一次。
 3. **应用**：
 
    ```bash
@@ -229,13 +261,7 @@ Traefik 用 `X-Real-Ip` 传递客户端地址，来源有两种：
    ```
 
    首次安装时保持 `relay.replicas: 0`。pre-install 钩子依次执行建库（授予权限）和迁移，post-install 钩子导入策略。
-4. **管理员**：
-
-   ```bash
-   kubectl -n nexus exec -it deploy/nexus-api -- nexus bootstrap-admin --login <登录名>
-   ```
-
-   再按 [登录与企业成员](identity-api.md) 建立日常账号。为 Relay 节点登记 Job 建一个专用平台管理员，例如 `deployer`，把它的登录名和密码写入 `nexus-deployer`。
+4. **管理员**：按初始化流程创建第一个管理员（待定：初始化流程由另一项改动提供，届时在此补充具体步骤），再按 [登录与企业成员](identity-api.md) 建立日常账号。为 Relay 节点登记 Job 建一个专用平台管理员，例如 `deployer`，把它的登录名和密码写入 `nexus-deployer`。
 5. **目录与计价**：配置模型、上游、凭据、部署（含 `relay_profile`）、售价、成本价、路由和企业。见[模型与上游目录](catalog-api.md)和[定价](billing-api.md)。
 6. **集群**：用 `nexus-relay-cluster` 私钥对应的公钥调用 `POST /api/v1/gateway-clusters`，记下返回的 `id`。公钥可以这样计算：
 
@@ -305,12 +331,6 @@ helm upgrade nexus deploy/helm/nexus -n nexus -f my-values.yaml --wait --timeout
 1. **先迁移**：pre-upgrade 钩子依次执行建库、节点登记和 `nexus migrate`，迁移使用默认 5 秒的 `lock_timeout`。迁移失败时发布中止，Pod 都不会滚动。排查长事务后重新执行 `helm upgrade`，会从失败的修订继续。
 2. **再滚动**：API、Worker 和管理后台按 `maxSurge: 1`、`maxUnavailable: 0` 逐个替换，Relay 每次替换一个节点，并按上节排空。
 3. **schema 修订变化时的窗口**：API 的就绪检查要求数据库修订与代码完全一致。迁移完成后，旧版 API Pod 会变为未就绪，直到新版 Pod 就绪，这段时间管理 API 和管理后台不可用，一般在 1 分钟以内。Relay 直接调用 `gateway_v1`，不受影响。不改 schema 的升级没有这个窗口。
-4. **0017 需要维护窗口**：从 0017 之前的版本升级时（新安装不受影响），按 [0017 需要维护窗口](operations.md#0017-需要维护窗口)处理：
-   - 先把 Relay 流量摘掉：`kubectl -n nexus scale statefulset/nexus-relay --replicas=0`，等节点排空退出；
-   - 必要时用 `--set config.migrate.NEXUS_MIGRATION_LOCK_TIMEOUT_MS=60000` 调高锁等待；
-   - 执行 `helm upgrade`；
-   - 恢复副本数（`helm upgrade` 会按 values 中的 `relay.replicas` 恢复）。
-5. 版本说明要求按特定顺序升级时（例如[0036、0037](operations.md#升级到-0036身份认证滥用防护)），一次 `helm upgrade` 已经满足“先迁移、再同时替换 API 和 Worker”的要求。
 
 ## 回滚
 
@@ -381,37 +401,48 @@ secrets:
 
 | 内容 | 备份方式 | 存放 |
 | --- | --- | --- |
-| etcd 快照（含全部 Secret、节点登录 Secret、证书） | k3s 定时快照，上传到 S3；外加 server token | 加密的私有 bucket；token 离线保存 |
-| PostgreSQL | CloudNativePG Barman Cloud 插件：持续 WAL 归档加每日基础备份，可恢复到任意时间点 | `nexus-pg-backups` bucket |
+| etcd 快照（含全部 Secret、节点登录 Secret、证书） | k3s 定时快照，上传到 R2；外加 server token 和 `encryption-config.json` | R2 `nexus-backups/etcd/`；token 和加密配置离线保存 |
+| PostgreSQL | CloudNativePG Barman Cloud 插件：持续 WAL 归档加每日基础备份，可恢复到任意时间点 | R2 `nexus-backups/postgres/` |
 | 应用加密密钥（`nexus-encryption`，包括全部历史版本） | 密钥库（Vault 等），同时离线保存 | 与数据库备份分开 |
 | 网关集群私钥（`nexus-relay-cluster`） | 同上 | 同上 |
 
 etcd 快照里本来就有后两样，但它们必须独立保存一份：只有数据库备份、没有 etcd 快照（例如换了一个新集群）时，仍然要能恢复。数据库登录口令和 Relay 节点 Secret 丢失后可以重建：登记 Job 会把节点口令重设为新 Secret 的值，并沿用数据库中的 node_id。
 
-### 演练（每季度一次，以及每次重大升级前）
+### 演练：从 R2 恢复（每季度一次，以及每次重大升级前）
 
-1. **etcd**：`sudo k3s etcd-snapshot save --name drill`，然后用 `k3s etcd-snapshot ls` 确认 S3 中有对应文件。在一台临时主机上执行 `k3s server --cluster-reset --cluster-reset-restore-path=<快照> --token=<token>`（从 S3 恢复时加 `--etcd-s3 …`），确认 `kubectl get secret -n nexus` 能列出并读取 Secret。
-2. **PostgreSQL**：在另一个命名空间建一个 `Cluster`，使用 `bootstrap.recovery`，`externalClusters` 的插件参数指向 `nexus-pg-backups`，并设置 `recoveryTarget.targetTime` 为演练时间点。恢复完成后检查 `nexus_meta.alembic_version`。
+1. **etcd**：
+   - 先手动做一个快照：`sudo k3s etcd-snapshot save --name drill`，然后用 `sudo k3s etcd-snapshot ls` 确认列表里有 `s3://nexus-backups/etcd/<环境>/drill-…`。
+   - 在一台临时主机上，放好离线保存的 `encryption-config.json`（`/var/lib/rancher/k3s/server/cred/`），然后从 R2 恢复：
+
+     ```bash
+     sudo k3s server --cluster-reset --token=<server token> --etcd-s3 --etcd-s3-endpoint=<account_id>.r2.cloudflarestorage.com --etcd-s3-region=auto --etcd-s3-bucket=nexus-backups --etcd-s3-folder=etcd/<环境> --etcd-s3-access-key=<key> --etcd-s3-secret-key=<secret> --cluster-reset-restore-path=<快照名>
+     ```
+
+   - 正常启动 k3s 后，确认 `kubectl -n nexus get secret nexus-encryption -o yaml` 能读出内容。
+2. **PostgreSQL 时间点恢复**：
+   - 用 [`deploy/examples/restore/postgres-pitr.yaml`](../deploy/examples/restore/postgres-pitr.yaml) 在 `nexus-drill` 命名空间引导一个新集群。它从 R2 读取生产的基础备份和 WAL，回放到 `recoveryTarget.targetTime`。凭据使用只读 Token，新集群也不配置 WAL 归档，确保演练不会写进生产归档。
+   - `Cluster` 就绪后，检查 `nexus_meta.alembic_version`，以及目标时间点前后各写入一笔的数据：前一笔存在，后一笔不存在。
 3. **应用**：在该命名空间安装 `nexus`，`postgresql.clusterName` 指向恢复出的集群，加密密钥和集群私钥从密钥库取得。然后检查：
    - API 就绪；
    - 手动发布一次，Relay 能解密上游凭据；
    - 账户余额、占用与恢复点一致；
    - Worker 补结在途请求后，余额和流水能对上，判断标准与[物理备份恢复](control-plane-acceptance.md#物理备份恢复)相同。
-4. 记录 RPO（最后一个已归档 WAL 的时间）和 RTO（从开始恢复到 API 就绪），与目标对比。
+4. 记录 RPO（最后一个已归档 WAL 的时间）和 RTO（从开始恢复到 API 就绪），与目标对比。演练结束后删除 `nexus-drill` 命名空间和临时主机。
 
 ## 上线前检查清单
 
 **平台**
 
 - [ ] 磁盘 fsync 延迟达标；`k3s secrets-encrypt status` 为 Enabled；server token 已离线保存。
-- [ ] etcd 定时快照已经出现在 S3 中，并完成过一次恢复演练；bucket 私有、加密、有生命周期规则。
-- [ ] `nexus-pg` 的 `ContinuousArchiving` 状态为 True，基础备份成功，完成过一次时间点恢复演练。
+- [ ] R2 的 `nexus-backups` 和 `nexus-app` 已创建（需要时指定 jurisdiction）；两个 Token 都只能访问各自的 bucket；生命周期规则按[保留期](#保留期)设置。
+- [ ] etcd 定时快照已经出现在 R2 中，并完成过一次从 R2 的恢复演练；server token 和 `encryption-config.json` 已离线保存。
+- [ ] `nexus-pg` 的 `ContinuousArchiving` 状态为 True，基础备份成功，完成过一次从 R2 的时间点恢复演练。
 - [ ] 四样恢复材料都存放在集群之外。
 - [ ] ACME 证书签发成功；HTTP 跳转到 HTTPS；HSTS 已生效。
 - [ ] NetworkPolicy 生效：管理后台连不上 5432/6379，入口访问不到 Relay 的 9464、`/live`、`/ready` 和 API 的 `/internal`；Prometheus 能抓取指标。
 - [ ] 告警已配置：Relay 指标（[建议告警](operations.md#指标)）、API `/internal/metrics/prometheus`、CloudNativePG、证书到期、etcd 快照失败。
 - [ ] `NEXUS_ENVIRONMENT=production`，没有设置 `NEXUS_MOCK_PAYMENT_URL`，发信和 Turnstile 已配置。
-- [ ] 策略组的模式（`fill-missing` 或 `managed`）已确定；settings-to-db 合入后执行过一次 `import-env`。
+- [ ] 策略组的模式（`fill-missing` 或 `managed`）已确定，策略导入 Job 成功。
 
 **业务**
 
@@ -439,8 +470,8 @@ VMHOME=$(limactl shell nexus-k3s sh -c 'echo $HOME'); KUBECTL="limactl shell nex
 ```
 
 - `setup-vm.sh` 负责准备集群：
-  - 在集群外起一个 S3 替身（versitygw），接收 etcd 快照和 WAL 归档；
-  - 安装 k3s（`cluster-init`、`secrets-encryption`、快照上传到 S3）、Helm、cert-manager、CloudNativePG 和 Barman Cloud 插件；
+  - 在集群外起一个 R2 替身（versitygw，S3 兼容网关）。它和 R2 一样使用 region `auto`，并建好 `nexus-backups` 和 `nexus-app` 两个 bucket；chart 和 k3s 的配置项与 R2 一一对应，只有 endpoint 指向替身；
+  - 安装 k3s（`cluster-init`、`secrets-encryption`、快照上传到替身的 `nexus-backups/etcd/smoke/`）、Helm、cert-manager、CloudNativePG 和 Barman Cloud 插件；
   - 应用 Traefik 设置；
   - 建一个私有 CA 的 ClusterIssuer 代替 ACME；
   - 把镜像导入 k3s。
@@ -448,7 +479,7 @@ VMHOME=$(limactl shell nexus-k3s sh -c 'echo $HOME'); KUBECTL="limactl shell nex
   1. 安装两个 chart，检查迁移和策略导入钩子；
   2. 创建管理员、企业（入账 100 USD）、上游、部署、价格、路由和 Key；
   3. 建集群，扩到两个 Relay 节点，发布；
-  4. 经 Traefik 发起 HTTP、SSE、WebSocket 调用（另有 75 秒的长 SSE 流和长 WebSocket 轮次），并核对账本：每次调用对应一个已结算请求，余额 = 入账 − 扣费 = 最后一条流水的余额，占用为 0。
+  4. 经 Traefik 发起 HTTP、SSE、WebSocket 调用（另有 65 秒的长 SSE 流和长 WebSocket 轮次），并核对账本：每次调用对应一个已结算请求，余额 = 入账 − 扣费 = 最后一条流水的余额，占用为 0。
 
   加上 `--drills` 时还会执行：
   - 演练 A：修改 API 的 ConfigMap，只有 API 滚动重启，并读到新值；

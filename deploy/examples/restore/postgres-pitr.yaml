@@ -1,0 +1,54 @@
+# Restore drill: bootstrap a new CloudNativePG cluster from the R2 backups to a point in time.
+# Runs in its own namespace so production is untouched:
+#   kubectl create namespace nexus-drill
+#   kubectl -n nexus-drill create secret generic nexus-backup-r2-read \
+#     --from-literal=ACCESS_KEY_ID=... --from-literal=ACCESS_SECRET_KEY=... --from-literal=ACCESS_REGION=auto
+#   (edit targetTime and the endpoint below)  kubectl apply -f postgres-pitr.yaml
+# Use a token that can only read the backup bucket (R2 "Object Read only"): the drill must never
+# write into production's archive.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: nexus-pg-origin
+  namespace: nexus-drill
+spec:
+  configuration:
+    # The production ObjectStore's bucket and prefix; recovery reads <prefix>/<serverName>/.
+    destinationPath: s3://nexus-backups/postgres/production
+    endpointURL: https://ACCOUNT_ID.r2.cloudflarestorage.com
+    s3Credentials:
+      accessKeyId: {name: nexus-backup-r2-read, key: ACCESS_KEY_ID}
+      secretAccessKey: {name: nexus-backup-r2-read, key: ACCESS_SECRET_KEY}
+      region: {name: nexus-backup-r2-read, key: ACCESS_REGION}
+    wal: {compression: gzip}
+    data: {compression: gzip}
+  instanceSidecarConfiguration:
+    env:
+      - {name: AWS_REQUEST_CHECKSUM_CALCULATION, value: when_required}
+      - {name: AWS_RESPONSE_CHECKSUM_VALIDATION, value: when_required}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: nexus-pg-drill
+  namespace: nexus-drill
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.12-standard-trixie@sha256:2a2fe731f3b421d1a1c1f84e70e95ef0658bf198b6c8dbbfe53d51f24c3275b8
+  storage: {size: 50Gi}
+  walStorage: {size: 20Gi}
+  bootstrap:
+    recovery:
+      source: origin
+      # Point-in-time recovery: replay WAL up to this moment (omit for the latest state).
+      recoveryTarget:
+        targetTime: "2026-11-15 06:00:00.000000+00"
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: nexus-pg-origin
+          # The production Cluster's name: backups live under <prefix>/<serverName>/.
+          serverName: nexus-pg
+  # No WAL archiver plugin here: the restored cluster must not write into the production archive.

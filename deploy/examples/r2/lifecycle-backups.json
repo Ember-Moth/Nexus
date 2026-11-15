@@ -1,0 +1,18 @@
+{
+  "Rules": [
+    {
+      "ID": "postgres-safety-net",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "postgres/"},
+      "Expiration": {"Days": 45},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
+    },
+    {
+      "ID": "etcd-safety-net",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "etcd/"},
+      "Expiration": {"Days": 30},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
+    }
+  ]
+}

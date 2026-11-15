@@ -440,7 +440,7 @@ def prepare_secrets() -> dict:
         "nexus-relay-cluster", {"private-key": base64.b64encode(secrets.token_bytes(32)).decode()}
     )
     create_secret("nexus-deployer", {"login": "smoke-admin", "password": secrets.token_urlsafe(24)})
-    expect(secret_exists("nexus-backup-s3"), "S3 credentials for WAL archiving present")
+    expect(secret_exists("nexus-backup-r2"), "backup bucket credentials present")
     ok("Secrets present", "db x3, redis, encryption, auth-proxy, relay-cluster, deployer")
     return {
         "admin_login": secret_value("nexus-deployer", "login"),
@@ -451,13 +451,13 @@ def prepare_secrets() -> dict:
 def reset() -> None:
     """Start from empty namespaces; keeps the S3 credentials that setup-vm.sh created."""
     step("--fresh: removing the previous run")
-    s3 = {k: secret_value("nexus-backup-s3", k) for k in ("ACCESS_KEY_ID", "ACCESS_SECRET_KEY")}
+    s3 = {k: secret_value("nexus-backup-r2", k) for k in ("ACCESS_KEY_ID", "ACCESS_SECRET_KEY")}
     for release in (RELEASE, "nexus-data"):
         helm("uninstall", release, "-n", NS, "--wait", check=False)
     kubectl("delete", "namespace", NS, UPSTREAM_NS, "--ignore-not-found", "--wait=true",
             "--timeout=300s")  # fmt: skip
     kubectl("create", "namespace", NS)
-    create_secret("nexus-backup-s3", s3)
+    create_secret("nexus-backup-r2", {**s3, "ACCESS_REGION": "auto"})
 
 
 def install_data(address: str) -> None:
@@ -467,7 +467,7 @@ def install_data(address: str) -> None:
         "-n", NS, "-f", str(HERE / "values-data.yaml"),
         "--set", f"postgresql.backup.endpointURL=http://{address}:7070",
         # A new cluster needs an empty WAL archive: one path per namespace incarnation.
-        "--set", f"postgresql.backup.destinationPath=s3://nexus-pg-backups/smoke-{namespace_uid()}",
+        "--set", f"postgresql.backup.prefix=postgres/smoke-{namespace_uid()}",
         "--wait", "--timeout", "10m",
     )  # fmt: skip
     kubectl("-n", NS, "wait", "--for=condition=Ready", "cluster/nexus-pg", "--timeout=600s")
@@ -944,11 +944,12 @@ def drill_relay_roll(api, ingress, key, model, org, relay_set) -> None:
 
 
 def backups() -> None:
-    step("backups: WAL archiving and base backup to S3")
+    step("backups: WAL archiving and base backup to the R2 stand-in")
     conditions = json.loads(kubectl("-n", NS, "get", "cluster/nexus-pg", "-o",
                                     "jsonpath={.status.conditions}"))  # fmt: skip
     archiving = next((c for c in conditions if c["type"] == "ContinuousArchiving"), {})
-    expect(archiving.get("status") == "True", "WAL archiving to S3", archiving.get("message", ""))
+    detail = archiving.get("message", "")
+    expect(archiving.get("status") == "True", "WAL archiving to object storage", detail)
     deadline = time.monotonic() + 300
     while True:
         phases = kubectl("-n", NS, "get", "backups.postgresql.cnpg.io", "-o",

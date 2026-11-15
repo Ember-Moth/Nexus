@@ -35,8 +35,14 @@ def __getattr__(name):
 
 
 class RoutingPolicies(RoutingService):
-    def __init__(self, database, access):
-        super().__init__(RoutingRepository(database), access)
+    """Routes, quota policies and the platform resource quota defaults.
+
+    ``access`` is identity's financial access check; ``administrator`` resolves a session to a
+    platform administrator or refuses it.
+    """
+
+    def __init__(self, database, access, administrator):
+        super().__init__(RoutingRepository(database), access, administrator)
 
 
 def create_model_lookup(database: ModuleDatabase):

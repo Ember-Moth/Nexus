@@ -3,6 +3,38 @@ import json
 from nacl.public import PublicKey, SealedBox
 from sqlalchemy import text
 
+from .routing import COUNTS
+
+# The Relay's built-in resource counts, used when a snapshot carries no resource_limits. A
+# snapshot only carries them, and then requires relay.cluster-policy.v1, once they differ.
+RELAY_RESOURCE_DEFAULTS = {
+    "resources_per_key": 10000,
+    "resources_per_organization": 100000,
+    "vector_stores_per_key": 100,
+    "vector_stores_per_organization": 1000,
+}
+RATES = "('rpm','tpm','concurrency')"
+
+
+async def resource_limits(rows):
+    """Resource counts of the scoped organizations, or None while all are built-in defaults."""
+    defaults = (await rows(f"SELECT {','.join(COUNTS)} FROM catalog.resource_quota_defaults"))[0]
+    overrides = await rows(
+        "SELECT organization_id,metric,limit_value FROM catalog.quota_policies "
+        f"WHERE organization_id=ANY(CAST(:orgs AS uuid[])) AND metric NOT IN {RATES} "
+        "ORDER BY organization_id,metric"
+    )
+    if defaults == RELAY_RESOURCE_DEFAULTS and not overrides:
+        return None
+    organizations = {}
+    for row in overrides:
+        values = organizations.setdefault(row["organization_id"], dict(defaults))
+        values[row["metric"]] = row["limit_value"]
+    return {
+        "default": defaults,
+        "organizations": [{"organization_id": org, **v} for org, v in organizations.items()],
+    }
+
 
 def create_catalog_source(database, cipher):
     async def capture(orgs, deployments, public_key, cluster_id, key_version):
@@ -87,11 +119,13 @@ def create_catalog_source(database, cipher):
             quotas = await rows(
                 "SELECT id,organization_id,layer,scope_type,scope_id,metric,"
                 "limit_value FROM catalog.quota_policies WHERE "
-                "organization_id=ANY(CAST(:orgs AS uuid[])) ORDER BY id"
+                f"organization_id=ANY(CAST(:orgs AS uuid[])) AND metric IN {RATES} ORDER BY id"
             )
+            limits = await resource_limits(rows)
             return (
                 revision,
                 {
+                    **({"resource_limits": limits} if limits else {}),
                     "models": models,
                     "deployments": data,
                     "routes": [r for r in routes if r["candidates"]],

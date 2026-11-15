@@ -1,10 +1,24 @@
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 
 from nexus.shared.errors import ServiceError
 from nexus.shared.reporting import key_cursor
+from nexus.shared.views import managed_source
+
+from ..application.routing_schemas import ResourceQuotaDefaultsView
+
+COUNTS = (
+    "resources_per_key",
+    "resources_per_organization",
+    "vector_stores_per_key",
+    "vector_stores_per_organization",
+)
+# Audit resource of changes to the singleton resource quota defaults.
+DEFAULTS_RESOURCE = UUID(int=0)
+# Sentinel: an administrator's write leaves the policy lock as it is (it is refused while set).
+KEEP = object()
 
 
 class RoutingRepository:
@@ -116,6 +130,79 @@ class RoutingRepository:
                 },
             )
         return policy_id
+
+    async def resource_defaults(self):
+        async with self._database.transaction() as session:
+            return await self._defaults(session)
+
+    @staticmethod
+    async def _defaults(session, lock=False):
+        row = (
+            (
+                await session.execute(
+                    text(
+                        f"SELECT {','.join(COUNTS)},version,managed_sha256,managed_at "
+                        "FROM catalog.resource_quota_defaults" + (" FOR UPDATE" if lock else "")
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return ResourceQuotaDefaultsView(
+            **{name: row[name] for name in (*COUNTS, "version")}, managed=managed_source(row)
+        )
+
+    async def save_resource_defaults(self, body, version, actor, *, managed=KEEP, details=None):
+        """Replace the defaults at ``version``; an administrator may not touch a locked row.
+
+        ``managed`` is the SHA-256 of the locking policy file, or None to unlock (imports only).
+        """
+        async with self._database.transaction() as session:
+            before = await self._defaults(session, lock=True)
+            if managed is KEEP and before.managed is not None:
+                raise ServiceError(
+                    "policy_managed_externally",
+                    "The resource quota defaults are managed by a policy file",
+                    409,
+                )
+            if before.version != version:
+                raise ServiceError("version_conflict", "Resource quota defaults changed", 412)
+            assignments = [f"{name}=:{name}" for name in COUNTS]
+            params = body.model_dump()
+            if managed is not KEEP:
+                assignments.append(
+                    "managed_sha256=:managed,managed_at=CASE WHEN CAST(:managed AS text) IS NULL "
+                    "THEN NULL ELSE clock_timestamp() END"
+                )
+                params["managed"] = managed
+            await session.execute(
+                text(
+                    "UPDATE catalog.resource_quota_defaults SET "
+                    + ",".join(assignments)
+                    + ",version=version+1"
+                ),
+                params,
+            )
+            after = await self._defaults(session)
+            if details is None:
+                details = {
+                    name: [getattr(before, name), getattr(after, name)]
+                    for name in COUNTS
+                    if getattr(before, name) != getattr(after, name)
+                }
+            await session.execute(
+                text("""
+                INSERT INTO catalog.audit_events(id,actor_id,action,resource_id,details)
+                VALUES(:id,:actor,'resource_quotas.updated',:resource,cast(:details AS jsonb))"""),
+                {
+                    "id": uuid4(),
+                    "actor": actor,
+                    "resource": DEFAULTS_RESOURCE,
+                    "details": json.dumps(details),
+                },
+            )
+        return after
 
     async def list_routes(self, limit, cursor):
         after = "WHERE (organization_id,model_id)>(:org,:model) " if cursor else ""

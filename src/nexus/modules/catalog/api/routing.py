@@ -3,7 +3,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from nexus.http import credentials, error_responses, key_cursor_value, optional_version
+from nexus.http import (
+    business_errors,
+    credentials,
+    error_responses,
+    expected_version,
+    key_cursor_value,
+    optional_version,
+)
 
 from ..application.routing import RoutingPolicies
 from ..application.routing_schemas import (
@@ -14,6 +21,8 @@ from ..application.routing_schemas import (
     QuotaPolicyResult,
     QuotaPolicyView,
     QuotaScope,
+    ResourceQuotaDefaults,
+    ResourceQuotaDefaultsView,
     Route,
     RouteCandidates,
     RoutePolicyView,
@@ -30,6 +39,7 @@ def create_router(get_service):
     Token = Annotated[str, Depends(credentials)]
     Service = Annotated[RoutingPolicies, Depends(get_service)]
     Version = Annotated[int | None, Depends(optional_version)]
+    Required = Annotated[int, Depends(expected_version)]
     Limit = Annotated[int, Query(ge=1, le=100)]
     Cursor = Annotated[str | None, Query(max_length=512)]
 
@@ -140,5 +150,29 @@ def create_router(get_service):
     ):
         """Quota policies of the organization ordered by id."""
         return await service.list_quotas(token, organization_id, limit, key_cursor_value(cursor, 1))
+
+    @router.get("/settings/resource-quotas", response_model=ResourceQuotaDefaultsView)
+    async def resource_quota_defaults(token: Token, service: Service, response: Response):
+        """Platform defaults of the tenant resource counts; platform administrators only."""
+        result = await service.resource_defaults(token)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.put(
+        "/settings/resource-quotas",
+        response_model=ResourceQuotaDefaultsView,
+        responses=business_errors("version_conflict", "policy_managed_externally"),
+    )
+    async def update_resource_quota_defaults(
+        body: ResourceQuotaDefaults,
+        token: Token,
+        service: Service,
+        version: Required,
+        response: Response,
+    ):
+        """Replace the defaults. Nodes enforce them once the cluster publishes its next release."""
+        result = await service.update_resource_defaults(token, body, version)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
 
     return router

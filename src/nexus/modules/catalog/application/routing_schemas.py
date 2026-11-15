@@ -3,12 +3,33 @@ from uuid import UUID
 
 from pydantic import Field
 
+from nexus.shared.views import ManagedSource
+
 from .schemas import Schema
 
 # A quota policy is identified by (organization_id, layer, scope_type, scope_id, metric).
 QuotaLayer = Literal["platform", "customer"]
 QuotaScope = Literal["organization", "project", "key"]
-QuotaMetric = Literal["rpm", "tpm", "concurrency"]
+# Request rates and concurrency are enforced through Redis. Resource counts cap the live files,
+# conversations, containers, batches (resources_*) and vector stores a key or an organization may
+# hold in one cluster; they override the platform defaults for one organization only.
+QuotaMetric = Literal[
+    "rpm",
+    "tpm",
+    "concurrency",
+    "resources_per_key",
+    "resources_per_organization",
+    "vector_stores_per_key",
+    "vector_stores_per_organization",
+]
+COUNT_METRICS = frozenset(
+    {
+        "resources_per_key",
+        "resources_per_organization",
+        "vector_stores_per_key",
+        "vector_stores_per_organization",
+    }
+)
 QuotaValue = Annotated[int, Field(ge=1, le=2000000000, strict=True)]
 
 
@@ -73,4 +94,20 @@ class QuotaPolicyView(Schema):
     scope_id: UUID
     metric: QuotaMetric
     limit_value: int
+    version: int
+
+
+class ResourceQuotaDefaults(Schema):
+    """Platform defaults of the resource counts; organizations override them with quota policies."""
+
+    resources_per_key: QuotaValue
+    resources_per_organization: QuotaValue
+    vector_stores_per_key: QuotaValue
+    vector_stores_per_organization: QuotaValue
+
+
+class ResourceQuotaDefaultsView(ResourceQuotaDefaults):
+    managed: ManagedSource | None = Field(
+        description="The policy file that locked these defaults; writes are refused while set"
+    )
     version: int

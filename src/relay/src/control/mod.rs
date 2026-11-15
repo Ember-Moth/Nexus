@@ -3,6 +3,7 @@ pub(crate) mod batches;
 pub mod credential;
 pub mod database;
 pub(crate) mod execution;
+pub mod keys;
 pub mod limits;
 pub mod policy;
 pub(crate) mod purges;
@@ -20,6 +21,9 @@ pub enum ControlError {
     Invalid(&'static str),
     #[error("gateway database operation failed")]
     Database(#[from] sqlx::Error),
+    /// The organization's cluster-wide admission slots stayed full for the whole wait.
+    #[error("organization admissions saturated")]
+    Saturated,
 }
 
 // PostgreSQL encode(bytea, 'base64') inserts line feeds at 76 columns.
@@ -51,6 +55,7 @@ impl ControlError {
             }
             Self::Database(_) if self.retryable() => "database_unavailable",
             Self::Database(_) => "database_error",
+            Self::Saturated => "admission_saturated",
         }
     }
     pub fn kind(&self) -> crate::metrics::ErrorKind {
@@ -58,6 +63,7 @@ impl ControlError {
             Self::Database(sqlx::Error::Database(db)) if db.code().as_deref() == Some("P0001") => {
                 crate::metrics::ErrorKind::Rejected
             }
+            Self::Saturated => crate::metrics::ErrorKind::Rejected,
             _ => crate::metrics::ErrorKind::Unavailable,
         }
     }

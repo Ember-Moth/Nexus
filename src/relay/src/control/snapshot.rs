@@ -1,15 +1,19 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+
 use uuid::Uuid;
 
 use super::{
     ControlError,
     credential::CredentialRef,
     database::Snapshot,
+    keys::{KeyTable, secret_digest},
     policy::{self, ClusterPolicy, ResourceLimits, ResourceSection, ResourceTable},
 };
 use crate::protocol::{
@@ -51,13 +55,14 @@ pub const CAPABILITIES: &[&str] = &[
     policy::CAPABILITY,
 ];
 
-#[derive(Deserialize)]
+/// An API key of the cluster, found by the SHA-256 of its secret (`KeyTable`).
+#[derive(Clone)]
 pub struct Key {
     pub id: Uuid,
     pub organization_id: Uuid,
     pub project_id: Uuid,
-    digest: String,
-    expires_at: Option<DateTime<Utc>>,
+    pub service_account_id: Uuid,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -99,6 +104,10 @@ pub enum Metric {
     Rpm,
     Tpm,
     Concurrency,
+    /// Cluster-wide admissions of one organization at a time (`Limits::admitted`); held only
+    /// around the admission call, never by a request lease.
+    #[serde(rename = "admission_concurrency")]
+    AdmissionConcurrency,
 }
 
 impl Metric {
@@ -107,7 +116,12 @@ impl Metric {
             Self::Rpm => "rpm",
             Self::Tpm => "tpm",
             Self::Concurrency => "concurrency",
+            Self::AdmissionConcurrency => "admission_concurrency",
         }
+    }
+    /// Whether a request lease holds this quota.
+    pub fn leased(self) -> bool {
+        !matches!(self, Self::AdmissionConcurrency)
     }
 }
 
@@ -289,7 +303,6 @@ impl Profile {
 #[derive(Deserialize)]
 struct Resources {
     models: Vec<Model>,
-    key_verifiers: Vec<Key>,
     deployments: Vec<Deployment>,
     access_policies: Vec<Access>,
     quota_policies: Vec<Quota>,
@@ -308,7 +321,8 @@ pub struct Index {
     pub node: Uuid,
     pub revision: i64,
     pub digest: String,
-    keys: HashMap<String, Key>,
+    /// Shared with the previous index while the key set did not change.
+    pub keys: Arc<KeyTable>,
     models: HashMap<String, Model>,
     deployments: HashMap<Uuid, Deployment>,
     routes: HashMap<(Uuid, Uuid), Vec<Candidate>>,
@@ -430,7 +444,8 @@ impl Selection<'_> {
 }
 
 impl Index {
-    pub fn build(snapshot: &mut Snapshot) -> Result<Self, ControlError> {
+    /// Build the index of `snapshot` with the cluster's keys at the snapshot's key sequence.
+    pub fn build(snapshot: &mut Snapshot, keys: Arc<KeyTable>) -> Result<Self, ControlError> {
         let mut r: Resources = serde_json::from_value(snapshot.resources.take())
             .map_err(|_| ControlError::Invalid("resource schema"))?;
         let (policy, resources) = policy::install(
@@ -443,7 +458,7 @@ impl Index {
             node: snapshot.node_id,
             revision: snapshot.revision,
             digest: snapshot.digest.clone(),
-            keys: HashMap::new(),
+            keys,
             models: HashMap::new(),
             deployments: HashMap::new(),
             routes: HashMap::new(),
@@ -486,12 +501,6 @@ impl Index {
                 }
             }
             unique(&mut index.models, m.public_name.clone(), m)?;
-        }
-        for key in r.key_verifiers {
-            if key.digest.len() != 64 || !key.digest.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Err(ControlError::Invalid("key digest"));
-            }
-            unique(&mut index.keys, key.digest.clone(), key)?;
         }
         for c in r.credential_refs {
             if c.algorithm != "libsodium-sealed-box"
@@ -812,9 +821,8 @@ impl Index {
         self.deployments.get(&id)
     }
     pub fn authenticate(&self, secret: &str) -> Result<&Key, Rejection> {
-        let digest = format!("{:x}", Sha256::digest(secret.as_bytes()));
         self.keys
-            .get(&digest)
+            .get(&secret_digest(secret))
             .filter(|k| k.expires_at.is_none_or(|t| t > Utc::now()))
             .ok_or(Rejection::Key)
     }

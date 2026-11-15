@@ -1,7 +1,7 @@
 from nexus.shared.errors import ServiceError
 from nexus.shared.policy import ImportPlan, plan
 
-from .routing_schemas import COUNT_METRICS, ResourceQuotaDefaults
+from .routing_schemas import ORGANIZATION_METRICS, ResourceQuotaDefaults
 
 
 class RoutingPolicies:
@@ -19,14 +19,15 @@ class RoutingPolicies:
         return {**body.model_dump(), "version": (version or 0) + 1}
 
     async def quota(self, token, org, body, version):
-        if body.metric in COUNT_METRICS and (
+        if body.metric in ORGANIZATION_METRICS and (
             body.layer != "platform"
             or body.scope_type != "organization"
             or body.scope_id not in (None, org)
         ):
             raise ServiceError(
                 "invalid_scope",
-                "Resource counts are platform policies of a whole organization",
+                "Resource counts and admission concurrency are platform policies of a whole "
+                "organization",
                 422,
             )
         actor = await self._access(

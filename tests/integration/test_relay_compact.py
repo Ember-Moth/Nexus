@@ -124,7 +124,7 @@ async def test_native_compact_to_ledger(http, admin, tls, relay_binary):  # noqa
         assert len(forwarded.pop("prompt_cache_key")) == 64
         assert forwarded == body | {"model": deployment["upstream_model"]}
         await wait_events(admin, 2)
-        assert dropped == ["reserve_request", "start_attempt", "append_usage_event"]
+        assert dropped == ["reserve_request", "append_usage_event"]
         for (envelope,) in admin.execute("SELECT envelope FROM billing.usage_events"):
             assert (await peer.call("append_usage_event", json.dumps(envelope)))[
                 "status"

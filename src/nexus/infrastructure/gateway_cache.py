@@ -117,6 +117,9 @@ return 1
 """
 
 
+LEASED = frozenset({"rpm", "tpm", "concurrency"})
+
+
 class GatewayLimits:
     def __init__(self, redis, namespace="nexus:v1"):
         self.redis = redis
@@ -131,11 +134,14 @@ class GatewayLimits:
         if type(upper) is not int or not 0 <= upper <= 2_000_000_000 or not 100 <= ttl_ms <= 60000:
             raise ValueError("Invalid admission limits")
         ids = {"organization": org, "project": project, "key": key}
+        # admission_concurrency is held only around the admission call, not by the lease.
         applicable = sorted(
             (
                 p
                 for p in policies
-                if p["organization_id"] == org and p["scope_id"] == ids[p["scope_type"]]
+                if p["organization_id"] == org
+                and p["scope_id"] == ids[p["scope_type"]]
+                and p["metric"] in LEASED
             ),
             key=lambda p: p["id"],
         )

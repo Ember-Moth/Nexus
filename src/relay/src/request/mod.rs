@@ -39,6 +39,8 @@ pub enum Response {
     Stream {
         body: mpsc::Receiver<Result<axum::body::Bytes, std::io::Error>>,
         receipt: oneshot::Sender<()>,
+        /// Bytes the connection wrote to the client; the stream's waits follow its progress.
+        written: std::sync::Arc<std::sync::atomic::AtomicU64>,
         applied: crate::protocol::approximation::Choices,
     },
 }
@@ -69,6 +71,9 @@ impl From<Rejection> for Failure {
 }
 impl From<ControlError> for Failure {
     fn from(e: ControlError) -> Self {
+        if matches!(e, ControlError::Saturated) {
+            return Self(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+        }
         match e.database_message() {
             Some("response_pending") => Self(StatusCode::CONFLICT, "response_pending"),
             Some("resource_not_found") => Self(StatusCode::NOT_FOUND, "response_not_found"),
@@ -407,12 +412,17 @@ pub async fn run(
         }
     };
     tally.deployment = Some(selected.deployment.id);
+    if sender.is_closed() {
+        tally.record(Outcome::ClientCancelled);
+        return;
+    }
     let (mut reservation, mut credential) = match lifecycle::Reservation::reserve(
         id,
         node.clone(),
         &index,
         &selected,
         selected.upstream.representation(),
+        true,
     )
     .await
     {

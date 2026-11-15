@@ -26,6 +26,13 @@ pub struct Reservation {
     deployment: Uuid,
     usage_format: &'static str,
     lease: Lease,
+    /// The first attempt's id.
+    first: Uuid,
+    /// Whether the first attempt was registered with the reservation.
+    registered: bool,
+    organization: Uuid,
+    /// The organization's cluster-wide admission slots (`Limits::admitted`).
+    admissions: usize,
     pub tally: RequestTally,
 }
 
@@ -51,12 +58,19 @@ pub struct Target {
 }
 
 impl Reservation {
+    /// Reserve the selected request. With `with_attempt` its first attempt, on the selected
+    /// deployment, is registered in the same transaction (`gateway_v1.admit`): the
+    /// organization's serial section, the round trip and the synchronous commit happen once
+    /// per request, and on a definitive error neither exists. Without it (a WebSocket turn
+    /// that still has to dial its upstream) the first attempt is registered by `start`, so a
+    /// failed dial can still cancel the reservation.
     pub async fn reserve(
         id: Uuid,
         node: Arc<Node>,
         index: &Index,
         selected: &Selection<'_>,
         endpoint: Endpoint,
+        with_attempt: bool,
     ) -> Result<(Self, Zeroizing<String>), Failure> {
         let dep = selected.deployment;
         let secret = credential(&node, index, dep).await?;
@@ -78,11 +92,45 @@ impl Reservation {
                 LimitError::Limited => Failure(StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
                 _ => Failure::unavailable(),
             })?;
-        let reserve = || node.db.reserve_generation(id, index.revision, selected);
-        let first = reserve().await;
-        let retry = first.as_ref().is_err_and(|e| e.retryable());
-        if let Err(e) = if retry { reserve().await } else { first } {
-            if retry && !cancel(&node.db, id).await {
+        let first = Uuid::new_v4();
+        let usage_format = selected.usage_format();
+        let organization = selected.key.organization_id;
+        let admissions = node.limits.admission_limit(organization, &index.quotas);
+        let registered = with_attempt.then_some(first);
+        let reserve = || {
+            node.limits.admitted(
+                organization,
+                admissions,
+                node.db
+                    .reserve_generation(id, index.revision, selected, registered),
+            )
+        };
+        let result = reserve().await;
+        let retry = result.as_ref().is_err_and(|e| e.retryable());
+        if let Err(e) = if retry { reserve().await } else { result } {
+            // After an unknown commit outcome the request may hold a reservation, which is
+            // cancelled, or a reservation with its first attempt, which can no longer be
+            // cancelled: that one is closed as unknown, as a failed first start always was.
+            if retry
+                && !cancel(&node.db, id).await
+                && let Ok(Some(status)) = node.db.status(id).await
+                && status["attempts"]
+                    .as_array()
+                    .is_some_and(|v| v.iter().any(|r| r["id"] == first.to_string()))
+            {
+                Attempt {
+                    request: id,
+                    attempt: first,
+                    revision: index.revision,
+                    usage_format,
+                    started: Instant::now(),
+                    others: Vec::new(),
+                    closable: true,
+                    tally: RequestTally::detached(),
+                }
+                .unknown(&node.db)
+                .await;
+            } else if retry {
                 warn!(request_id = %id, "reservation cancellation unconfirmed");
             }
             finish_lease(&node.limits, &lease, Some(0), id).await;
@@ -95,27 +143,34 @@ impl Reservation {
                 revision: index.revision,
                 endpoint,
                 deployment: dep.id,
-                usage_format: selected.usage_format(),
+                usage_format,
                 lease,
+                first,
+                registered: with_attempt,
+                organization,
+                admissions,
                 tally: RequestTally::detached(),
             },
             secret,
         ))
     }
+    /// Give up before the first attempt was sent. A reservation without an attempt is
+    /// cancelled. A registered first attempt is closed as not sent: the customer is not
+    /// charged and its cost is confirmed in review, like any attempt registered but not sent.
     pub async fn abort(self) {
+        if self.registered {
+            self.into_run().not_sent().await;
+            return;
+        }
         if !cancel(&self.node.db, self.id).await {
             warn!(request_id = %self.id, "reservation cancellation unconfirmed");
         }
         finish_lease(&self.node.limits, &self.lease, Some(0), self.id).await;
     }
-    pub async fn start(mut self) -> Result<Run, Failure> {
-        if self.node.limits.renew(&mut self.lease).await.is_err() {
-            self.abort().await;
-            return Err(Failure::unavailable());
-        }
+    fn into_run(mut self) -> Run {
         let attempt = Attempt {
             request: self.id,
-            attempt: Uuid::new_v4(),
+            attempt: self.first,
             revision: self.revision,
             usage_format: self.usage_format,
             started: Instant::now(),
@@ -123,33 +178,49 @@ impl Reservation {
             closable: true,
             tally: std::mem::take(&mut self.tally),
         };
-        let start = || {
-            self.node
-                .db
-                .start_attempt(self.id, attempt.attempt, 1, self.deployment)
-        };
-        let first = start().await;
-        let retry = first.as_ref().is_err_and(|e| e.retryable());
-        if let Err(e) = if retry { start().await } else { first } {
-            if !cancel(&self.node.db, self.id).await
-                && retry
-                && let Ok(Some(status)) = self.node.db.status(self.id).await
-                && status["attempts"]
-                    .as_array()
-                    .is_some_and(|v| v.iter().any(|r| r["id"] == attempt.attempt.to_string()))
-            {
-                attempt.unknown(&self.node.db).await;
-            }
-            finish_lease(&self.node.limits, &self.lease, Some(0), self.id).await;
-            return Err(e.into());
-        }
-        Ok(Run {
+        Run {
             history: None,
             approximation: Default::default(),
             reservation: self,
             attempt,
             spent: Some(0),
-        })
+        }
+    }
+    pub async fn start(mut self) -> Result<Run, Failure> {
+        if self.node.limits.renew(&mut self.lease).await.is_err() {
+            self.abort().await;
+            return Err(Failure::unavailable());
+        }
+        if self.registered {
+            return Ok(self.into_run());
+        }
+        let (rid, aid, dep) = (self.id, self.first, self.deployment);
+        let (organization, admissions) = (self.organization, self.admissions);
+        let start = || {
+            self.node.limits.admitted(
+                organization,
+                admissions,
+                self.node.db.start_attempt(rid, aid, 1, dep),
+            )
+        };
+        let first = start().await;
+        let retry = first.as_ref().is_err_and(|e| e.retryable());
+        if let Err(e) = if retry { start().await } else { first } {
+            let run = self.into_run();
+            let r = &run.reservation;
+            if !cancel(&r.node.db, rid).await
+                && retry
+                && let Ok(Some(status)) = r.node.db.status(rid).await
+                && status["attempts"]
+                    .as_array()
+                    .is_some_and(|v| v.iter().any(|row| row["id"] == aid.to_string()))
+            {
+                run.attempt.unknown(&r.node.db).await;
+            }
+            finish_lease(&r.node.limits, &r.lease, Some(0), rid).await;
+            return Err(e.into());
+        }
+        Ok(self.into_run())
     }
 
     pub async fn guarded<F: Future>(&mut self, work: F) -> Result<F::Output, Failure> {
@@ -257,9 +328,15 @@ impl Run {
             tally: RequestTally::detached(),
         };
         let sequence = i32::try_from(attempt.others.len() + 1).expect("bounded attempts");
+        let (organization, admissions) =
+            (self.reservation.organization, self.reservation.admissions);
         let start = || {
-            node.db
-                .start_attempt(rid, attempt.attempt, sequence, next.deployment)
+            node.limits.admitted(
+                organization,
+                admissions,
+                node.db
+                    .start_attempt(rid, attempt.attempt, sequence, next.deployment),
+            )
         };
         let first = start().await;
         let retry = first.as_ref().is_err_and(|e| e.retryable());

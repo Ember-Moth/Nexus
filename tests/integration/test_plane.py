@@ -37,6 +37,10 @@ async def register_node(client, root, admin, cid):
             sql.Identifier(name), sql.Literal(password)
         )
     )
+    # Node logins carry their statement timeout as a role setting (see ensure_gateway_login).
+    admin.execute(
+        sql.SQL("ALTER ROLE {} SET statement_timeout = '8s'").format(sql.Identifier(name))
+    )
     response = await client.put(
         f"/api/v1/gateway-clusters/{cid}/principals/{(nid := uuid4())}",
         headers=auth(root),
@@ -261,8 +265,8 @@ async def test_configuration_recovery_rollback_and_old_ack(plane, http, admin):
     await app.state.publication.distribute()
     two = await peer.refresh()
     assert two["resources"] == one["resources"] and two["revision"] == "2"
-    old = await peer.call("get_config_snapshot", 1)
-    await peer.call("ack_config", 1, old["sha256"], True, "")
+    old = bytes(await peer.call("get_config_snapshot", 1))
+    await peer.call("ack_config", 1, hashlib.sha256(old).hexdigest(), True, "")
     status = (
         await client.get(f"/api/v1/gateway-clusters/{cid}/releases/2", headers=auth(root))
     ).json()
@@ -584,7 +588,9 @@ async def test_cluster_isolation_and_scope_shrink(plane, http):
     )
     assert response.status_code == 200
     for operation, args in [
+        ("config_head", ()),
         ("get_config_snapshot", (1,)),
+        ("config_keys", (1, 0, None, None, None, 10)),
         ("get_credential_envelope", (1, UUID(ref["credential_id"]), 1)),
         ("reserve_request", (uuid4(), a.api_key_id, a.model_id, 1, 1, 1)),
     ]:
@@ -801,13 +807,13 @@ async def test_native_profile_publication_attempt_binding_and_worker_replay(plan
         assert result.status_code == status, result.text
     with pytest.raises(ValueError, match="Unsupported snapshot"):
         await peer.refresh()
-    config = await peer.call("get_config_snapshot")
-    manifest = config["manifest"]
+    head = await peer.call("config_head")
+    manifest = json.loads(bytes(await peer.call("get_config_snapshot", int(head["revision"]))))
     deployment = manifest["resources"]["deployments"][0]
     assert deployment["usage_format"] == "openai.responses.v1"
     assert deployment["relay_profile"]["transports"] == profile["transports"]
     rev = int(manifest["revision"])
-    await peer.call("ack_config", rev, config["sha256"], True, "")
+    await peer.call("ack_config", rev, head["sha256"], True, "")
     for inputs, outputs in [(3, 6), (4, 7), (4, 0)]:
         rejected = uuid4()
         with pytest.raises(psycopg.errors.RaiseException, match="deployment_unavailable"):

@@ -2,7 +2,7 @@ import base64
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from nexus.shared.errors import ServiceError
@@ -99,8 +99,11 @@ def source_vector(cluster, identity, catalog, billing, prices):
     }
 
 
-def content_digest(scope_generation, key_version, required, resources):
-    """What a node would load; releases with equal digests are interchangeable."""
+def content_digest(scope_generation, key_version, required, resources, keys):
+    """What a node would load; releases with equal digests are interchangeable.
+
+    ``keys`` is the key set digest: keys are delivered beside the manifest, not in it.
+    """
     return hashlib.sha256(
         serialize(
             {
@@ -108,9 +111,59 @@ def content_digest(scope_generation, key_version, required, resources):
                 "key_version": key_version,
                 "required_capabilities": required,
                 "resources": resources,
+                "keys": keys,
             }
         )
     ).hexdigest()
+
+
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def key_rows(keys):
+    """The cluster's API keys as published to ``publication.cluster_keys``, ordered by id."""
+    rows = []
+    for k in keys:
+        expires = k["expires_at"]
+        if isinstance(expires, str):
+            expires = datetime.fromisoformat(expires)
+        rows.append(
+            {
+                "id": str(k["id"]),
+                "digest": k["digest"],
+                "organization_id": str(k["organization_id"]),
+                "project_id": str(k["project_id"]),
+                "service_account_id": str(k["service_account_id"]),
+                "expires_at": expires.astimezone(UTC).isoformat() if expires else None,
+            }
+        )
+    return sorted(rows, key=lambda r: r["id"])
+
+
+def key_set_digest(rows):
+    """SHA-256 of one line per key in id order; nodes recompute it over the keys they hold.
+
+    A line is ``id, digest, organization, project, service account, expiry`` joined by tabs,
+    the expiry as Unix microseconds or ``-``.
+    """
+    digest = hashlib.sha256()
+    for r in rows:
+        expires = r["expires_at"]
+        micros = (
+            (datetime.fromisoformat(expires) - EPOCH) // timedelta(microseconds=1)
+            if expires
+            else "-"
+        )
+        fields = (
+            r["id"],
+            r["digest"],
+            r["organization_id"],
+            r["project_id"],
+            r["service_account_id"],
+            micros,
+        )
+        digest.update(("\t".join(map(str, fields)) + "\n").encode())
+    return digest.hexdigest()
 
 
 def trigger(previous, current):
@@ -221,6 +274,7 @@ class Sources:
     envelopes: dict
     organizations: list
     models: list
+    keys: list
 
 
 class PublicationService:
@@ -514,12 +568,15 @@ class PublicationService:
             policy["allowed_models"] = [m for m in policy["allowed_models"] if m in models]
         policy = relay_policy(c)
         extra = {"cluster_policy": policy} if policy != RELAY_POLICY_DEFAULTS else {}
+        # Keys travel beside the manifest (publication.cluster_keys), never inside it.
+        keys = key_rows(identity.pop("key_verifiers"))
         return Sources(
             source_vector(c, identity_rev, catalog_rev, pricing_rev, prices),
             json.loads(serialize({**identity, **catalog, **extra})),
             envelopes,
             orgs,
             models,
+            keys,
         )
 
     async def _read(self, cluster):
@@ -532,7 +589,11 @@ class PublicationService:
                 continue
             except ValueError as error:
                 raise ServiceError("invalid_snapshot", str(error), 422) from None
-            if first.vector == again.vector and first.resources == again.resources:
+            if (
+                first.vector == again.vector
+                and first.resources == again.resources
+                and first.keys == again.keys
+            ):
                 return first
         raise ServiceError("source_changed", "Configuration changed during publication", 409)
 
@@ -540,13 +601,8 @@ class PublicationService:
     def _rollback(sources, old, rollback_revision):
         current = sources.resources
         old_resources = old["resources"]
-        for name in (
-            "models",
-            "deployments",
-            "access_policies",
-            "key_verifiers",
-            "credential_refs",
-        ):
+        # Keys are not part of a release's content: a rollback serves the current keys.
+        for name in ("models", "deployments", "access_policies", "credential_refs"):
             if any(resource not in current[name] for resource in old_resources[name]):
                 raise ServiceError(
                     "rollback_target_unavailable", "Historical references have changed", 409
@@ -578,6 +634,7 @@ class PublicationService:
             snapshot["source_revision"]["key_version"],
             manifest["required_capabilities"],
             manifest["resources"],
+            manifest.get("key_set", {}).get("sha256"),
         )
 
     async def _commit(
@@ -600,8 +657,9 @@ class PublicationService:
         required = required_capabilities(current)
         if any(not set(required) <= set(n["capabilities"]) for n in nodes):
             raise ServiceError("unsupported_capability", "A node lacks required capabilities", 409)
+        keys = key_set_digest(sources.keys)
         digest = content_digest(
-            locked["scope_generation"], locked["key_version"], required, current
+            locked["scope_generation"], locked["key_version"], required, current, keys
         )
         settled = None if rollback else sources.vector
         models = None if rollback else sources.models
@@ -610,12 +668,14 @@ class PublicationService:
             await repo.settle(cid, locked["desired_revision"], settled, digest, models)
             return None
         rev = locked["desired_revision"] + 1
+        sequence = await repo.stage_keys(cid, sources.keys)
         manifest = {
             "schema_version": 1,
             "cluster_id": str(cid),
             "revision": str(rev),
             "required_capabilities": required,
             "created_at": datetime.now(UTC).isoformat(),
+            "key_set": {"sequence": str(sequence), "count": len(sources.keys), "sha256": keys},
             "resources": current,
         }
         raw = serialize(manifest)
@@ -631,6 +691,8 @@ class PublicationService:
             actor,
             key,
             params,
+            sequence,
+            required,
         )
         changed = trigger(previous, sources.vector) if automatic else None
         await repo.settle(cid, rev, settled, digest, models, changed)

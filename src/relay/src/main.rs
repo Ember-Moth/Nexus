@@ -1,7 +1,10 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use crypto_box::SecretKey;
 use nexus_relay::{
-    control::{database::Gateway, limits::Limits},
+    control::{
+        database::Gateway,
+        limits::{Admissions, Limits},
+    },
     metrics,
     server::{Node, NodeLimits, serve},
     telemetry,
@@ -66,17 +69,24 @@ async fn run() -> Result<(), Box<dyn Error>> {
             .map_err(|_| "invalid NEXUS_RELAY_PRIVATE_KEY")?,
     );
     let private = SecretKey::from_slice(&key).map_err(|_| "invalid NEXUS_RELAY_PRIVATE_KEY")?;
+    let database = required("NEXUS_RELAY_DATABASE_URL")?;
     let db = Gateway::connect(
-        &required("NEXUS_RELAY_DATABASE_URL")?,
+        &database,
         setting("NEXUS_RELAY_POOL_SIZE", 8)?,
         Duration::from_secs(5),
     )
     .await?;
+    // The configuration refresh has a connection of its own, outside the request pool.
+    let control = Gateway::connect(&database, 1, Duration::from_secs(5)).await?;
     let limits = Limits::connect(
         &required("NEXUS_RELAY_REDIS_URL")?,
         env::var("NEXUS_RELAY_NAMESPACE").unwrap_or_else(|_| "nexus:v1".into()),
     )
-    .await?;
+    .await?
+    .with_admissions(Admissions::new(
+        setting("NEXUS_RELAY_TENANT_ADMISSIONS", 32)?,
+        Duration::from_millis(setting("NEXUS_RELAY_ADMISSION_WAIT_MS", 5000)?),
+    ));
     let root = env::var_os("NEXUS_RELAY_UPSTREAM_CA")
         .map(std::fs::read)
         .transpose()?;
@@ -86,6 +96,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     )?;
     let node = Node::new(
         db,
+        control,
         limits,
         private,
         upstream,

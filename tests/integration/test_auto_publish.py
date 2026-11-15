@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -50,6 +51,18 @@ def publisher(app, admin, quiet=0.0, max_delay=30.0):
 async def cluster(client, root, cid):
     listed = (await client.get("/api/v1/gateway-clusters", headers=auth(root))).json()["items"]
     return next(item for item in listed if item["id"] == cid)
+
+
+def release_keys(admin, cid, rev):
+    """The cluster's keys as of revision `rev` (keys travel beside the manifest)."""
+    return admin.execute(
+        """SELECT k.key_id::text id, k.organization_id::text organization_id
+           FROM publication.cluster_keys k JOIN publication.config_snapshots s
+           ON s.cluster_id=k.cluster_id AND s.revision=%s
+           WHERE k.cluster_id=%s AND k.added_sequence<=s.key_sequence
+           AND (k.removed_sequence IS NULL OR k.removed_sequence>s.key_sequence)""",
+        (rev, cid),
+    ).fetchall()
 
 
 def revisions(admin, cid):
@@ -166,7 +179,7 @@ async def test_new_key_reaches_the_gateway_without_a_release(http, admin, servic
             ("2", "auto_publisher", True),
             ("1", "operator", False),
         ]
-        assert key_id in {k["id"] for k in peer.snapshot["resources"]["key_verifiers"]}
+        assert key_id in {k["id"] for k in peer.keys.values()}
 
 
 async def test_source_notifications_wake_the_worker(http):
@@ -233,8 +246,8 @@ async def test_personal_organization_is_served_by_an_all_cluster(http, admin, si
         async with GatewaySimulator.connect(
             dsn, http[3].redis_url.get_secret_value(), http[3].redis_namespace
         ) as peer:
-            snapshot = await peer.refresh()
-            owners = {k["organization_id"] for k in snapshot["resources"]["key_verifiers"]}
+            await peer.refresh()
+            owners = {k["organization_id"] for k in peer.keys.values()}
             assert owners == {org["id"], personal["id"]}
             result, lease = await peer.reserve(secret, model["id"], 1, 1)
             assert result["state"] == "reserved"
@@ -244,13 +257,7 @@ async def test_personal_organization_is_served_by_an_all_cluster(http, admin, si
             client, root, dep, PrivateKey.generate(), organization_scope="personal"
         )
         assert (await publisher(app, admin).tick())[0] >= 1
-        manifest = admin.execute(
-            "SELECT manifest FROM publication.config_snapshots WHERE cluster_id=%s",
-            (rule["id"],),
-        ).fetchone()[0]
-        assert {k["organization_id"] for k in manifest["resources"]["key_verifiers"]} == {
-            personal["id"]
-        }
+        assert {k[1] for k in release_keys(admin, rule["id"], 1)} == {personal["id"]}
 
 
 async def test_suspended_organization_leaves_an_all_cluster(http, admin):
@@ -286,10 +293,11 @@ async def test_suspended_organization_leaves_an_all_cluster(http, admin):
             with pytest.raises(psycopg.errors.RaiseException, match="key_inactive"):
                 await peer.reserve(raw, model["id"], 1, 1)
             assert (await auto.tick())[0] == 1
-            snapshot = await peer.refresh()
-            assert snapshot["resources"]["key_verifiers"] == []
+            await peer.refresh()
+            assert peer.keys == {}
             # Dropping an inactive organization does not expire the previous snapshot.
-            assert (await peer.call("get_config_snapshot", 1))["manifest"]["revision"] == "1"
+            previous = json.loads(bytes(await peer.call("get_config_snapshot", 1)))
+            assert previous["revision"] == "1"
 
 
 async def test_rollback_pauses_auto_publish_until_resumed(plane, http, admin):
@@ -326,15 +334,9 @@ async def test_rollback_pauses_auto_publish_until_resumed(plane, http, admin):
     assert resumed.status_code == 200, resumed.text
     assert resumed.json()["auto_publish_status"]["paused"] is None
     assert (await auto.tick())[0] == 1 and revisions(admin, cid) == [1, 2, 3, 4]
-    three, four = (
-        admin.execute(
-            "SELECT manifest->'resources'->'key_verifiers' FROM publication.config_snapshots "
-            "WHERE cluster_id=%s AND revision=%s",
-            (cid, rev),
-        ).fetchone()[0]
-        for rev in (3, 4)
-    )
-    assert len(three) == 2 and len(four) == 4
+    # A rollback restores the release's resources, never older keys: it serves the live set.
+    three, four = (release_keys(admin, cid, rev) for rev in (3, 4))
+    assert len(three) == 3 and len(four) == 4
 
 
 async def test_validation_failure_is_recorded_and_recovers(plane, http, admin):
@@ -435,12 +437,7 @@ async def test_auto_and_manual_releases_race_without_gaps(plane, http, admin):
     # Whatever won each race, the sources are settled and nothing more is published.
     await asyncio.gather(*(w.tick() for w in workers))
     assert revisions(admin, cid) == seen
-    newest = admin.execute(
-        "SELECT manifest->'resources'->'key_verifiers' FROM publication.config_snapshots "
-        "WHERE cluster_id=%s AND revision=%s",
-        (cid, seen[-1]),
-    ).fetchone()[0]
-    assert len(newest) == 6
+    assert len(release_keys(admin, cid, seen[-1])) == 6
 
 
 async def test_disabled_auto_publish_keeps_manual_releases(plane, http, admin, service_directory):

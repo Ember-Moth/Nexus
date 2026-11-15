@@ -42,3 +42,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 zeroize = "1"
+
+[dev-dependencies]
+# Paused clocks for timing tests (`#[tokio::test(start_paused = true)]`).
+tokio = { version = "1", features = ["test-util"] }

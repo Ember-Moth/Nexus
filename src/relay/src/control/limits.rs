@@ -1,5 +1,10 @@
 //! Redis keys, Lua effects, and fingerprint bytes are part of the Python simulator contract.
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use redis::{
     AsyncCommands, Script,
@@ -11,7 +16,10 @@ use sha2::{Digest, Sha256};
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use super::snapshot::{Key, Metric, Quota};
+use super::{
+    ControlError,
+    snapshot::{Key, Layer, Metric, Quota, Scope},
+};
 use crate::{
     metrics::{self, Dependency, ErrorKind},
     protocol::tokens::ReservationBounds,
@@ -42,6 +50,71 @@ pub struct Limits {
     namespace: String,
     acquire: Script,
     change: Script,
+    admit: Script,
+    admissions: Admissions,
+}
+
+/// Cluster-wide admission slots per organization: how many of its requests may be inside the
+/// database admission (reserve + first attempt, or a later attempt) at once, across all nodes.
+/// Waiting happens here, before a database connection is taken, so a hot organization cannot
+/// fill the connection pools with sessions queued on its serial section.
+#[derive(Clone)]
+pub struct Admissions {
+    /// Slots of an organization without an `admission_concurrency` policy; 0 disables the gate.
+    pub default: usize,
+    /// How long a request may wait for a slot before it is refused with 429.
+    pub wait: Duration,
+    /// Waiters of this node, one queue per organization: only the head polls Redis.
+    queues: Arc<Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+impl Admissions {
+    pub fn new(default: usize, wait: Duration) -> Self {
+        Self {
+            default,
+            wait,
+            queues: Arc::default(),
+        }
+    }
+    fn queue(&self, org: Uuid) -> Arc<tokio::sync::Mutex<()>> {
+        self.queues.lock().unwrap().entry(org).or_default().clone()
+    }
+    fn release_queue(&self, org: Uuid) {
+        let mut queues = self.queues.lock().unwrap();
+        if queues.get(&org).is_some_and(|q| Arc::strong_count(q) == 1) {
+            queues.remove(&org);
+        }
+    }
+}
+
+/// Seconds a slot survives a node that never released it (longer than any admission call).
+const ADMISSION_TTL_MS: u64 = 20_000;
+const ADMIT: &str = r"
+local t=redis.call('TIME'); local now=tonumber(t[1])*1000+math.floor(tonumber(t[2])/1000)
+redis.call('ZREMRANGEBYSCORE',KEYS[1],'-inf',now)
+if redis.call('ZCARD',KEYS[1])>=tonumber(ARGV[1]) then return 0 end
+redis.call('ZADD',KEYS[1],now+tonumber(ARGV[2]),ARGV[3])
+redis.call('PEXPIRE',KEYS[1],tonumber(ARGV[2]))
+return 1
+";
+
+/// A held admission slot; dropping it releases the slot.
+struct Slot {
+    conn: ConnectionManager,
+    key: String,
+    owner: String,
+}
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let (mut conn, key, owner) = (
+            self.conn.clone(),
+            std::mem::take(&mut self.key),
+            std::mem::take(&mut self.owner),
+        );
+        tokio::spawn(async move {
+            let _: Result<i64, _> = conn.zrem(key, owner).await;
+        });
+    }
 }
 
 #[derive(Deserialize)]
@@ -125,7 +198,87 @@ impl Limits {
             namespace,
             acquire: Script::new(include_str!("lua/acquire.lua")),
             change: Script::new(include_str!("lua/change.lua")),
+            admit: Script::new(ADMIT),
+            admissions: Admissions::new(32, Duration::from_secs(5)),
         })
+    }
+
+    pub fn with_admissions(mut self, admissions: Admissions) -> Self {
+        self.admissions = admissions;
+        self
+    }
+
+    /// The organization's cluster-wide admission slots: its platform `admission_concurrency`
+    /// policy, else the node default.
+    pub fn admission_limit(&self, org: Uuid, quotas: &[Quota]) -> usize {
+        quotas
+            .iter()
+            .filter(|q| {
+                matches!(q.metric, Metric::AdmissionConcurrency)
+                    && q.organization_id == org
+                    && q.layer == Layer::Platform
+                    && q.scope_type == Scope::Organization
+                    && q.scope_id == org
+            })
+            .map(|q| q.limit_value as usize)
+            .min()
+            .unwrap_or(self.admissions.default)
+    }
+
+    /// Run `work`, one database admission of `org`, inside one of its `limit` cluster-wide
+    /// slots. A limit of 0 runs it directly. Refused with `ControlError::Saturated` when no
+    /// slot frees up within the configured wait.
+    pub async fn admitted<T>(
+        &self,
+        org: Uuid,
+        limit: usize,
+        work: impl Future<Output = Result<T, ControlError>>,
+    ) -> Result<T, ControlError> {
+        if limit == 0 {
+            return work.await;
+        }
+        let deadline = Instant::now() + self.admissions.wait;
+        let slot = self.slot(org, limit, deadline).await;
+        self.admissions.release_queue(org);
+        let _slot = slot?;
+        work.await
+    }
+
+    async fn slot(&self, org: Uuid, limit: usize, deadline: Instant) -> Result<Slot, ControlError> {
+        let queue = self.admissions.queue(org);
+        let _turn = tokio::time::timeout_at(deadline, queue.lock())
+            .await
+            .map_err(|_| ControlError::Saturated)?;
+        let slot = Slot {
+            conn: self.conn.clone(),
+            key: format!("{}:admission:{{{org}}}", self.namespace),
+            owner: Uuid::new_v4().to_string(),
+        };
+        let mut backoff = Duration::from_millis(1);
+        loop {
+            let admitted: i64 = self
+                .admit
+                .key(&slot.key)
+                .arg(limit)
+                .arg(ADMISSION_TTL_MS)
+                .arg(&slot.owner)
+                .invoke_async(&mut self.conn.clone())
+                .await
+                .map_err(|_| {
+                    unavailable("admit");
+                    ControlError::Invalid("admission slots")
+                })?;
+            if admitted == 1 {
+                return Ok(slot);
+            }
+            let jitter = Duration::from_micros(rand::random::<u64>() % 1000);
+            if Instant::now() + backoff >= deadline {
+                // Nothing was taken; the drop below only issues a harmless ZREM.
+                return Err(ControlError::Saturated);
+            }
+            tokio::time::sleep(backoff + jitter).await;
+            backoff = (backoff * 2).min(Duration::from_millis(8));
+        }
     }
 
     pub async fn acquire(&self, a: Admission<'_>) -> Result<Lease, LimitError> {
@@ -146,7 +299,11 @@ impl Limits {
         let mut policies: Vec<_> = a
             .quotas
             .iter()
-            .filter(|p| p.organization_id == org && p.scope_id == a.key.scope(p.scope_type))
+            .filter(|p| {
+                p.metric.leased()
+                    && p.organization_id == org
+                    && p.scope_id == a.key.scope(p.scope_type)
+            })
             .collect();
         policies.sort_by_key(|p| p.id);
         let mut binding = json!([

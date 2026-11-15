@@ -364,7 +364,7 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
                 assert outgoing["max_output_tokens"] == 6 and outgoing["store"] is False
             assert outgoing["model"] == dep["upstream_model"]
             await wait_events(admin, 2)
-            assert dropped == ["reserve_request", "start_attempt", "append_usage_event"]
+            assert dropped == ["reserve_request", "append_usage_event"]
             for (event,) in admin.execute("SELECT envelope FROM billing.usage_events"):
                 assert (await peer.call("append_usage_event", json.dumps(event)))[
                     "status"

@@ -13,7 +13,8 @@ RELAY_RESOURCE_DEFAULTS = {
     "vector_stores_per_key": 100,
     "vector_stores_per_organization": 1000,
 }
-RATES = "('rpm','tpm','concurrency')"
+# Quotas the Relay enforces through Redis; they travel in the snapshot's quota_policies.
+RATES = "('rpm','tpm','concurrency','admission_concurrency')"
 
 
 async def resource_limits(rows):

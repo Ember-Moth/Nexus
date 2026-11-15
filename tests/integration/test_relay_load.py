@@ -68,7 +68,9 @@ STATEMENTS = [
     "start_attempt",
     "append_usage_event",
     "get_credential_envelope",
+    "config_head",
     "get_config_snapshot",
+    "config_keys",
     "ack_config",
 ]
 
@@ -1158,18 +1160,26 @@ async def snapshot_profile(plane, round_no, size, nodes):
         "WHERE cluster_id=%s AND revision=%s",
         (plane.cid, revision),
     ).fetchone()[0]
-    reply = len(json.dumps(await plane.peer.call("get_config_snapshot")))
+    head = await plane.peer.call("config_head")
+    reply = len(bytes(await plane.peer.call("get_config_snapshot", int(head["revision"]))))
+    head_bytes = len(json.dumps(head))
     name = f"keys-{size}"
-    # Idle: only the periodic snapshot polling of every node.
+    # Idle: only the periodic polling of every node (config_head; the snapshot and key
+    # changes are only read when the revision moves).
     async with measured(plane) as m:
         await asyncio.sleep(20)
-    polls = m.statements.get("get_config_snapshot", [])
+    polls = m.statements.get("config_head", [])
+    fetches = m.statements.get("get_config_snapshot", [])
     idle = {
         "seconds": round(m.elapsed, 1),
         "snapshot_polls": len(polls),
         "polls_per_s": round(len(polls) / m.elapsed, 2),
         "poll_ms": summary_ms(polls),
-        "reply_mb_per_s": round(len(polls) * reply / m.elapsed / 1e6, 1),
+        "snapshot_fetches": len(fetches),
+        "fetch_ms": summary_ms(fetches),
+        "reply_mb_per_s": round(
+            (len(fetches) * reply + len(polls) * head_bytes) / m.elapsed / 1e6, 3
+        ),
         "postgres": m.samples,
     }
     # Then 20 requests per second for 15 s with the same snapshot.
@@ -1183,7 +1193,7 @@ async def snapshot_profile(plane, round_no, size, nodes):
         "publish_s": round(publish_s, 3),
         "distribute_to_all_applied_s": round(applied_s, 3),
         "payload_mb": round(payload / 1e6, 2),
-        "snapshot_reply_mb": round(reply / 1e6, 2),
+        "snapshot_reply_mb": round(reply / 1e6, 4),
         "idle": idle,
         "client": client_summary(results, "responses", m),
         "schedule_lag_ms": summary_ms(lag),

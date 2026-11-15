@@ -354,7 +354,7 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
             0,
         )
         assert (
-            dropped == ["reserve_request", "start_attempt", "append_usage_event"]
+            dropped == ["reserve_request", "append_usage_event"]
             and len(received) == 1
         )
         mode = "error"
@@ -561,7 +561,7 @@ async def test_responses_ws(http, admin, tls, relay_binary):  # noqa: F811
                 90,
                 0,
             )
-            assert dropped == ["reserve_request", "start_attempt", "append_usage_event"]
+            assert dropped == ["reserve_request", "append_usage_event"]
             async with connect(uri, additional_headers=hdr, proxy=None) as other:
                 await send(other, nxt)
                 assert (await recv(other))["error"]["code"] == "previous_response_not_found"

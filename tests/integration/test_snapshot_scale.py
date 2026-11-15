@@ -118,9 +118,10 @@ async def test_snapshot_scale(http, admin, tls, relay):  # noqa: F811 - pytest f
                     f"{settings.redis_namespace}:cfg:{{{cid}}}:snapshot:{rev}"
                 )
                 started = monotonic()
-                reply = await peer.call("get_config_snapshot")
+                head = await peer.call("config_head")
+                reply = bytes(await peer.call("get_config_snapshot", int(head["revision"])))
                 fetch_s = timed(started)
-                reply_bytes = len(json.dumps(reply))
+                reply_bytes = len(reply)
                 started = monotonic()
                 await peer.refresh()
                 simulator_refresh_s = timed(started)

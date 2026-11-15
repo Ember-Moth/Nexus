@@ -288,6 +288,10 @@ async def register_node(client, root, admin, cid, auth):
     admin.execute(
         sql.SQL("ALTER ROLE {} SET log_min_duration_statement = 0").format(sql.Identifier(name))
     )
+    # The Relay requires a role-level statement timeout (ensure_gateway_login sets the same).
+    admin.execute(
+        sql.SQL("ALTER ROLE {} SET statement_timeout = '8s'").format(sql.Identifier(name))
+    )
     nid = uuid4()
     response = await client.put(
         f"/api/v1/gateway-clusters/{cid}/principals/{nid}",

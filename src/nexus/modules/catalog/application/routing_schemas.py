@@ -13,10 +13,14 @@ QuotaScope = Literal["organization", "project", "key"]
 # Request rates and concurrency are enforced through Redis. Resource counts cap the live files,
 # conversations, containers, batches (resources_*) and vector stores a key or an organization may
 # hold in one cluster; they override the platform defaults for one organization only.
+# admission_concurrency caps how many of an organization's requests may be inside the database
+# admission (reserve + first attempt) at once across all nodes of a cluster; it overrides the
+# Relay's NEXUS_RELAY_TENANT_ADMISSIONS for one organization.
 QuotaMetric = Literal[
     "rpm",
     "tpm",
     "concurrency",
+    "admission_concurrency",
     "resources_per_key",
     "resources_per_organization",
     "vector_stores_per_key",
@@ -30,6 +34,8 @@ COUNT_METRICS = frozenset(
         "vector_stores_per_organization",
     }
 )
+# Metrics that only exist as platform policies of a whole organization.
+ORGANIZATION_METRICS = COUNT_METRICS | {"admission_concurrency"}
 QuotaValue = Annotated[int, Field(ge=1, le=2000000000, strict=True)]
 
 

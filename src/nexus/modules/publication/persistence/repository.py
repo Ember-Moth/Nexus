@@ -374,21 +374,45 @@ class PublicationRepository:
             raise ServiceError("not_found", "Snapshot not found", 404)
         return rows[0]
 
+    async def stage_keys(self, cid, keys):
+        """Record the cluster's key set; returns the key sequence the release names."""
+        result = await self.session.execute(
+            text("SELECT publication.stage_keys(:cid,cast(:keys AS jsonb))"),
+            {"cid": cid, "keys": json.dumps(keys)},
+        )
+        return result.scalar_one()
+
     async def publish(
-        self, cid, rev, raw, sha, sources, envelopes, key_version, actor, key, parameters
+        self,
+        cid,
+        rev,
+        raw,
+        sha,
+        sources,
+        envelopes,
+        key_version,
+        actor,
+        key,
+        parameters,
+        key_sequence,
+        required,
     ):
-        """Store a release; automatic releases (key None) have no idempotency record."""
+        """Store and index a release; automatic releases (key None) have no idempotency record."""
         await self.execute(
-            """INSERT INTO publication.config_snapshots(
-            cluster_id,revision,manifest,payload_bytes,sha256,source_revision)
-        VALUES(:cid,:rev,cast(:manifest AS jsonb),:raw,:sha,cast(:sources AS jsonb))""",
+            """INSERT INTO publication.config_snapshots(cluster_id,revision,manifest,payload_bytes,
+            sha256,source_revision,key_sequence,required_capabilities)
+        VALUES(:cid,:rev,cast(:manifest AS jsonb),:raw,:sha,cast(:sources AS jsonb),:sequence,
+            cast(:required AS text[]))""",
             cid=cid,
             rev=rev,
             manifest=raw.decode(),
             raw=raw,
             sha=sha,
             sources=json.dumps(sources),
+            sequence=key_sequence,
+            required=list(required),
         )
+        await self.execute("SELECT publication.index_snapshot(:cid,:rev)", cid=cid, rev=rev)
         for credential, (version, ciphertext) in envelopes.items():
             await self.execute(
                 "INSERT INTO publication.credential_envelopes VALUES(:cid,:rev,"

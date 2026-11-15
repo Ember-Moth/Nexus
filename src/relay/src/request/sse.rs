@@ -7,11 +7,15 @@ use crate::{
         sse::{Decoder, Event},
         stream::{Completion, Observer},
     },
-    server::Node,
+    server::{Node, delivery::progressing},
 };
 use axum::body::Bytes;
 use serde_json::Value;
-use std::{io, sync::Arc, time::Duration};
+use std::{
+    io,
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 use tokio::{
     sync::{mpsc, oneshot},
     time::timeout,
@@ -33,15 +37,25 @@ fn encode(event: Event) -> Bytes {
     wire.into()
 }
 
+/// How long a stream may wait on a client that keeps reading, in multiples of the idle time:
+/// a wait ends after `idle` without any byte written, or after this many idle periods in all.
+const SLOW_CLIENT_IDLE_PERIODS: u32 = 10;
+
+/// Queue one event; a client that reads nothing for `idle` ends the stream.
 async fn send(
     tx: &mpsc::Sender<Result<Bytes, io::Error>>,
     bytes: Bytes,
     idle: Duration,
+    written: &AtomicU64,
 ) -> Result<(), ()> {
-    timeout(idle, tx.send(Ok(bytes)))
-        .await
-        .map_err(|_| ())?
-        .map_err(|_| ())
+    progressing(
+        written,
+        idle,
+        idle * SLOW_CLIENT_IDLE_PERIODS,
+        tx.send(Ok(bytes)),
+    )
+    .await?
+    .map_err(|_| ())
 }
 
 struct Downstream {
@@ -54,6 +68,7 @@ struct Downstream {
     pending: Option<(Channel, Response)>,
     tx: mpsc::Sender<Result<Bytes, io::Error>>,
     received: oneshot::Receiver<()>,
+    written: Arc<AtomicU64>,
 }
 impl Downstream {
     fn new(
@@ -64,6 +79,7 @@ impl Downstream {
     ) -> Self {
         let (tx, rx) = mpsc::channel(2);
         let (receipt, received) = oneshot::channel();
+        let written = Arc::new(AtomicU64::new(0));
         Self {
             search_metered: Default::default(),
             resources: None,
@@ -79,11 +95,13 @@ impl Downstream {
                 Response::Stream {
                     body: rx,
                     receipt,
+                    written: written.clone(),
                     applied: policy.applied,
                 },
             )),
             tx,
             received,
+            written,
         }
     }
     async fn closed(&mut self) {
@@ -152,7 +170,7 @@ impl Downstream {
         if let Some((sender, response)) = self.pending.take() {
             sender.send(Ok(response)).map_err(|_| ())?;
         }
-        send(&self.tx, bytes, idle).await
+        send(&self.tx, bytes, idle, &self.written).await
     }
 }
 async fn pump(
@@ -449,10 +467,17 @@ pub async fn forward(
         .await;
     }
     drop(downstream.tx);
+    // The terminal chunk is written once the client has read what the socket still holds.
+    // Wait while the client makes progress: a slow reader is not mistaken for a lost one.
     let written = matches!(result, Ok(Ok(())))
         && matches!(
             run.reservation
-                .guarded(timeout(node.stream_idle, downstream.received))
+                .guarded(progressing(
+                    &downstream.written,
+                    node.stream_idle,
+                    node.stream_idle * SLOW_CLIENT_IDLE_PERIODS,
+                    downstream.received,
+                ))
                 .await,
             Ok(Ok(Ok(())))
         );

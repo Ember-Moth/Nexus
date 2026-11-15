@@ -342,6 +342,38 @@ class ProjectService:
             )
             return KeyIssued(key=replacement, secret=secret, secret_status="available")
 
+    async def resource_scope(self, token, org_id, *, project_id=None, key_id=None, manage=False):
+        """Keys whose upstream resources the caller may list, or delete when `manage`.
+
+        Listing follows the key list (owners, platform administrators, developers within their
+        granted projects); deleting needs an owner or platform administrator, whatever the
+        organization's status. Revoked and expired keys stay in scope. Without an organization,
+        only a platform administrator passes and every key is in scope (returned as None).
+        Returns (actor_id, [(key_id, organization_id, project_id)] | None).
+        """
+        async with self._access.authenticated(token) as (tx, actor):
+            if org_id is None:
+                self._access.platform_admin(actor)
+                return actor.user.id, None
+            role = {"owner": True} if manage else {"credentials": True}
+            member_id = await self._access.project_scope(tx, actor, org_id, **role)
+            if project_id:
+                await self._access.project(tx, actor, org_id, project_id, **role)
+            if key_id:
+                key = await tx.applications.key(org_id, key_id)
+                if key is None or (project_id and key.project_id != project_id):
+                    raise missing(key_id)
+                await self._access.project(tx, actor, org_id, key.project_id, **role)
+            return actor.user.id, await tx.applications.key_owners(
+                org_id, member_id, project_id, key_id
+            )
+
+    async def key_owners(self, key_ids):
+        """(key_id, organization_id, project_id) of each known key; for callers already
+        authorized across organizations by resource_scope(token, None)."""
+        async with self._transactions() as tx:
+            return await tx.applications.owners_of(key_ids)
+
     async def authenticate_api_key(self, secret):
         digest = digest_token(secret, "nxk_")
         async with self._transactions() as tx:

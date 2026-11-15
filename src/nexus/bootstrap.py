@@ -74,6 +74,28 @@ class BillingCatalog:
         )
 
 
+class ResourceAccess:
+    """Identity's organization role checks for upstream resources held by API keys."""
+
+    def __init__(self, projects):
+        self._projects = projects
+
+    async def scope(
+        self, token, organization_id, *, project_id=None, api_key_id=None, manage=False
+    ):
+        actor, keys = await self._projects.resource_scope(
+            token, organization_id, project_id=project_id, key_id=api_key_id, manage=manage
+        )
+        return publication.ResourceScope(
+            actor,
+            None if keys is None else {key: publication.KeyOwner(o, p) for key, o, p in keys},
+        )
+
+    async def owners(self, key_ids):
+        rows = await self._projects.key_owners(key_ids)
+        return {key: publication.KeyOwner(o, p) for key, o, p in rows}
+
+
 class Application:
     def __init__(self, settings: RuntimeSettings) -> None:
         self._timeout = settings.dependency_timeout
@@ -177,6 +199,9 @@ class Application:
             billing.create_price_source(self._storage["billing"]),
             self.cache,
             identity.create_organization_source(self._storage["identity"]),
+        )
+        self.upstream_resources = publication.create_resource_service(
+            self._storage["publication"], ResourceAccess(self.projects)
         )
         self._notifications = self.database.notifications(publication.SOURCE_CHANNEL)
         self.auto_publisher = publication.create_auto_publisher(

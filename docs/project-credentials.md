@@ -44,6 +44,8 @@
 | `GET /api-keys/{id}` | 获取当前元数据及版本，不返回明文或摘要 |
 | `POST /api-keys/{id}/revoke` | 永久撤销指定 Key |
 | `POST /api-keys/{id}/rotate` | 创建替代 Key，并结束或缩短旧 Key 的有效期 |
+| `GET /upstream-resources` | 各 Key 在上游供应商账户持有的资源及清理状态，见[上游资源](#上游资源) |
+| `POST /upstream-purges`、`GET /upstream-purges/{id}` | 删除某个 Key 的全部或单个上游资源，返回 202 并可查询进度 |
 
 列表使用 limit/cursor 分页。服务账号列表可按 project_id 筛选；Key 列表可按 project_id、service_account_id 筛选，筛选条件也必须在调用者权限范围内。
 
@@ -73,3 +75,45 @@ Key 由服务端生成 32 字节随机值，以 nxk_ 开头。数据库只保存
 已撤销、已过期或已经轮换的 Key 不可再次轮换；可以对最新替代 Key 继续轮换。撤销后的 Key 不能恢复。项目归档不可恢复，服务账号和项目停用后可恢复，但不会使单独撤销或过期的 Key 重新有效。
 
 组织暂停或归档后停止正常写操作，平台管理员仍可紧急撤销 Key。项目或服务账号停用会使其下的 Key 在后续身份校验中失效，无需逐条修改 Key。
+
+## 上游资源
+
+部署在 `relay_profile.provider_features` 中启用供应商功能后，Key 通过 Relay 创建的已存储 response、文件、会话、向量库、代码执行容器和批处理保存在该部署的上游账户中。Nexus 只保存定位用的句柄和归属，每个资源归属于创建它的 Key，也就归属于该 Key 的项目和组织。Key 撤销、过期，或其组织、项目、服务账号停用后，这些资源不会立即消失：超过 Relay 宽限期（默认 7 天）后由清理任务删除上游副本，见[上游资源清理](relay-design.md#上游资源清理)。宽限期内，以及 Key 仍然可用时，组织可以通过下列接口查看并提前删除。
+
+| 身份 | 查看 | 删除 |
+| --- | --- | --- |
+| platform_admin | 任意组织；另可用 `GET /api/v1/upstream-resources` 跨组织查看 | 可以 |
+| org_owner | 本组织全部 Key | 可以，组织暂停或归档后仍可删除 |
+| org_developer | 获授权项目的 Key | 不可以（403） |
+| org_finance / platform_finance | 不可以（403；未加入组织时 404） | 不可以 |
+
+权限沿用 Key 管理的组织角色检查：组织外或未获授权项目的 Key 返回 404，已在范围内但缺少删除权限时返回 403。已撤销和已过期的 Key 仍在查看和删除范围内。
+
+**查看。** `GET /upstream-resources` 支持 project_id、api_key_id、kind、state、limit 和 cursor，按创建时间从新到旧分页。每项返回：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id`、`handle` | 句柄 ID 和 Relay 返回给 Key 持有者的 ID，例如 `file_nx_<id>`、`resp_nx_<id>`。上游已创建但本地句柄没有保存成功的资源 `handle` 为 null，`id` 是清理任务 ID |
+| `kind` | `response`、`file`、`conversation`、`vector_store`、`container`、`batch` |
+| `api_key_id`、`project_id`、`organization_id` | 所属 Key 及其项目和组织 |
+| `created_at` | 句柄创建时间 |
+| `state` | `retained` 仍在上游且未排队清理；`pending` 待清理（含失败后等待重试）；`purged` 已由清理任务删除；`failed` 清理失败，30 次尝试后放弃，副本可能仍在上游；`deleted` Key 持有者已自行删除 |
+| `purge` | 清理任务的原因（`key_inactive` 宽限期后自动清理、`orphan` 本地句柄未保存、`owner_request` 组织主动删除）、尝试次数、最后的错误代码和下次尝试时间 |
+
+供应商的资源 ID 和凭据不在响应中出现。尚未在上游创建成功的向量库和批处理不列出。
+
+**删除。** `POST /upstream-purges` 必须带 Idempotency-Key。请求体 `{"api_key_id": …}` 删除该 Key 的全部上游资源；再加 `kind` 和 `resource_id`（句柄 ID）只删除一个。成功返回 202 和删除请求，`Location` 指向 `GET /upstream-purges/{id}`：
+
+| 字段 | 说明 |
+| --- | --- |
+| `total`、`pending`、`purged`、`failed` | 本次请求覆盖的清理任务数及各状态数量 |
+| `state` | 有任务待清理时为 `pending`；全部结束后，有失败为 `failed`，否则为 `purged`。没有需要删除的资源时 `total` 为 0、`state` 为 `purged` |
+
+删除复用清理队列：请求为每个仍在上游的资源写入一条 `owner_request` 任务，由 Relay 节点按与自动清理相同的方式调用供应商删除接口、重试和记审计。删除不可恢复，之后用该句柄的请求返回 404。幂等规则如下：
+
+- 同一幂等键、同一请求体重试返回原删除请求；不同请求体返回 409 `idempotency_conflict`。作用域包含组织和操作人。
+- 每个上游副本最多一条清理任务。资源已被自动清理或先前的请求排队时，新请求覆盖已有任务而不是再排一条；已清理的资源不再排队。
+- 清理失败（`failed`）的资源在新的删除请求中从头重试。
+- 按 Key 删除只覆盖提交时已有的资源。Key 仍可用时，之后新建的资源不在本次范围内，需要时先撤销 Key 再删除。
+
+每次新的删除请求写入审计 `upstream_resource.purge_requested`（对象为资源或 Key，详情含请求 ID、新排队数、重试数和覆盖数），每个任务的结果另有 `upstream_resource.purged`、`upstream_resource.purge_failed` 或 `upstream_resource.purge_abandoned`。

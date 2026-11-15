@@ -174,6 +174,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
         app.state.operations = application.operations
         app.state.readiness = application.readiness
         app.state.publication = application.publication
+        app.state.upstream_resources = application.upstream_resources
         app.state.routing = application.routing
         app.state.usage = application.usage
         app.state.billing_service = application.billing
@@ -225,6 +226,9 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     def get_publication(request: Request):
         return request.app.state.publication
 
+    def get_upstream_resources(request: Request):
+        return request.app.state.upstream_resources
+
     def get_routing(request: Request):
         return request.app.state.routing
 
@@ -249,6 +253,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     app.include_router(reporting_api.create_router(get_reports))
     app.include_router(operations_api.create_router(get_operations))
     app.include_router(publication_api.create_router(get_publication))
+    app.include_router(publication_api.create_resource_router(get_upstream_resources))
     app.include_router(routing_api.create_router(get_routing))
     app.include_router(
         identity_api.create_router(

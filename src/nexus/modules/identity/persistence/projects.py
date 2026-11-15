@@ -231,6 +231,28 @@ class ApplicationRepository:
             stmt = stmt.where(self._grant_filter(organization_id, membership_id, ApiKey.project_id))
         return await self._page(stmt, ApiKey, KeyView, limit, cursor)
 
+    async def key_owners(self, organization_id, membership_id, project_id, key_id):
+        """Every key of the organization, revoked and expired ones included, as
+        (key_id, organization_id, project_id); a developer sees keys of granted projects only."""
+        stmt = select(ApiKey.id, ApiKey.organization_id, ApiKey.project_id).where(
+            ApiKey.organization_id == organization_id
+        )
+        if project_id:
+            stmt = stmt.where(ApiKey.project_id == project_id)
+        if key_id:
+            stmt = stmt.where(ApiKey.id == key_id)
+        if membership_id:
+            stmt = stmt.where(self._grant_filter(organization_id, membership_id, ApiKey.project_id))
+        return [tuple(row) for row in (await self._session.execute(stmt)).all()]
+
+    async def owners_of(self, key_ids):
+        if not key_ids:
+            return []
+        stmt = select(ApiKey.id, ApiKey.organization_id, ApiKey.project_id).where(
+            ApiKey.id.in_(list(key_ids))
+        )
+        return [tuple(row) for row in (await self._session.execute(stmt)).all()]
+
     async def create_key(
         self,
         organization_id,

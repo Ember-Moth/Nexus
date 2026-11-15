@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0037_auto_publish"
+SCHEMA_REVISION = "0038_upstream_resources"

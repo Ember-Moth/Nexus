@@ -1,4 +1,4 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from types import TracebackType
@@ -184,6 +184,14 @@ class Applications(Protocol):
         limit: int,
         cursor: Cursor,
     ) -> Page[KeyView]: ...
+    async def key_owners(
+        self,
+        organization_id: UUID,
+        membership_id: UUID | None,
+        project_id: UUID | None,
+        key_id: UUID | None,
+    ) -> list[tuple[UUID, UUID, UUID]]: ...
+    async def owners_of(self, key_ids: Iterable[UUID]) -> list[tuple[UUID, UUID, UUID]]: ...
     async def create_key(
         self,
         organization_id: UUID,

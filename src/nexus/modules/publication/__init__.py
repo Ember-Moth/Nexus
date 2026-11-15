@@ -2,14 +2,21 @@ from nexus.infrastructure.audit_reader import audit_reader
 from nexus.shared.storage import ModuleName
 
 from .application.automation import AutoPublisher
+from .application.ports import KeyOwner, ResourceScope
+from .application.resources import UpstreamResourceService
 from .application.service import PublicationService
+from .persistence import resources
 from .persistence.repository import transaction
 
 __all__ = [
     "SOURCE_CHANNEL",
     "create_audit_reader",
     "create_auto_publisher",
+    "create_resource_service",
     "create_service",
+    "KeyOwner",
+    "ResourceScope",
+    "UpstreamResourceService",
     "api",
 ]
 # PostgreSQL notification channel announcing a changed publication source revision.
@@ -40,6 +47,12 @@ def create_auto_publisher(database, service, notifications, *, quiet, max_delay,
         max_delay=max_delay,
         poll=poll,
     )
+
+
+def create_resource_service(database, access):
+    """access implements application.ports.ResourceAccess with identity's role checks."""
+    database.require_module(ModuleName.PUBLICATION)
+    return UpstreamResourceService(lambda: resources.transaction(database), access)
 
 
 def create_audit_reader(database):

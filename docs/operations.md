@@ -134,6 +134,44 @@ Worker 日志事件：`publication.auto_published`，outcome 为 published 或 u
 
 建议告警条件：`auto_pending_seconds` 超过最大延迟加一分钟、`auto_failing` 大于 0，或 `auto_paused` 持续超过约定时间。审计中自动发布的 `config.released` 没有 actor_id，details.actor 为 `auto_publisher`。
 
+## 上游资源清理
+
+部署启用供应商功能后，Key 创建的文件、会话等内容保存在上游账户中，归属和删除规则见[上游资源](project-credentials.md#上游资源)和[上游资源清理](relay-design.md#上游资源清理)。三条清理路径共用 `publication.upstream_purges` 队列：Key 失效超过宽限期（`key_inactive`）、本地句柄保存失败（`orphan`）和组织主动删除（`owner_request`）。队列按上游定位（集群、类型、部署、供应商 ID）唯一，同一副本最多一条任务，谁先排队用谁的，另一方覆盖已有任务。
+
+### 查看队列
+
+平台管理员用 `GET /api/v1/upstream-resources` 跨组织查看，可按 organization_id、project_id（须同时给 organization_id）、api_key_id、kind 和 state 筛选。常用查询：
+
+| 查询 | 用途 |
+| --- | --- |
+| `state=failed` | 30 次尝试后放弃的清理，副本可能仍在上游 |
+| `state=pending` | 待清理和失败后等待重试的任务；`purge.last_error` 和 `purge.next_attempt_at` 给出最后的错误代码与下次尝试时间 |
+| `organization_id=<org>&state=retained` | 该组织仍在上游、尚未排队清理的资源 |
+
+组织的删除请求另记在 `publication.purge_requests`，`publication.purge_request_items` 链接它覆盖的任务；进度由这些任务的状态汇总得到，不另存。
+
+### 失败处理
+
+清理失败按指数退避重试，最长每天一次，第 30 次失败后放弃（`failed`）。`last_error` 常见取值：
+
+| 错误代码 | 处理 |
+| --- | --- |
+| `deployment_unavailable` | 部署已删除，或部署换了凭据（任务绑定原凭据）。恢复部署或原凭据后任务会在下次尝试成功 |
+| `credential_unavailable`、`credential_rejected` | 节点取不到或上游拒绝部署凭据，检查上游凭据 |
+| `upstream_throttled`、`upstream_unavailable`、`upstream_unreachable` | 上游限流或不可用，通常自行恢复 |
+| `batch_in_progress` | 批处理仍在运行，节点已请求取消，下次尝试删除 |
+
+修复原因后，对已放弃的任务再发起一次删除请求即可重新排队：组织所有者在管理后台“上游资源”页操作，或由平台管理员调用 `POST /organizations/{org}/upstream-purges`。新请求把放弃的任务恢复为待清理并从第 1 次尝试开始，原因代码保持不变。
+
+### 审计
+
+| 动作 | 写入方 | 说明 |
+| --- | --- | --- |
+| `upstream_resource.purge_requested` | 管理 API | 组织或平台管理员提交删除请求；详情含 `request_id`、`api_key_id`、`kind`、新排队数 `queued`、恢复重试数 `retried` 和覆盖数 `covered` |
+| `upstream_resource.purged`、`upstream_resource.purge_failed`、`upstream_resource.purge_abandoned` | Relay 节点 | 每个任务的结果，详情含 `purge_id`、`kind`、`reason`、`attempts` 和错误代码 |
+
+审计按组织归属，组织 owner 可在 `GET /audit-events?organization_id=<org>` 中看到。`orphan` 任务没有组织归属，只在平台范围可见。
+
 ## Relay 可观测性
 
 ### 存活与就绪

@@ -211,3 +211,85 @@ class ReleaseStatus(View):
     distributed_revision: Revision
     distribution: ReleaseDelivery
     nodes: list[NodeStatus]
+
+
+ResourceKind = Literal["response", "file", "conversation", "vector_store", "container", "batch"]
+# The handle prefix Relay shows the key holder for each kind; the rest is the handle ID.
+HANDLE_PREFIXES: dict[str, str] = {
+    "response": "resp_nx_",
+    "file": "file_nx_",
+    "conversation": "conv_nx_",
+    "vector_store": "vs_nx_",
+    "container": "cntr_nx_",
+    "batch": "msgbatch_nx_",
+}
+PurgeState = Literal["pending", "purged", "failed"]
+ResourceState = Literal["retained", "pending", "purged", "failed", "deleted"]
+RESOURCE_STATE_DESCRIPTION = (
+    "retained: held upstream with no purge queued; pending: a purge is queued or retrying; "
+    "purged: the purge deleted the upstream copy; failed: the purge gave up after its last "
+    "attempt and the copy may remain; deleted: the key holder deleted it without a purge"
+)
+
+
+class ResourcePurge(View):
+    id: UUID
+    state: PurgeState
+    reason: Literal["key_inactive", "orphan", "owner_request"]
+    attempts: int
+    last_error: str | None = Field(description="Error code of the last failed attempt")
+    created_at: Timestamp
+    next_attempt_at: Timestamp | None = Field(
+        description="When a pending purge is next attempted; null once it has finished"
+    )
+    finished_at: Timestamp | None
+
+
+class UpstreamResourceView(View):
+    id: UUID = Field(
+        description="Handle ID; for an upstream copy whose handle was never saved, the purge ID"
+    )
+    handle: str | None = Field(
+        description="The ID Relay returns to the key holder; null when no handle was saved"
+    )
+    kind: ResourceKind
+    state: ResourceState = Field(description=RESOURCE_STATE_DESCRIPTION)
+    organization_id: UUID | None
+    project_id: UUID | None
+    api_key_id: UUID
+    cluster_id: UUID
+    deployment_id: UUID
+    created_at: Timestamp
+    purge: ResourcePurge | None
+
+
+class PurgeRequestCreate(Command):
+    """Delete every upstream copy the key holds, or the one given by kind and resource_id."""
+
+    api_key_id: UUID
+    kind: ResourceKind | None = None
+    resource_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def target(self):
+        if (self.kind is None) != (self.resource_id is None):
+            raise ValueError("kind and resource_id go together")
+        return self
+
+
+class PurgeRequestView(View):
+    id: UUID
+    organization_id: UUID
+    api_key_id: UUID
+    kind: ResourceKind | None
+    resource_id: UUID | None
+    requested_by: UUID
+    created_at: Timestamp
+    state: PurgeState = Field(
+        description="pending while any covered purge is pending; then failed if any gave up, "
+        "otherwise purged"
+    )
+    total: int = Field(description="Purges the request covers")
+    pending: int
+    purged: int
+    failed: int

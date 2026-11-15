@@ -558,7 +558,8 @@ async def test_responses_ws(http, admin, tls, relay_binary):  # noqa: F811
                 90,
                 0,
             )
-            assert dropped == ["reserve_request", "append_usage_event"]
+            # The first WebSocket turn dials before it registers its attempt (start_attempt).
+            assert dropped == ["reserve_request", "start_attempt", "append_usage_event"]
             async with connect(uri, additional_headers=hdr, proxy=None) as other:
                 await send(other, nxt)
                 assert (await recv(other))["error"]["code"] == "previous_response_not_found"

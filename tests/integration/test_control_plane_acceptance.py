@@ -15,7 +15,7 @@ import pytest
 from test_billing import account_amounts, funding, headers, post_funding
 from test_catalog import make_policy
 from test_identity_api import auth, create_org
-from test_plane import plane, register_node  # noqa: F401
+from test_plane import list_keys_in_manifests, plane, register_node  # noqa: F401
 from test_project_credentials import account, key, project
 
 from nexus.gateway_simulator import GatewaySimulator
@@ -327,6 +327,8 @@ async def test_inflight_gateway_across_migrations(plane, http, admin, migration_
     # The same connected gateway and its cached revision straddle both upgrades.
     await asyncio.to_thread(command.downgrade, config, "0008_gateway_protocol")
     try:
+        # Under 0008 the reservation reads the release's keys from its manifest.
+        list_keys_in_manifests(admin, peer.keys.values())
         _, lease = await peer.reserve(raw, model["id"], 1, 1, rid)
         await peer.start_attempt(rid, aid, 1, dep["id"], lease)
     finally:

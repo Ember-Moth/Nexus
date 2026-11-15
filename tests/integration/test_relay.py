@@ -25,7 +25,7 @@ from cryptography.x509.oid import NameOID
 from pg_receipt import lose_gateway_receipts
 from test_billing import account_amounts, headers, make_budget
 from test_identity_api import auth
-from test_plane import plane, provision_plane  # noqa: F401 - pytest fixture
+from test_plane import list_keys_in_manifests, plane, provision_plane  # noqa: F401 - fixture
 
 pytestmark = pytest.mark.integration
 CRATE = Path(__file__).resolve().parents[2] / "src" / "relay"
@@ -686,18 +686,7 @@ async def test_upgrade_in_flight_legacy_attempt(plane, http, admin, migration_se
     assert "relay_profile" not in old["resources"]["deployments"][0]
     await asyncio.to_thread(command.downgrade, config, "0012_gateway_admission")
     try:
-        # A release of that time listed its keys in the manifest.
-        listed = json.dumps(list(peer.keys.values()))
-        admin.execute(
-            """UPDATE publication.config_snapshots s SET manifest=x.m,
-               payload_bytes=convert_to(x.m::text,'UTF8'),
-               sha256=encode(sha256(convert_to(x.m::text,'UTF8')),'hex')
-               FROM (SELECT cluster_id,revision,
-                     jsonb_set(manifest,'{resources,key_verifiers}',%s::jsonb) m
-                     FROM publication.config_snapshots) x
-               WHERE s.cluster_id=x.cluster_id AND s.revision=x.revision""",
-            (listed,),
-        )
+        list_keys_in_manifests(admin, peer.keys.values())
         # The simulator speaks the current protocol; under 0012 the contracts are called as
         # they were then (reserve without its attempt, start_attempt separately).
         await peer.call("reserve_request", a.request_id, a.api_key_id, a.model_id, 1, 4, 6)

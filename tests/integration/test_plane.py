@@ -56,6 +56,23 @@ async def register_node(client, root, admin, cid):
     )
 
 
+def list_keys_in_manifests(admin, keys):
+    """Put the cluster's keys into the stored releases, as releases made before 0044 had them.
+
+    For tests that call the gateway contracts of an older schema after a downgrade.
+    """
+    admin.execute(
+        """UPDATE publication.config_snapshots s SET manifest=x.m,
+           payload_bytes=convert_to(x.m::text,'UTF8'),
+           sha256=encode(sha256(convert_to(x.m::text,'UTF8')),'hex')
+           FROM (SELECT cluster_id,revision,
+                 jsonb_set(manifest,'{resources,key_verifiers}',%s::jsonb) m
+                 FROM publication.config_snapshots) x
+           WHERE s.cluster_id=x.cluster_id AND s.revision=x.revision""",
+        (json.dumps(list(keys)),),
+    )
+
+
 @pytest.fixture
 async def plane(http, admin):
     async with provision_plane(http, admin) as values:

@@ -5,16 +5,23 @@ import json
 from time import monotonic
 from uuid import UUID, uuid4
 
+# Returns the superseded current revision when the pointer advances, else "". Copies of
+# revisions other than the current one expire after ARGV[4] ms; PostgreSQL stays authoritative.
 PUBLISH = """
-redis.call('SET',KEYS[1],ARGV[2])
 local old=redis.call('GET',KEYS[2])
 local rev=ARGV[1]
 if not old or #old<#rev or (#old==#rev and old<rev) then
+ redis.call('SET',KEYS[1],ARGV[2])
  redis.call('SET',KEYS[2],rev)
  redis.call('PUBLISH',ARGV[3],rev)
- return 1
+ return old or ''
 end
-return 0
+if old==rev then
+ redis.call('SET',KEYS[1],ARGV[2])
+else
+ redis.call('SET',KEYS[1],ARGV[2],'PX',ARGV[4])
+end
+return ''
 """
 
 PREPARE = """

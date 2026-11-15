@@ -56,6 +56,22 @@ _GAUGES = {
             "Age of the oldest undistributed release",
         ),
         "lagging_nodes": ("nexus_publication_lagging_nodes", "Gateway nodes behind desired"),
+        "auto_publish_pending": (
+            "nexus_publication_auto_pending",
+            "Auto-publish clusters with unpublished source changes",
+        ),
+        "auto_publish_pending_seconds": (
+            "nexus_publication_auto_pending_seconds",
+            "Age of the oldest unpublished source change",
+        ),
+        "auto_publish_failing": (
+            "nexus_publication_auto_failing",
+            "Auto-publish clusters whose last release failed validation",
+        ),
+        "auto_publish_paused": (
+            "nexus_publication_auto_paused",
+            "Clusters whose auto-publish a rollback paused",
+        ),
     },
 }
 # Counters of this API process since it started; HTTP counters are labelled by method.

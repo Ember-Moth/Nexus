@@ -6,6 +6,10 @@ from redis.asyncio import Redis
 
 from .gateway_cache import PREPARE, PUBLISH
 
+# Automatic releases can be frequent and a snapshot grows with its keys (about 41 MB of
+# Redis memory per revision at 100,000 keys), so superseded copies do not stay forever.
+SUPERSEDED_SNAPSHOT_MS = 600_000
+
 
 class Cache:
     def __init__(self, url: str, *, timeout: float, namespace: str) -> None:
@@ -93,7 +97,7 @@ class Cache:
         value = json.dumps(
             {"sha256": digest, "bytes": base64.b64encode(raw).decode()}, separators=(",", ":")
         )
-        await self._client.eval(
+        superseded = await self._client.eval(
             PUBLISH,
             2,
             prefix + ":snapshot:" + revision,
@@ -101,7 +105,11 @@ class Cache:
             revision,
             value,
             f"{self._namespace}:cfg:{cluster}:changed",
+            SUPERSEDED_SNAPSHOT_MS,
         )
+        if superseded:
+            # Nodes read every revision from PostgreSQL; older copies only cache recent ones.
+            await self._client.pexpire(prefix + ":snapshot:" + superseded, SUPERSEDED_SNAPSHOT_MS)
 
     async def close(self) -> None:
         await self._client.aclose()

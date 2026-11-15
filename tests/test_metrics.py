@@ -24,7 +24,12 @@ def snapshot():
             "settlement_seconds": None,
             "conflicting_events": 0,
         },
-        "publication": {"publication_backlog": 3, "publication_lag_seconds": 1.5},
+        "publication": {
+            "publication_backlog": 3,
+            "publication_lag_seconds": 1.5,
+            "auto_publish_failing": 1,
+            "auto_publish_pending_seconds": None,
+        },
     }
 
 
@@ -43,6 +48,8 @@ def test_prometheus_text_exports_known_series_with_bounded_labels():
     assert "nexus_billing_payment_query_seconds 0.25" in samples
     assert "nexus_billing_conflicting_events 0" in samples
     assert "nexus_publication_lag_seconds 1.5" in samples
+    assert "nexus_publication_auto_failing 1" in samples
+    assert not any(line.startswith("nexus_publication_auto_pending_seconds") for line in samples)
     # A database average without samples in the last 24 hours has no value.
     assert not any(line.startswith("nexus_billing_settlement_seconds") for line in samples)
     assert "# TYPE nexus_billing_settlement_seconds gauge" in lines

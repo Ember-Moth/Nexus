@@ -140,6 +140,7 @@ async def test_new_key_reaches_the_gateway_without_a_release(http, admin, servic
             issued = monotonic()
             result, lease = await reserve_until(peer, secret, model["id"], issued + 10)
             elapsed = monotonic() - issued
+            print(f"new key usable after {elapsed:.2f}s")
             assert result["state"] == "reserved" and elapsed < 10, elapsed
             assert await peer.limits.finish(lease, 0)
         view = await cluster(client, root, cid)
@@ -525,3 +526,33 @@ async def test_rule_based_scope_validation_and_generations(plane, http):
     )
     assert (await patch({"organization_scope": "listed"})).status_code == 422
     assert view["organization_scope"] == "personal" and view["organization_ids"] == []
+
+
+async def test_superseded_snapshot_copies_expire(plane, http, admin):
+    peer, _, org, _, _, admission, _, cid = plane
+    client, root, app, settings = http
+    service = app.state.publication
+    while await service.distribute():
+        pass
+    await new_key(client, root, org, admission.service_account_id)
+    response = await client.post(
+        f"/api/v1/gateway-clusters/{cid}/releases", headers=headers(root, "two"), json={}
+    )
+    assert response.status_code == 202, response.text
+    while await service.distribute():
+        pass
+    prefix = f"{settings.redis_namespace}:cfg:{{{cid}}}"
+    assert await peer.redis.get(prefix + ":current") == "2"
+    assert await peer.redis.pttl(prefix + ":snapshot:2") == -1
+    assert 0 < await peer.redis.pttl(prefix + ":snapshot:1") <= 600_000
+    # A delayed delivery of an older release stays temporary and cannot move the pointer.
+    await peer.redis.delete(prefix + ":snapshot:1")
+    admin.execute(
+        "UPDATE publication.config_outbox SET delivered_at=NULL,next_attempt_at=clock_timestamp() "
+        "WHERE cluster_id=%s AND revision=1",
+        (cid,),
+    )
+    assert await service.distribute() == 1
+    assert await peer.redis.get(prefix + ":current") == "2"
+    assert 0 < await peer.redis.pttl(prefix + ":snapshot:1") <= 600_000
+    assert (await peer.refresh())["revision"] == "2"

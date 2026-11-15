@@ -6,11 +6,33 @@ import yaml
 from alembic import command
 from alembic.config import Config
 
-from nexus.config import MigrationSettings, RuntimeSettings
+from nexus.config import MigrationSettings, ProvisionSettings, RuntimeSettings
 from nexus.shared.errors import StorageUnavailable
 from nexus.shared.policy import IMPORT_ACTOR, MODES, PolicyRejected
 
 from .bootstrap import Application
+
+
+def provision_database(settings: ProvisionSettings) -> None:
+    import psycopg
+    from sqlalchemy.engine import make_url
+
+    from nexus.infrastructure.provisioning import provision
+
+    url = make_url(settings.database_url.get_secret_value())
+    # libpq options such as sslmode and sslrootcert travel in the query string.
+    base = url.set(drivername="postgresql").render_as_string(hide_password=False)
+
+    def connect(database: str) -> psycopg.Connection:
+        target = make_url(base).set(database=database).render_as_string(hide_password=False)
+        return psycopg.connect(target, autocommit=True, connect_timeout=10)
+
+    provision(
+        connect,
+        settings.database,
+        settings.passwords(),
+        maintenance_database=url.database,
+    )
 
 
 def migrate(settings: MigrationSettings, *, revision: str = "head") -> None:

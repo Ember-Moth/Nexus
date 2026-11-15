@@ -13,6 +13,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // The container image (deploy/images/web.Dockerfile) runs the self-contained server that
+  // `output: "standalone"` traces; local `next start` keeps the default output.
+  ...(process.env.NEXUS_WEB_STANDALONE === "1" ? { output: "standalone" as const } : {}),
   poweredByHeader: false,
   reactStrictMode: true,
   async headers() {

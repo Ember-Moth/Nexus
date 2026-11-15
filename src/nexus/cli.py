@@ -8,8 +8,16 @@ import uvloop
 from pydantic import ValidationError
 
 from nexus.api import create_app
-from nexus.commands import bootstrap, check, import_policies, migrate, worker_health
-from nexus.config import MigrationSettings, RuntimeSettings
+from nexus.commands import (
+    bootstrap,
+    check,
+    import_policies,
+    migrate,
+    provision_database,
+    worker_health,
+)
+from nexus.config import MigrationSettings, ProvisionSettings, RuntimeSettings
+from nexus.infrastructure.provisioning import ProvisioningError
 from nexus.shared.errors import BootstrapRejected, ServiceError
 from nexus.shared.policy import PolicyRejected
 from nexus.shared.telemetry import configure_logging
@@ -28,6 +36,10 @@ def parser() -> argparse.ArgumentParser:
         "migrate", help="upgrade schema using separate migration credentials"
     )
     migrations.add_argument("--revision", default="head")
+    commands.add_parser(
+        "provision-database",
+        help="create the database, group roles and grants with an administrator connection",
+    )
     administrator = commands.add_parser(
         "bootstrap-admin", help="create the first platform administrator"
     )
@@ -51,6 +63,10 @@ def main() -> int:
         if args.command == "migrate":
             migrate(MigrationSettings(_env_file=args.env_file), revision=args.revision)
             print("Database migration completed.")
+            return 0
+        if args.command == "provision-database":
+            provision_database(ProvisionSettings(_env_file=args.env_file))
+            print("Database roles and grants are in place.")
             return 0
         role = "worker" if args.command in {"worker", "worker-health"} else "api"
         settings = RuntimeSettings(_env_file=args.env_file, process_role=role)
@@ -96,7 +112,7 @@ def main() -> int:
         print(
             f"Invalid configuration fields: {fields}. Check the selected profile.", file=sys.stderr
         )
-    except BootstrapRejected as exc:
+    except (BootstrapRejected, ProvisioningError) as exc:
         print(str(exc), file=sys.stderr)
     except PolicyRejected as exc:
         print(f"Policy file rejected, nothing was written: {exc}", file=sys.stderr)

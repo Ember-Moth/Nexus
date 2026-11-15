@@ -2,7 +2,7 @@ import base64
 import binascii
 import re
 import socket
-from ipaddress import IPv4Address, IPv6Address
+from ipaddress import IPv4Network, IPv6Network
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -49,8 +49,10 @@ class RuntimeSettings(BaseSettings):
     turnstile_site_key: str | None = None
     turnstile_secret_key: SecretStr | None = None
     turnstile_hostname: str | None = None
-    # Exact TCP peers allowed to assert a single ingress-verified client address for auth limits.
-    auth_proxy_peers: list[IPv4Address | IPv6Address] = Field(default_factory=list)
+    # TCP peers allowed to assert a single ingress-verified client address for auth limits: exact
+    # addresses, or networks such as a Kubernetes pod CIDR where the BFF has no fixed address.
+    # The BFF signature is required either way; the peer check only narrows who may present it.
+    auth_proxy_peers: list[IPv4Network | IPv6Network] = Field(default_factory=list)
     # Shared with the BFF, which signs each asserted client address with it (HMAC-SHA256).
     auth_proxy_secret: SecretStr | None = None
     # Argon2 work runs in two separate thread pools so that sign-up and recovery cannot starve
@@ -221,3 +223,44 @@ class MigrationSettings(BaseSettings):
         if not valid:
             raise ValueError("a separate PostgreSQL migration role is required")
         return value
+
+
+class ProvisionSettings(BaseSettings):
+    """Deployment-time administrator connection for ``nexus provision-database``.
+
+    The URL names a role that may create roles and databases (a superuser or one with CREATEROLE
+    and CREATEDB) and the maintenance database to connect to, normally ``postgres``. Login role
+    passwords are optional: roles that already exist, for example CloudNativePG managed roles, keep
+    theirs unless a new one is given.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="NEXUS_PROVISION_", frozen=True, extra="ignore", hide_input_in_errors=True
+    )
+    database_url: SecretStr
+    database: str = Field(default="nexus", pattern=r"^[a-z_][a-z0-9_]{0,62}$")
+    api_password: SecretStr | None = None
+    worker_password: SecretStr | None = None
+    migrator_password: SecretStr | None = None
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_admin_url(cls, value: SecretStr) -> SecretStr:
+        try:
+            url = make_url(value.get_secret_value())
+            valid = url.drivername in {"postgresql", "postgres", "postgresql+psycopg"} and bool(
+                url.username and url.host and url.database
+            )
+        except Exception:
+            valid = False
+        if not valid:
+            raise ValueError("a PostgreSQL administrator URL with user, host and database")
+        return value
+
+    def passwords(self) -> dict[str, str]:
+        values = {
+            "nexus_api": self.api_password,
+            "nexus_worker": self.worker_password,
+            "nexus_migrator": self.migrator_password,
+        }
+        return {role: secret.get_secret_value() for role, secret in values.items() if secret}

@@ -13,11 +13,12 @@ from pathlib import Path
 from urllib.parse import quote
 
 import psycopg
-from psycopg import sql
 from redis import Redis
 from redis.exceptions import RedisError
 
-MODULES = ("identity", "catalog", "billing", "publication", "reporting")
+from nexus.infrastructure.provisioning import MODULES, provision
+
+__all__ = ["MODULES", "NativeServices", "executable"]
 
 
 def executable(name: str) -> str:
@@ -204,64 +205,14 @@ class NativeServices:
                 time.sleep(0.1)
 
     def _provision_roles(self) -> None:
-        with self.admin_connection("postgres") as connection:
-            if connection.info.server_version < 160000:
-                raise RuntimeError("PostgreSQL 16 or newer is required")
-            for module in (*MODULES, "bridge", "gateway"):
-                role = f"nexus_{module}"
-                if not connection.execute(
-                    "SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)
-                ).fetchone():
-                    connection.execute(
-                        sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role))
-                    )
-            for kind in ("api", "worker", "migrator"):
-                role = f"nexus_{kind}"
-                exists = connection.execute(
-                    "SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)
-                ).fetchone()
-                if not exists:
-                    connection.execute(
-                        sql.SQL(
-                            "CREATE ROLE {} LOGIN NOINHERIT NOSUPERUSER "
-                            "NOCREATEDB NOCREATEROLE PASSWORD {}"
-                        ).format(sql.Identifier(role), sql.Literal(self.data[f"{kind}_password"]))
-                    )
-            db_name = self.data["database"]
-            if not connection.execute(
-                "SELECT 1 FROM pg_database WHERE datname = %s", (db_name,)
-            ).fetchone():
-                connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name)))
-            connection.execute(
-                sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(sql.Identifier(db_name))
-            )
-            connection.execute(
-                sql.SQL(
-                    "GRANT CONNECT ON DATABASE {} TO nexus_api, nexus_worker, nexus_migrator"
-                ).format(sql.Identifier(db_name))
-            )
-            connection.execute(
-                sql.SQL("GRANT CREATE ON DATABASE {} TO nexus_migrator").format(
-                    sql.Identifier(db_name)
-                )
-            )
-            for module in MODULES:
-                connection.execute(
-                    sql.SQL("GRANT {} TO nexus_api, nexus_worker").format(
-                        sql.Identifier(f"nexus_{module}")
-                    )
-                )
-            for owner in (*MODULES, "bridge"):
-                connection.execute(
-                    sql.SQL("GRANT {} TO nexus_migrator").format(sql.Identifier(f"nexus_{owner}"))
-                )
-            connection.execute(
-                sql.SQL("GRANT CONNECT ON DATABASE {} TO nexus_gateway").format(
-                    sql.Identifier(db_name)
-                )
-            )
-        with self.admin_connection() as connection:
-            connection.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
+        provision(
+            self.admin_connection,
+            self.data["database"],
+            {
+                f"nexus_{kind}": self.data[f"{kind}_password"]
+                for kind in ("api", "worker", "migrator")
+            },
+        )
 
     def profiles(self, destination: Path) -> None:
         destination.mkdir(parents=True, exist_ok=True)

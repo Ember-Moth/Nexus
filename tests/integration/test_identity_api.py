@@ -495,7 +495,7 @@ async def test_concurrent_password_redemption_and_live_platform_role(http, admin
 
 
 async def test_auth_limits_use_only_ingress_verified_ips_from_the_configured_bff(http):
-    from ipaddress import ip_address
+    from ipaddress import ip_network
 
     from pydantic import SecretStr
 
@@ -512,7 +512,7 @@ async def test_auth_limits_use_only_ingress_verified_ips_from_the_configured_bff
     app = create_app(
         settings.model_copy(
             update={
-                "auth_proxy_peers": [ip_address("127.0.0.2")],
+                "auth_proxy_peers": [ip_network("127.0.0.2")],
                 "auth_proxy_secret": SecretStr(secret),
                 "redis_namespace": "nexus:proxy-test:" + uuid4().hex,
             }

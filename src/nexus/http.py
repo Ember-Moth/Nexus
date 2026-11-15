@@ -8,7 +8,7 @@ import json
 import re
 from collections.abc import Callable
 from datetime import datetime
-from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
+from ipaddress import IPv4Network, IPv6Address, IPv6Network, ip_address, ip_network
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -283,7 +283,7 @@ def limit_bucket(address: str) -> str:
 
 def auth_limit_peer(
     request: Request,
-    trusted: frozenset[IPv4Address | IPv6Address],
+    trusted: frozenset[IPv4Network | IPv6Network],
     secret: SecretStr | None = None,
 ) -> str:
     """Client address bucket for authentication limits.
@@ -299,7 +299,7 @@ def auth_limit_peer(
         peer = ip_address(direct)
     except ValueError:
         return direct
-    if peer not in trusted:
+    if not any(peer in network for network in trusted):
         return limit_bucket(direct)
     values = request.headers.getlist(CLIENT_IP_HEADER)
     signatures = request.headers.getlist(CLIENT_IP_SIGNATURE_HEADER)

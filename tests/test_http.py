@@ -156,14 +156,14 @@ def fake_request(peer, headers=()):
 
 
 def test_forwarded_client_addresses_need_the_bff_signature():
-    from ipaddress import ip_address
+    from ipaddress import ip_network
 
     from pydantic import SecretStr
 
     from nexus.http import auth_limit_peer, client_ip_signature
 
     secret = SecretStr("b" * 32)
-    trusted = frozenset({ip_address("127.0.0.1")})
+    trusted = frozenset({ip_network("127.0.0.1")})
 
     def peer(source, *headers):
         return auth_limit_peer(fake_request(source, headers), trusted, secret)
@@ -183,6 +183,26 @@ def test_forwarded_client_addresses_need_the_bff_signature():
         )
         == "127.0.0.1"
     )
+
+
+def test_bff_peers_can_be_a_pod_network():
+    from ipaddress import ip_network
+
+    from pydantic import SecretStr
+
+    from nexus.http import auth_limit_peer, client_ip_signature
+
+    # In Kubernetes the BFF gets a new address on every restart, so the API trusts its pod CIDR.
+    trusted = frozenset({ip_network("10.42.0.0/16")})
+    signed = [
+        ("X-Nexus-Client-IP", "203.0.113.7"),
+        ("X-Nexus-Client-IP-Signature", client_ip_signature("b" * 32, "203.0.113.7")),
+    ]
+    secret = SecretStr("b" * 32)
+    assert auth_limit_peer(fake_request("10.42.3.17", signed), trusted, secret) == "203.0.113.7"
+    assert auth_limit_peer(fake_request("10.43.0.5", signed), trusted, secret) == "10.43.0.5"
+    unsigned = signed[:1]
+    assert auth_limit_peer(fake_request("10.42.3.17", unsigned), trusted, secret) == "10.42.3.17"
 
 
 def test_ipv6_clients_are_limited_per_64():

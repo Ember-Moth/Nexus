@@ -37,6 +37,20 @@ def test_proxy_peers_require_a_strong_shared_secret(settings_factory):
     assert "s" * 32 not in repr(settings)
 
 
+def test_proxy_peers_accept_addresses_and_networks(settings_factory):
+    from ipaddress import ip_address
+
+    settings = settings_factory(
+        auth_proxy_peers=["127.0.0.1", "10.42.0.0/16", "fd00::/64"], auth_proxy_secret="s" * 32
+    )
+    trusted = settings.auth_proxy_peers
+    assert ip_address("127.0.0.1") in trusted[0] and ip_address("127.0.0.2") not in trusted[0]
+    assert ip_address("10.42.7.9") in trusted[1] and ip_address("10.43.0.1") not in trusted[1]
+    # A network with host bits set is almost always a typo for a single address.
+    with pytest.raises(ValidationError):
+        settings_factory(auth_proxy_peers=["10.42.0.1/16"], auth_proxy_secret="s" * 32)
+
+
 def test_business_policies_are_not_runtime_settings(settings_factory):
     # Policies live in the database; no environment variable can set or override them.
     settings = settings_factory()

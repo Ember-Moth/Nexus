@@ -1,5 +1,3 @@
-from unittest.mock import AsyncMock
-
 from nexus import bootstrap
 from nexus.modules.identity import IdentityService
 from nexus.shared.storage import ModuleName
@@ -60,9 +58,8 @@ async def test_application_wires_identity_and_all_storage_scopes(monkeypatch, se
     monkeypatch.setattr(bootstrap, "Cache", FakeCache)
     application = bootstrap.Application(settings_factory())
     assert isinstance(application.identity, IdentityService)
-    monkeypatch.setattr(application.billing, "check", AsyncMock())
     checks = await application.readiness()
-    assert checks == dict.fromkeys(["postgres", "redis", "billing_currency", *ModuleName], "ok")
+    assert checks == dict.fromkeys(["postgres", "redis", *ModuleName], "ok")
     assert set(application.database.seen) == set(ModuleName)
     await application.close()
     assert application.database.closed and application.cache.closed

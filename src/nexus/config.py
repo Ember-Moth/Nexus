@@ -2,7 +2,6 @@ import base64
 import binascii
 import re
 import socket
-import unicodedata
 from ipaddress import IPv4Address, IPv6Address
 from typing import Literal
 from urllib.parse import urlsplit
@@ -10,26 +9,6 @@ from urllib.parse import urlsplit
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
-
-RESERVED_LOGINS = (
-    "abuse",
-    "admin",
-    "administrator",
-    "hostmaster",
-    "mailer-daemon",
-    "nexus",
-    "no-reply",
-    "noreply",
-    "operator",
-    "postmaster",
-    "root",
-    "security",
-    "superuser",
-    "support",
-    "sysadmin",
-    "system",
-    "webmaster",
-)
 
 
 class RuntimeSettings(BaseSettings):
@@ -53,16 +32,10 @@ class RuntimeSettings(BaseSettings):
     worker_id: str = Field(default_factory=socket.gethostname)
     worker_interval: float = Field(default=5.0, ge=0.1, le=60)
     worker_heartbeat_ttl: int = Field(default=30, ge=2, le=300)
-    # Clusters with auto_publish release once their sources stay unchanged for the quiet
-    # window, and at most max_delay after the first unpublished change.
-    auto_publish_quiet_seconds: float = Field(default=3.0, ge=0, le=300)
-    auto_publish_max_delay_seconds: float = Field(default=30.0, gt=0, le=3600)
     # Source changes wake the Worker through PostgreSQL notifications; polling is a fallback.
     auto_publish_poll_seconds: float = Field(default=30.0, ge=1, le=3600)
     redis_namespace: str = "nexus:v1"
     log_level: Literal["debug", "info", "warning", "error"] = "info"
-    session_ttl_seconds: int = Field(default=28800, ge=60, le=86400)
-    password_setup_ttl_seconds: int = Field(default=86400, ge=60, le=86400)
     mail_provider: Literal["smtp", "resend", "cloudflare"] | None = None
     mail_from: str | None = None
     smtp_host: str | None = None
@@ -76,45 +49,18 @@ class RuntimeSettings(BaseSettings):
     turnstile_site_key: str | None = None
     turnstile_secret_key: SecretStr | None = None
     turnstile_hostname: str | None = None
-    login_window_seconds: int = Field(default=60, ge=1, le=3600)
-    login_per_account: int = Field(default=10, ge=1, le=1000)
     # Exact TCP peers allowed to assert a single ingress-verified client address for auth limits.
     auth_proxy_peers: list[IPv4Address | IPv6Address] = Field(default_factory=list)
     # Shared with the BFF, which signs each asserted client address with it (HMAC-SHA256).
     auth_proxy_secret: SecretStr | None = None
-    login_per_ip: int = Field(default=60, ge=1, le=10000)
     # Argon2 work runs in two separate thread pools so that sign-up and recovery cannot starve
     # sign-in. A request that waits longer than the queue timeout gets a retryable 503.
     login_hash_concurrency: int = Field(default=2, ge=1, le=64)
     account_hash_concurrency: int = Field(default=1, ge=1, le=64)
     hash_queue_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
-    # Identity mail budgets per window, shared by registration, binding and recovery mail.
-    mail_window_seconds: int = Field(default=3600, ge=60, le=86400)
-    mail_per_recipient: int = Field(default=3, ge=1, le=1000)  # per requester network
-    mail_per_recipient_total: int = Field(default=10, ge=1, le=10000)  # all requesters
-    mail_per_account: int = Field(default=10, ge=1, le=10000)
-    mail_per_ip: int = Field(default=20, ge=1, le=100000)
-    mail_global: int = Field(default=1000, ge=1, le=10_000_000)
-    # How long a message may wait for the worker; its token is valid for 15 minutes after sending.
-    mail_queue_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
-    # Users with a platform role recover access through another administrator, not email.
-    platform_email_recovery: bool = False
-    # Logins that self-service registration may not claim, compared after normalization.
-    reserved_logins: list[str] = Field(default_factory=lambda: list(RESERVED_LOGINS))
-    export_per_org_minute: int = Field(default=10, ge=1, le=1000)
-    export_ttl_seconds: int = Field(default=86400, ge=60, le=2592000)
-    export_max_rows: int = Field(default=10000, ge=1, le=100000)
-    billing_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
-    # Vector storage is prepaid this many days ahead and renewed by the worker.
-    vector_storage_prepaid_days: int = Field(default=7, ge=1, le=31)
-    # What happens to a store once renewal failed and its prepaid days ran out.
-    vector_storage_lapse_policy: Literal["delete", "suspend"] = "delete"
     payment_public_base_url: str | None = None
     payment_return_url: str | None = None
     mock_payment_url: str | None = None
-    payment_requests_per_merchant_per_minute: int = Field(default=120, ge=1, le=10000)
-    payment_notification_per_channel: int = Field(default=1000, ge=1, le=100000)
-    payment_notification_per_ip: int = Field(default=120, ge=1, le=10000)
 
     @field_validator("payment_public_base_url", "payment_return_url")
     @classmethod
@@ -214,11 +160,6 @@ class RuntimeSettings(BaseSettings):
             raise ValueError("auth proxy secret must contain at least 32 characters")
         return value
 
-    @field_validator("reserved_logins")
-    @classmethod
-    def normalize_reserved(cls, values: list[str]) -> list[str]:
-        return sorted({unicodedata.normalize("NFKC", value).strip().lower() for value in values})
-
     @field_validator("worker_id", "redis_namespace")
     @classmethod
     def validate_identifier(cls, value: str) -> str:
@@ -239,10 +180,6 @@ class RuntimeSettings(BaseSettings):
             # A peer address alone cannot tell the BFF from a co-located proxy that relays
             # client-supplied headers.
             raise ValueError("auth proxy peers require an auth proxy secret")
-        if self.mail_per_recipient > self.mail_per_recipient_total:
-            raise ValueError("per-requester recipient mail limit exceeds the recipient total")
-        if self.auto_publish_max_delay_seconds < self.auto_publish_quiet_seconds:
-            raise ValueError("auto-publish maximum delay must not be shorter than its quiet window")
         if self.environment == "production":
             if self.mock_payment_url:
                 raise ValueError("mock payment gateway is not permitted in production")

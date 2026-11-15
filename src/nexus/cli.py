@@ -8,9 +8,10 @@ import uvloop
 from pydantic import ValidationError
 
 from nexus.api import create_app
-from nexus.commands import bootstrap, check, migrate, worker_health
+from nexus.commands import bootstrap, check, import_policies, migrate, worker_health
 from nexus.config import MigrationSettings, RuntimeSettings
-from nexus.shared.errors import BootstrapRejected
+from nexus.shared.errors import BootstrapRejected, ServiceError
+from nexus.shared.policy import PolicyRejected
 from nexus.shared.telemetry import configure_logging
 from nexus.worker import serve_worker
 
@@ -32,6 +33,15 @@ def parser() -> argparse.ArgumentParser:
     )
     administrator.add_argument("--login", required=True)
     administrator.add_argument("--password-stdin", action="store_true")
+    policies = commands.add_parser("settings", help="business policies stored in the database")
+    policy_commands = policies.add_subparsers(dest="settings_command", required=True)
+    importer = policy_commands.add_parser(
+        "import", help="apply a YAML or JSON policy file (initial values or managed groups)"
+    )
+    importer.add_argument("--file", required=True, help="policy file (.yaml, .yml or .json)")
+    importer.add_argument(
+        "--dry-run", action="store_true", help="report the changes without writing them"
+    )
     return result
 
 
@@ -74,6 +84,9 @@ def main() -> int:
                 if password != getpass.getpass("Confirm password: "):
                     raise BootstrapRejected("passwords do not match")
             print(json.dumps(uvloop.run(bootstrap(settings, args.login, password))))
+        elif args.command == "settings":
+            result = uvloop.run(import_policies(settings, args.file, dry_run=args.dry_run))
+            print(json.dumps(result, default=str))
         return 0
     except ValidationError as exc:
         # Nested dictionary keys can themselves contain mistakenly pasted secret material.
@@ -85,6 +98,12 @@ def main() -> int:
         )
     except BootstrapRejected as exc:
         print(str(exc), file=sys.stderr)
+    except PolicyRejected as exc:
+        print(f"Policy file rejected, nothing was written: {exc}", file=sys.stderr)
+    except ServiceError as exc:
+        print(f"Policy import stopped ({exc.code}): {exc}", file=sys.stderr)
+    except OSError as exc:
+        print(f"Cannot read the policy file ({type(exc).__name__}).", file=sys.stderr)
     except KeyboardInterrupt:
         return 130
     except Exception as exc:

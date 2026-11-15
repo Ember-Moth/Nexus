@@ -30,6 +30,9 @@ class BillingAccess:
     def __init__(self, managers, policies):
         self._managers, self._policies = managers, policies
 
+    async def administrator(self, token):
+        return await self._managers.require_platform_admin(token)
+
     async def authorize(self, token, org_id=None, **kwargs):
         result = await self._managers.financial_access(token, org_id, **kwargs)
         if org_id is None:
@@ -122,25 +125,14 @@ class Application:
         self.identity = identity.create_service(
             self._storage[ModuleName.IDENTITY.value],
             RedisAuthLimits(
-                self.cache,
-                base64.urlsafe_b64decode(settings.encryption_key.get_secret_value()),
-                account_limit=settings.login_per_account,
-                ip_limit=settings.login_per_ip,
-                window=settings.login_window_seconds,
+                self.cache, base64.urlsafe_b64decode(settings.encryption_key.get_secret_value())
             ),
             settings=settings,
             mail_cipher=CredentialCipher(
                 settings.encryption_key_version, roots, purpose="identity-mail"
             ),
             mail_limits=RedisMailLimits(
-                self.cache,
-                base64.urlsafe_b64decode(settings.encryption_key.get_secret_value()),
-                per_recipient=settings.mail_per_recipient,
-                per_recipient_total=settings.mail_per_recipient_total,
-                per_account=settings.mail_per_account,
-                per_ip=settings.mail_per_ip,
-                global_limit=settings.mail_global,
-                window=settings.mail_window_seconds,
+                self.cache, base64.urlsafe_b64decode(settings.encryption_key.get_secret_value())
             ),
         )
         self.projects = identity.create_project_service(self._storage[ModuleName.IDENTITY.value])
@@ -154,6 +146,10 @@ class Application:
             CredentialCipher(settings.encryption_key_version, roots),
         )
 
+        self.billing_settings = billing.create_settings(
+            self._storage[ModuleName.BILLING.value],
+            BillingAccess(self.identity, self.model_access),
+        )
         self.billing, self.pricing, self.budgets, self.reservations = billing.create_services(
             self._storage[ModuleName.BILLING.value],
             BillingAccess(self.identity, self.model_access),
@@ -162,19 +158,17 @@ class Application:
                     self._storage[ModuleName.CATALOG.value], frozenset(roots)
                 )
             ),
-            settings.billing_currency,
         )
 
         self.operations = billing.create_operations(
             self._storage["billing"],
-            settings.billing_currency,
             BillingAccess(self.identity, self.model_access),
             self.reservations,
         )
         self.reports = reporting.create_service(
             self._storage["reporting"],
             self.identity.report_scope,
-            billing.create_reports(self._storage["billing"], settings.billing_currency),
+            billing.create_reports(self._storage["billing"]),
             [
                 module.create_audit_reader(self._storage[name])
                 for name, module in [
@@ -184,10 +178,12 @@ class Application:
                     ("publication", publication),
                 ]
             ],
-            settings,
+            self.identity.require_platform_admin,
         )
         self.routing = catalog.RoutingPolicies(
-            self._storage["catalog"], self.identity.financial_access
+            self._storage["catalog"],
+            self.identity.financial_access,
+            self.identity.require_platform_admin,
         )
         self.publication = publication.create_service(
             self._storage["publication"],
@@ -208,17 +204,9 @@ class Application:
             self._storage["publication"],
             self.publication,
             self._notifications,
-            quiet=settings.auto_publish_quiet_seconds,
-            max_delay=settings.auto_publish_max_delay_seconds,
             poll=settings.auto_publish_poll_seconds,
         )
-        self.usage = billing.create_usage_processor(
-            self._storage["billing"],
-            settings.billing_currency,
-            self.reservations,
-            storage_days=settings.vector_storage_prepaid_days,
-            storage_policy=settings.vector_storage_lapse_policy,
-        )
+        self.usage = billing.create_usage_processor(self._storage["billing"], self.reservations)
         self.payment_http = (
             PaymentHttp(settings.mock_payment_url) if settings.mock_payment_url else None
         )
@@ -228,18 +216,13 @@ class Application:
             CredentialCipher(settings.encryption_key_version, roots, purpose="payment"),
             self.payment_http,
             RedisAuthLimits(
-                self.cache,
-                base64.urlsafe_b64decode(settings.encryption_key.get_secret_value()),
-                account_limit=settings.payment_notification_per_channel,
-                ip_limit=settings.payment_notification_per_ip,
-                window=60,
+                self.cache, base64.urlsafe_b64decode(settings.encryption_key.get_secret_value())
             ),
-            currency=settings.billing_currency,
+            policy=self.billing_settings.cached,
             environment=settings.environment,
             provider_transport=ProviderHttp(),
             public_base_url=settings.payment_public_base_url,
             return_url=settings.payment_return_url,
-            requests_per_minute=settings.payment_requests_per_merchant_per_minute,
         )
 
     async def metrics(self, token):
@@ -274,7 +257,6 @@ class Application:
         checks = {
             "postgres": self.database.check_revision,
             "redis": self.cache.check,
-            "billing_currency": self.billing.check,
             **{name: scope.check_access for name, scope in self._storage.items()},
         }
 

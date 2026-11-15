@@ -11,6 +11,23 @@ from mail_stub import PASSWORD, install_mail
 from nexus.api import create_app
 from nexus.config import MigrationSettings, RuntimeSettings
 
+IDENTITY_POLICY = (
+    "login_window_seconds",
+    "login_per_account",
+    "login_per_ip",
+    "mail_window_seconds",
+    "mail_per_recipient",
+    "mail_per_recipient_total",
+    "mail_per_account",
+    "mail_per_ip",
+    "mail_global",
+    "mail_queue_ttl_seconds",
+    "session_ttl_seconds",
+    "password_setup_ttl_seconds",
+    "reserved_logins",
+    "platform_email_recovery",
+)
+
 
 @pytest.fixture(scope="session")
 def service_directory():
@@ -64,7 +81,8 @@ def reset_identity(admin):
         "publication.upstream_purges, publication.inactive_keys, "
         "publication.response_jobs, publication.tenant_files, "
         "publication.stored_responses, publication.previous_keys, publication.gateway_principals, "
-        "publication.cluster_automation, publication.gateway_clusters, "
+        "publication.cluster_automation, publication.cluster_policies, "
+        "publication.gateway_clusters, "
         "publication.node_config_acks, "
         "publication.config_outbox, publication.config_snapshots, "
         "publication.credential_envelopes, publication.release_commands, "
@@ -79,7 +97,7 @@ def reset_identity(admin):
         "billing.discount_versions, billing.audit_events, billing.idempotency_records, "
         "billing.adjustments, billing.ledger_entries, billing.funding_records, "
         "billing.receiving_accounts, billing.outbox, billing.inbox, billing.accounts, "
-        "billing.settings, identity.inbox, catalog.audit_events, catalog.deployments, "
+        "identity.inbox, catalog.audit_events, catalog.deployments, "
         "catalog.upstream_credentials, "
         "catalog.upstreams, catalog.models, identity.access_policy_models, "
         "identity.access_policies, "
@@ -91,9 +109,32 @@ def reset_identity(admin):
         "identity.platform_role_bindings, identity.users"
     )
 
+    # Every policy row returns to its migration defaults, unlocked.
+    unlocked = "version=1,managed_sha256=NULL,managed_at=NULL"
     admin.execute(
         "UPDATE identity.auth_policy SET registration=false,email_verification=false,"
-        "turnstile=false,version=1"
+        f"turnstile=false,{unlocked}," + ",".join(f"{c}=DEFAULT" for c in IDENTITY_POLICY)
+    )
+    admin.execute(
+        "UPDATE billing.settings SET currency=DEFAULT,vector_storage_prepaid_days=DEFAULT,"
+        "vector_storage_lapse_policy=DEFAULT,payment_requests_per_merchant_per_minute=DEFAULT,"
+        "payment_notification_per_channel=DEFAULT,payment_notification_per_ip=DEFAULT,"
+        f"settlement_backlog_limit=DEFAULT,{unlocked}"
+    )
+    admin.execute(
+        "UPDATE reporting.export_policy SET per_org_minute=DEFAULT,ttl_seconds=DEFAULT,"
+        f"max_rows=DEFAULT,{unlocked}"
+    )
+    admin.execute(
+        "UPDATE catalog.resource_quota_defaults SET resources_per_key=DEFAULT,"
+        "resources_per_organization=DEFAULT,vector_stores_per_key=DEFAULT,"
+        f"vector_stores_per_organization=DEFAULT,{unlocked}"
+    )
+    admin.execute(
+        "UPDATE publication.cluster_policy_defaults SET max_attempts=DEFAULT,"
+        "failover_budget_ms=DEFAULT,purge_grace_seconds=DEFAULT,stream_lifetime_seconds=DEFAULT,"
+        "auto_publish_quiet_seconds=DEFAULT,auto_publish_max_delay_seconds=DEFAULT,"
+        f"{unlocked}"
     )
     admin.execute(
         "INSERT INTO billing.discount_versions (id,factor,state,effective_at,published_at) "

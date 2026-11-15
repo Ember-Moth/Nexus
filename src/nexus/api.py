@@ -178,6 +178,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
         app.state.routing = application.routing
         app.state.usage = application.usage
         app.state.billing_service = application.billing
+        app.state.billing_settings = application.billing_settings
         app.state.payment_service = application.payments
         app.state.payment_processor = application.payment_processor
         app.state.pricing_service = application.pricing
@@ -210,6 +211,9 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
 
     def get_billing(request: Request):
         return request.app.state.billing_service
+
+    def get_billing_settings(request: Request):
+        return request.app.state.billing_settings
 
     def get_pricing(request: Request):
         return request.app.state.pricing_service
@@ -254,6 +258,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     app.include_router(operations_api.create_router(get_operations))
     app.include_router(publication_api.create_router(get_publication))
     app.include_router(publication_api.create_resource_router(get_upstream_resources))
+    app.include_router(publication_api.create_settings_router(get_publication))
     app.include_router(routing_api.create_router(get_routing))
     app.include_router(
         identity_api.create_router(
@@ -266,6 +271,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     app.include_router(identity_api.create_policy_router(get_model_access))
     app.include_router(catalog_api.create_router(get_catalog))
     app.include_router(billing_api.create_router(get_billing, get_pricing, get_budgets))
+    app.include_router(billing_api.create_settings_router(get_billing_settings))
     app.include_router(payment_api.create_router(get_payments))
     app.include_router(payment_api.create_webhook_router(get_payments))
     return app

@@ -5,23 +5,24 @@ from .cache import Cache
 
 
 class RedisAuthLimits:
-    def __init__(self, cache: Cache, key: bytes, *, account_limit: int, ip_limit: int, window: int):
+    """Attempt limits per subject and per peer; the limits are passed with every attempt."""
+
+    def __init__(self, cache: Cache, key: bytes):
         self._cache = cache
         self._key = key
-        self._account_limit = account_limit
-        self._ip_limit = ip_limit
-        self._window = window
 
     def _digest(self, value: str) -> str:
         return hmac.new(self._key, value.encode(), hashlib.sha256).hexdigest()
 
-    async def allow(self, subject: str, peer: str) -> bool:
+    async def allow(
+        self, subject: str, peer: str, *, account_limit: int, ip_limit: int, window: int
+    ) -> bool:
         return await self._cache.allow_auth_attempt(
             self._digest("account:" + subject),
             self._digest("peer:" + peer),
-            self._account_limit,
-            self._ip_limit,
-            self._window,
+            account_limit,
+            ip_limit,
+            window,
         )
 
 
@@ -30,36 +31,26 @@ class RedisMailLimits:
 
     The per-recipient limit is counted per requester network, so a requester that exhausts it
     blocks only itself; the wider recipient total only bounds how much mail one mailbox can be
-    sent when many networks take part.
+    sent when many networks take part. ``budgets`` carries the current policy values
+    (``per_recipient``, ``per_recipient_total``, ``per_account``, ``per_ip``, ``global_limit``,
+    ``window_seconds``).
     """
 
-    def __init__(
-        self,
-        cache: Cache,
-        key: bytes,
-        *,
-        per_recipient: int,
-        per_recipient_total: int,
-        per_account: int,
-        per_ip: int,
-        global_limit: int,
-        window: int,
-    ):
+    def __init__(self, cache: Cache, key: bytes):
         self._cache = cache
         self._key = key
-        self._limits = {
-            "recipient": per_recipient,
-            "recipient_total": per_recipient_total,
-            "account": per_account,
-            "peer": per_ip,
-            "global": global_limit,
-        }
-        self._window = window
 
     def _digest(self, value: str) -> str:
         return hmac.new(self._key, value.encode(), hashlib.sha256).hexdigest()
 
-    async def allow(self, recipient: str, peer: str, account: str | None) -> int:
+    async def allow(self, recipient: str, peer: str, account: str | None, budgets) -> int:
+        limits = {
+            "recipient": budgets.per_recipient,
+            "recipient_total": budgets.per_recipient_total,
+            "account": budgets.per_account,
+            "peer": budgets.per_ip,
+            "global": budgets.global_limit,
+        }
         buckets = {
             "peer": peer,
             "recipient": f"{peer}\n{recipient}",
@@ -70,6 +61,6 @@ class RedisMailLimits:
             buckets["account"] = account
         return await self._cache.spend_budgets(
             [f"{kind}:{self._digest(kind + ':' + value)}" for kind, value in buckets.items()],
-            [self._limits[kind] for kind in buckets],
-            self._window,
+            [limits[kind] for kind in buckets],
+            budgets.window_seconds,
         )

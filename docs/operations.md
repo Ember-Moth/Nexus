@@ -28,7 +28,7 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 
 向 `POST /organizations/{org}/exports` 提交 kind 和 filters，取得 202 与任务标识。kind 可选 requests、charges、ledger 和平台财务专用的 attempt_costs。通过同一路径下的 `/{id}` 查看状态，ready 后访问 `/{id}/download` 获取 UTF-8 CSV。`GET /organizations/{org}/exports` 按提交时间从新到旧分页列出任务，可见范围与单个读取一致：组织 owner 和财务只见本人提交的任务，平台角色可见全部，attempt_costs 任务仅平台财务可见。下载重新核验管理会话、组织角色、请求者和筛选范围。过期副本由 Worker 清除。CSV 文本处理表格公式前缀。任务使用短事务和租约代次，过期执行者的结果无法替换新的文件。
 
-默认每组织每分钟可创建 10 个任务，每份最多 10000 行，文件保留 86400 秒，可分别通过 NEXUS_EXPORT_PER_ORG_MINUTE、NEXUS_EXPORT_MAX_ROWS 和 NEXUS_EXPORT_TTL_SECONDS 设置。文件上限为 16 MiB，超限任务报告失败，可缩短查询期间后重新导出。
+默认每组织每分钟可创建 10 个任务，每份最多 10000 行，文件保留 86400 秒。平台管理员在“平台 → 设置 → 报表”或 `PUT /api/v1/settings/reporting` 修改（`exports.per_org_minute`、`exports.max_rows`、`exports.ttl_seconds`），下一次导出即使用新值。文件上限为 16 MiB，超限任务报告失败，可缩短查询期间后重新导出。
 
 `GET /audit-events` 支持 organization_id、action、trace_id、limit 和 cursor。平台角色可查平台范围，企业 owner 和财务须指定所属组织。审计合并各模块只读记录，返回操作人、时间、动作、对象、受控原因代码和决定引用。自由文本依据在平台财务核对详情内读取。
 
@@ -74,19 +74,19 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
     - targets: ["nexus-api.internal:8000"]
 ```
 
-会话按 `NEXUS_SESSION_TTL_SECONDS` 过期（最长 24 小时），部署方须在到期前用专用的平台管理员账号重新登录并替换该文件。每次抓取会执行与 JSON 接口相同的三组数据库查询，抓取间隔建议不短于 30 秒。`/internal/` 前缀应继续只在内网入口开放。
+会话按身份策略的 `sessions.session_ttl_seconds` 过期（`/api/v1/settings/authentication`，最长 24 小时），部署方须在到期前用专用的平台管理员账号重新登录并替换该文件。每次抓取会执行与 JSON 接口相同的三组数据库查询，抓取间隔建议不短于 30 秒。`/internal/` 前缀应继续只在内网入口开放。
 
 网关新增预留时检查全库 ready 结算任务数。达到 `billing.settings.settlement_backlog_limit` 时返回 `settlement_backlog`。默认阈值为 1024，部署方可在该单行配置中按实测容量设置正整数。已有请求可继续上报、重放或结算，积压下降后自动恢复新预留。该阈值按准入事务可见的已提交事实判断，已授权请求继续产生事件时，队列可以超过阈值。Worker 的 Redis 心跳包含进程累计的数据库连接取得次数与耗时。
 
 ### 预留覆盖与核对要点
 
-迁移 `0031_model_call_bounds`、`0032_container_coverage`、`0033_storage_prepayment` 须先于新版 Worker 与 Relay 部署。Worker 读取 `NEXUS_VECTOR_STORAGE_PREPAID_DAYS`（默认 7，范围 1–31）和 `NEXUS_VECTOR_STORAGE_LAPSE_POLICY`（`delete` 或 `suspend`，默认 `delete`），新增消费者 `storage_prepayment` 负责续期与失效。
+迁移 `0031_model_call_bounds`、`0032_container_coverage`、`0033_storage_prepayment` 须先于新版 Worker 与 Relay 部署。Worker 在每个账务事务里读取账务策略的 `vector_storage.prepaid_days`（默认 7，范围 1–31）和 `vector_storage.lapse_policy`（`delete` 或 `suspend`，默认 `delete`），由 `PUT /api/v1/settings/billing` 修改；消费者 `storage_prepayment` 负责续期与失效。
 
 - **冻结范围收窄。** 只有费用超过已持有预留时账户冻结。工具或计量单位超出授权值但费用在预留内时，请求以 `authorized_bound_exceeded` 进入核对、不冻结；token 数超出预留依据时照常结算并写入 `request.token_bound_exceeded`，该事件持续出现说明某个部署的上界规则过窄。
 - **工具循环的预留更高。** 带服务端工具或压缩的请求按可能的模型调用次数预留输入，资金与 TPM 占用随之上升，规则见[多次模型调用](relay-design.md#首期协议与计量细则)。批任务中含代码执行等无次数参数工具的项目被拒绝。
 - **容器扩展预留。** 长时间使用的容器会出现多条 `openai_container_v1` 请求：首个预留和 `billing.container_extensions` 中的扩展预留。会话复核时各自生成核对事项，按时间顺序分配供应商分钟数，每段使用独立的证据引用。`container.coverage_unreserved` 审计事件表示执行后无法补足预留，账户已冻结；`container.coverage_deferred` 表示因结算积压暂缓补足，该会话的下一次操作会先补足预留。
 - **向量存储预付。** 每个存储有一条随续期替换的预付预留（被取消的旧预留原因为 `storage_hold_replaced` 或 `storage_hold_applied`）。`vector_storage.renewal_failed` 后存储停止写入，`vector_storage.lapsed` 后按策略删除或停用。
-- **故障转移判定。** 厂商错误信封中的 429 一律记 `failed` 并释放客户预留；只有文档列明的类型会换部署。连接未建立的尝试在 `NEXUS_RELAY_MAX_ATTEMPTS=1` 时也记 `failed`。没有用量的失败尝试只开成本核对项。
+- **故障转移判定。** 厂商错误信封中的 429 一律记 `failed` 并释放客户预留；只有文档列明的类型会换部署。连接未建立的尝试在集群策略 `relay.max_attempts` 为 1 时也记 `failed`。没有用量的失败尝试只开成本核对项。
 
 ## 网关配置自动发布
 
@@ -100,7 +100,7 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 | 新签发或轮换的 Key、新模型和部署、路由、限额、扩大的访问策略、价格资格 | 发布后生效。auto_publish 为 true 时，源静默 3 秒后发布，持续变化时最迟 30 秒。分发和节点重新加载另需约 0.02–1.7 秒（1 千至 10 万个 Key 的实测），新 Key 约 4 秒后可用 |
 | 新开通企业（`all` 或 `personal` 范围） | 随下一次自动发布纳入。企业还需要平台访问策略、路由和可用余额才能调用 |
 
-时间窗口由 `NEXUS_AUTO_PUBLISH_QUIET_SECONDS`（默认 3）、`NEXUS_AUTO_PUBLISH_MAX_DELAY_SECONDS`（默认 30，不得小于前者）和兜底轮询间隔 `NEXUS_AUTO_PUBLISH_POLL_SECONDS`（默认 30）设置，只需配置在 Worker 上。缩短静默窗口能减少等待，但持续变更时会产生更多修订，每个修订都要由所有节点重新加载。节点应用旧配置后，只有 5 秒窗口可以继续用旧修订准入。
+静默时间和最长延迟来自集群策略的 `auto_publish.quiet_seconds`（默认 3）和 `auto_publish.max_delay_seconds`（默认 30，不得小于前者）：平台默认值用 `PUT /api/v1/settings/cluster-defaults` 修改，单个集群可用 `PUT /api/v1/gateway-clusters/{cluster_id}/policy` 覆盖，Worker 在下一次检查时使用。兜底轮询间隔 `NEXUS_AUTO_PUBLISH_POLL_SECONDS`（默认 30）是 Worker 的环境变量。缩短静默窗口能减少等待，但持续变更时会产生更多修订，每个修订都要由所有节点重新加载。节点应用旧配置后，只有 5 秒窗口可以继续用旧修订准入。
 
 ### 开启、暂停和恢复
 
@@ -196,7 +196,7 @@ Worker 日志事件：`publication.auto_published`，outcome 为 published 或 u
 - `dependency` 与 `operation`：`database` 的操作名是 `gateway_v1` 函数名；`redis` 为 `acquire`、`renew`、`finish`、`heartbeat`、`subscribe`
 - `kind`：`rejected` 表示网关契约返回了业务错误码（SQLSTATE P0001，例如余额不足），`unavailable` 表示连接、超时或协议失败
 - 故障转移的 `reason`：被证明未执行的原因，`connect`（DNS、TCP、TLS 或连接超时）、`signing`（Bedrock 签名失败），或上游拒绝的状态码 `status_429`、`status_503`、`status_529`
-- 故障转移的 `result`：之后的处理。`switched` 换到另一部署并提交了新尝试；`no_candidate` 快照内没有符合冻结上界的其他候选；`credential_unavailable` 候选的凭据包无法打开；`start_failed` 续租或 `start_attempt` 失败，新尝试未能提交；`attempt_limit` 已达 `NEXUS_RELAY_MAX_ATTEMPTS`；`budget_exhausted` 已超过 `NEXUS_RELAY_FAILOVER_BUDGET_MS`；`client_gone` 客户端已离开。除 `switched` 外，客户端都收到这次失败的结果
+- 故障转移的 `result`：之后的处理。`switched` 换到另一部署并提交了新尝试；`no_candidate` 快照内没有符合冻结上界的其他候选；`credential_unavailable` 候选的凭据包无法打开；`start_failed` 续租或 `start_attempt` 失败，新尝试未能提交；`attempt_limit` 已达集群策略 `relay.max_attempts`；`budget_exhausted` 已超过 `relay.failover_budget_ms`；`client_gone` 客户端已离开。除 `switched` 外，客户端都收到这次失败的结果
 
 | 指标 | 类型 | 标签 | 含义 |
 | --- | --- | --- | --- |
@@ -262,8 +262,8 @@ Worker 日志事件：`publication.auto_published`，outcome 为 published 或 u
 1. 执行迁移后尽快同时替换 API 和 Worker。0036 只改动 `identity.auth_policy` 和 `identity.email_challenges` 两张小表。替换完成前，旧 API 实例仍按旧逻辑接受注册；旧 Worker 不认识新的 `exists` 提示邮件，会把它当作失败重试，直到新 Worker 接手。
 2. **自助注册在迁移后关闭**，包括此前已开放注册的部署。需要开放时，先配置发信渠道，再由平台管理员 `PUT /settings/authentication` 提交 `{"registration":true,"email_verification":true,...}`。注册只能与邮箱验证同时开启。
 3. **配置 BFF 共享密钥**。凡设置了 `NEXUS_AUTH_PROXY_PEERS` 的 API，必须同时设置至少 32 个字符的 `NEXUS_AUTH_PROXY_SECRET`，否则拒绝启动；在 BFF 上设置同名同值的变量。BFF 没有密钥时不转发客户端 IP，API 回退到按 BFF 地址限流。生成方式见 [BFF 配置](../src/web/README.md)。
-4. 拥有平台角色的用户默认不能再用邮件找回密码，改由其他管理员签发 setup token。确需保留时设置 `NEXUS_PLATFORM_EMAIL_RECOVERY=true`。
-5. 按业务量检查发信额度（`NEXUS_MAIL_*`，见[发信限额](identity-api.md#发信限额)）和保留登录名 `NEXUS_RESERVED_LOGINS`。默认全局每小时 1000 封。
+4. 拥有平台角色的用户默认不能再用邮件找回密码，改由其他管理员签发 setup token。确需保留时打开身份策略的 `platform_email_recovery`。
+5. 按业务量检查发信额度（见[发信限额](identity-api.md#发信限额)）和保留登录名，两者都在身份策略里。默认全局每小时 1000 封。
 6. 已有账号不受新的登录名规则影响，可继续用原写法登录。
 
 ## 升级到 0037（网关自动发布）
@@ -273,6 +273,86 @@ Worker 日志事件：`publication.auto_published`，outcome 为 published 或 u
 3. 存量集群的 auto_publish 为 false。逐个确认集群当前快照不是有意保留的回滚，也不是在等发布窗口的内容，然后再用 PATCH 打开。打开后如果内容和源一致，不会产生新修订。
 4. 修订数会随自动发布增加。关注 Redis 内存和 PostgreSQL 中 `publication.config_snapshots` 的增长（见[配置快照规模](control-plane-acceptance.md#配置快照规模)），以及 `nexus_publication_auto_*` 指标。Redis 中被取代的快照副本 10 分钟后过期。
 5. `all` 和 `personal` 集群只负责下发企业。企业要能调用，仍需要平台访问策略、路由和可用余额。自 0036 起自助注册默认关闭。
+
+## 策略文件导入
+
+`nexus settings import --file PATH [--dry-run]` 把 YAML 或 JSON 策略文件写入各模块的策略表。命令使用 API 进程的配置（`nexus_api` 数据库角色，同一组 Secret/ConfigMap），只连 PostgreSQL，要求数据库已迁移到最新版本。
+
+```yaml
+version: 1
+groups:
+  identity.auth_policy:          # 与 PUT /api/v1/settings/authentication 的请求体同构
+    mode: managed
+    values:
+      sign_in: {per_ip: 100}
+      sessions: {session_ttl_seconds: 43200}
+  billing.policy:                # /api/v1/settings/billing
+    mode: initial
+    values: {currency: CNY}
+  reporting.export_policy:       # /api/v1/settings/reporting
+    mode: initial
+    values: {exports: {max_rows: 20000}}
+  catalog.quota_defaults:        # /api/v1/settings/resource-quotas
+    mode: managed
+    values: {vector_stores_per_key: 50}
+  publication.cluster_defaults:  # /api/v1/settings/cluster-defaults
+    mode: managed
+    values: {relay: {max_attempts: 3}, auto_publish: {quiet_seconds: 5}}
+```
+
+`values` 可以只写部分字段，没写的字段保持数据库现值。不在文件里的组完全不受影响。单个集群的覆盖值和单个企业的资源数量覆盖属于运行时数据，不进文件。
+
+| 模式 | 写入 | 锁定 |
+| --- | --- | --- |
+| `initial` | 只在该组从未被修改过（版本仍为 1）时写入文件值，之后由管理员在后台维护；同一文件或改过的文件再次导入都不覆盖 | 解除锁定。已锁定的组声明 `initial` 即解锁，值保持不变 |
+| `managed` | 每次导入都用文件值覆盖所列字段；值没变就不写，不产生新版本 | 锁定整组：管理接口的写请求返回 409 `policy_managed_externally`，后台设置页只读并显示文件摘要和导入时间 |
+
+命令先读取并校验文件里的所有组（结构、未知字段、取值范围、组合规则，例如开放注册需要邮箱验证、币种在已有账务数据后不能再改），任何一组不合法就整体拒绝、不写入任何组，退出码 1，stderr 只给出组名和字段路径。全部合法后逐组写入，每个有变化的组推进版本，并在所属模块写一条审计：`actor_id` 为空，`details` 含 `actor: "config-import"`、`file_sha256`、`mode` 和逐字段的 `[旧值, 新值]`。各模块分别提交事务；写入阶段遇到存储故障时，已写入的组保持写入，重新执行即可（幂等）。
+
+stdout 是一行 JSON，`--dry-run` 只输出将会发生的变化：
+
+```json
+{"file_sha256": "…", "dry_run": true,
+ "groups": {"identity.auth_policy": {"status": "applied", "mode": "managed", "managed": true,
+            "changes": {"sign_in.per_ip": [60, 100], "managed": [false, true]}},
+            "billing.policy": {"status": "skipped", "mode": "initial", "managed": false, "changes": {}}}}
+```
+
+`status` 为 `applied`（有写入，或 dry-run 时将会写入）、`unchanged`（与数据库一致）或 `skipped`（`initial` 模式下该组已被修改过，文件值被忽略）。
+
+### 在 k3s 中执行
+
+把策略文件放进 ConfigMap，用 Helm hook Job 在迁移之后执行导入，安装和每次升级都会运行：
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nexus-import-policies
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"          # migrate Job 用 -10
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: import
+          image: registry.example.com/nexus-control-plane:1.0.0
+          args: ["settings", "import", "--file", "/etc/nexus/policies.yaml"]
+          envFrom:
+            - secretRef: {name: nexus-api}
+            - configMapRef: {name: nexus-config}
+          volumeMounts:
+            - {name: policies, mountPath: /etc/nexus, readOnly: true}
+      volumes:
+        - name: policies
+          configMap: {name: nexus-policies}
+```
+
+先用 `kubectl run` 或同一镜像加 `--dry-run` 检查差异，再升级。Job 失败时 Helm 升级中止，数据库保持原值。要把某组从 Git 移交给后台，在文件里把它改为 `initial` 并升级一次。
 
 ## 数据库迁移
 

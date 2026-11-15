@@ -253,9 +253,11 @@ api:
 
 worker:
   # Every Worker task claims rows with FOR UPDATE SKIP LOCKED or a database lease, so several
-  # replicas are safe; each uses its pod name as NEXUS_WORKER_ID. 2 gives failover once the
-  # cluster has more than one node.
-  replicas: 1
+  # replicas are safe; each uses its pod name as NEXUS_WORKER_ID. Settlement locks one wallet
+  # per transaction: replicas settle different wallets in parallel, and one fails over for
+  # another at once (docs/operations.md#结算-worker). Watch the ready settlement jobs before
+  # adding more; one busy wallet is settled by one replica at a time.
+  replicas: 2
   resources:
     requests: {cpu: 250m, memory: 384Mi}
     limits: {memory: 1Gi}

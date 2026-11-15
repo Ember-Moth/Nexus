@@ -89,7 +89,7 @@ class Plane:
             "relays": [r.pid for r in self.fleet.relays],
             "postgres": postgres_pids(self.services),
             "redis": [p for p in [redis_pid(self.services)] if p],
-            "worker": [p for p in [self.worker.pid] if p],
+            "worker": self.worker.pids(),
             "upstream": [self.upstream.process.pid],
             "client": [os.getpid()],
         }
@@ -242,7 +242,12 @@ async def load_plane(
         stack.push_async_callback(fleet.stop)
         await fleet.start(registered, relay_env)
         worker_log = Path(tmp_path) / "worker.jsonl"
-        process = WorkerHandle(service_directory, peer.redis, settings.redis_namespace, worker_log)
+        process = Workers(
+            [
+                WorkerHandle(service_directory, peer.redis, settings.redis_namespace, worker_log)
+                for _ in range(int(os.environ.get("RELAY_LOAD_WORKERS", "1")))
+            ]
+        )
         await process.start()
         stack.push_async_callback(process.stop)
         yield Plane(
@@ -269,6 +274,22 @@ async def load_plane(
             dsn=admin_dsn(admin),
             worker_log=LogTail(worker_log),
         )
+
+
+class Workers:
+    """RELAY_LOAD_WORKERS Worker processes, started and paused together."""
+
+    def __init__(self, handles):
+        self.handles = handles
+
+    def pids(self):
+        return [h.pid for h in self.handles if h.pid]
+
+    async def start(self):
+        await asyncio.gather(*(h.start() for h in self.handles))
+
+    async def stop(self):
+        await asyncio.gather(*(h.stop() for h in self.handles))
 
 
 def admin_dsn(admin):
@@ -392,6 +413,7 @@ async def finish(plane, m, scenario, profile, round_no, metrics, *, expected=Non
     ledger = money(plane.admin, m.ids, expected)
     record = {
         **metrics,
+        "workers": len(plane.worker.handles),
         "settlement": {**settlement(plane.admin, m.ids), "waited_s": round(m.settle_wait, 2)},
         "money": ledger,
         "statements_ms": statement_summary(m.statements, STATEMENTS),
@@ -564,16 +586,24 @@ async def test_hot_wallet(http, admin, tls, binary, service_directory, tmp_path)
         http, admin, tls, binary, service_directory, tmp_path, nodes=64, tenants=8
     ) as plane:
         await plane.upstream.lanes(a={"latency_ms": 0, "events": 1})
-        profiles = selected([("worker-running", False), ("worker-paused", True)])
+        # worker-paused-uniform: the same backlog spread evenly over the eight wallets, the
+        # case in which several Workers can settle in parallel.
+        profiles = selected(
+            [
+                ("worker-running", False, True),
+                ("worker-paused", True, True),
+                ("worker-paused-uniform", True, False),
+            ]
+        )
         for round_no in range(1, rounds() + 1):
-            for name, paused in profiles if round_no % 2 else list(reversed(profiles)):
-                await repeat(hot_wallet_profile, plane, round_no, name, paused)
+            for name, paused, hot in profiles if round_no % 2 else list(reversed(profiles)):
+                await repeat(hot_wallet_profile, plane, round_no, name, paused, hot)
     assert_clean()
 
 
-async def hot_wallet_profile(plane, round_no, name, paused):
+async def hot_wallet_profile(plane, round_no, name, paused, hot=True):
     # 1000 requests stay below the 1024 ready jobs at which reservations are refused.
-    owners = owners_for(1000, len(plane.tenants), True)
+    owners = owners_for(1000, len(plane.tenants), hot)
     jobs = http_jobs(plane, plane.fleet.relays, owners, f"w{round_no}{name}")
     if paused:
         await plane.worker.stop()
@@ -583,6 +613,7 @@ async def hot_wallet_profile(plane, round_no, name, paused):
             await plane.worker.start()
     metrics = {
         "worker_during_ingress": "paused" if paused else "running",
+        "mix": "90% hot" if hot else "uniform",
         "schedule_lag_ms": summary_ms(lag),
         "client": client_summary(results, "responses", m),
     }

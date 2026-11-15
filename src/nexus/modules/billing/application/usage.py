@@ -4,7 +4,7 @@ from uuid import UUID
 
 from nexus.shared.errors import ServiceError
 
-from ..domain.usage import normalize
+from ..domain.usage import declined, failed_over, normalize
 from .schemas import Settlement
 
 
@@ -43,25 +43,71 @@ class UsageProcessor:
             count += 1
         return count
 
-    async def process(self, limit=16):
+    async def process(self, limit=64):
+        """Settle up to ``limit`` due jobs, one wallet per transaction, and return how many.
+
+        A transaction locks one wallet and up to ``batch_size`` of its due jobs, so a busy
+        wallet is locked once per batch instead of once per request. Each request still gets
+        the same per-request decisions and posting; if any of them fails, the batch rolls back
+        and every request is settled again in its own transaction, so only the failing one is
+        retried later.
+        """
         count = 0
-        for _ in range(limit):
-            candidate_id = None
+        while count < limit:
+            claimed = []
             try:
                 async with self._transactions() as repo:
-                    candidate = await repo.claim_usage()
-                    if candidate is None:
+                    claim = await repo.claim_usage(min(self.batch_size, limit - count))
+                    if claim is None:
                         break
-                    account, request, generation = candidate
-                    candidate_id = request.id
-                    await self._process(repo, account, request)
+                    account, rows, now = claim
+                    # Plain ids: a rolled-back session expires its rows.
+                    claimed = [request.id for request, _ in rows]
+                    await self._settle(repo, account, [request for request, _ in rows], now)
             except Exception:
-                if candidate_id is None:
+                if not claimed:
                     raise
+                isolated = await self._isolate(claimed)
+                count += isolated
+                if not isolated:
+                    # Every request was skipped (wallet busy elsewhere): retry on the next call
+                    # instead of claiming and failing the same batch again.
+                    break
+                continue
+            count += len(claimed)
+        return count
+
+    batch_size = 32
+
+    async def _settle(self, repo, account, requests, now):
+        async with repo.usage_batch(requests, now):
+            for request in requests:
+                await self._process(repo, account, request)
+
+    async def _isolate(self, request_ids):
+        """Settle each request of a failed batch alone; reschedule the ones that fail again."""
+        count, failure = 0, None
+        for request_id in request_ids:
+            generation = None
+            try:
                 async with self._transactions() as repo:
-                    await repo.retry_usage(candidate_id, generation)
-                raise
+                    claim = await repo.claim_usage(1, request_id)
+                    if claim is None:
+                        # Settled by another Worker, waiting for a new fact, or its wallet is
+                        # busy: it stays due and is claimed again later.
+                        continue
+                    account, [(request, generation)], now = claim
+                    await self._settle(repo, account, [request], now)
+            except Exception as error:
+                if generation is None:
+                    raise
+                failure = failure or error
+                async with self._transactions() as repo:
+                    await repo.retry_usage(request_id, generation)
+                continue
             count += 1
+        if failure is not None:
+            raise failure
         return count
 
     async def _process(self, repo, account, request):
@@ -99,6 +145,13 @@ class UsageProcessor:
                 reason = None
             except ValueError as error:
                 rule, counts, reason = "usage-normalizer/1", None, str(error)
+            if payload["outcome"] == "declined" or (
+                reason == "missing_usage"
+                and payload["outcome"] == "failed"
+                and failed_over(attempt, priced.values())
+            ):
+                # Proven not executed: the node says so, or it failed over to a later attempt.
+                (rule, counts), reason = declined(price.rates), None
             if counts is not None and event.attempt_id not in corrected:
                 try:
                     await self._reservations.record_cost_in(

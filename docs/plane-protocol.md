@@ -66,7 +66,7 @@ Python 模拟器在 autocommit 连接上以单条 SQL 调用一个函数，等�
 | `ack_config(revision, hash, applied, reason DEFAULT '')` | 成功修订单调推进，reason 使用有界错误代码 |
 | `reserve_request(rid, kid, model, rev, inputs, outputs)` | 服务端确定组织、账户、价格和预算，重复返回 replayed 与原状态 |
 | `get_request_status(request_id)` | 本节点请求、冻结的价格引用、尝试、关闭与处理状态 |
-| `start_attempt(rid, aid, seq, dep)` | 序号从 1 递增，候选来自授权时快照，重试使用原 attempt_id |
+| `start_attempt(rid, aid, seq, dep)` | 序号从 1 递增，候选来自授权时快照，重试使用原 attempt_id。序号大于 1 的尝试只能在上一次尝试被证明没有执行后开始，见[用量事件](#用量事件) |
 | `append_usage_event(message)` | UTF-8 JSON 文本，最多 65536 字节，事务提交后读取 accepted 或 conflict |
 | `cancel_unstarted_request(rid, reason)` | 在同一事务释放无尝试且未关闭的请求与各预算占用 |
 | `resource_usage(kind, kid, rev, keys, key_limit, organization_limit)` | 本集群内该 Key 和所列同企业 Key 的存活资源数，分别数到快照下发的上限为止 |
@@ -204,7 +204,9 @@ Key 撤销、组织冻结和权限收缩在请求授权时查数据库实时状�
 
 `delivery_outcome` 枚举为 `succeeded`、`client_cancelled`、`upstream_failed`、`unknown`。成功必须有属于该请求的交付尝试；关闭事件中的尝试集合必须与持久化的开始记录一致。关闭与开始操作锁定同一请求，关闭后不允许新增尝试。
 
-`attempt.finished` 结果可以是 `succeeded`、`failed`、`cancelled`、`unknown`。没有可信用量时 `raw_usage` 为 null，不填充虚构的零。两类事件可以乱序到达，Worker 等待所需事实齐全后结算。
+`attempt.finished` 结果可以是 `succeeded`、`failed`、`cancelled`、`unknown`、`declined`。没有可信用量时 `raw_usage` 为 null，不填充虚构的零。两类事件可以乱序到达，Worker 等待所需事实齐全后结算。
+
+`declined` 表示上游被证明没有执行这次尝试：厂商文档把该错误列为准入拒绝，或者请求根本没有发出。它的 `raw_usage` 只能是 null 或全零，否则拒收（`invalid_attempt_fact`）。节点只有在上一次尝试被这样证明没有执行后，才能为同一请求开始下一次尝试（`start_attempt` 的序号加一）；控制平面依赖这条约定：之后又有尝试的 `failed` 尝试如果没有用量，与 `declined` 一样按零成本确认，不开 `missing_usage` 核对项。不能证明没有执行的失败（超时、连接已建立后的传输错误、未列明类型的 429、执行中出错）必须报 `failed` 或 `unknown`，并且不能换部署重试。Relay 目前对被换掉的尝试报 `failed`，对最后一次被拒绝的尝试也报 `failed`，所以后者仍会进入成本核对。
 
 ## 接收、幂等与恢复
 

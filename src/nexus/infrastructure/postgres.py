@@ -111,7 +111,14 @@ class Notifications:
 
 class Database:
     def __init__(
-        self, url: str, *, runtime_role: str, pool_size: int, max_overflow: int, timeout: float
+        self,
+        url: str,
+        *,
+        runtime_role: str,
+        pool_size: int,
+        max_overflow: int,
+        timeout: float,
+        idle_transaction_ms: int = 0,
     ) -> None:
         self._url = url
         self._timeout = timeout
@@ -126,7 +133,10 @@ class Database:
             hide_parameters=True,
             connect_args={
                 "connect_timeout": max(1, int(timeout)),
-                "options": "-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=3000",
+                "options": "-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=3000"
+                # A session that stops talking inside a transaction (a vanished host) is ended
+                # by the server, which releases the rows it locked.
+                + f" -c idle_in_transaction_session_timeout={idle_transaction_ms}",
             },
         )
         self._sessions = async_sessionmaker(self._engine, expire_on_commit=False)

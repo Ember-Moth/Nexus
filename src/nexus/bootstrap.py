@@ -108,6 +108,10 @@ class Application:
             pool_size=settings.db_pool_size,
             max_overflow=settings.db_max_overflow,
             timeout=settings.dependency_timeout,
+            # A Worker's settlement claims are row locks of an open transaction: if its host
+            # disappears without closing the connection, another Worker can take the wallet
+            # over after this long instead of after TCP keepalive (hours by default).
+            idle_transaction_ms=30_000 if settings.process_role == "worker" else 0,
         )
         self.cache = Cache(
             settings.redis_url.get_secret_value(),

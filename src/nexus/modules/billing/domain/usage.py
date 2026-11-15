@@ -3,6 +3,24 @@
 from .money import GUARDRAIL_DIMENSIONS, valid_quantity
 
 RULE = "fixture.tokens.v1/1"
+DECLINED = "relay.declined/1"
+
+
+def failed_over(attempt, attempts):
+    """Whether the node started a later attempt of the same request after ``attempt``.
+
+    A node fails over only after the upstream provably did not execute the attempt: the vendor
+    documents the error as an admission rejection, or the request was never sent
+    (docs/plane-protocol.md). The later attempt is the node's report of that proof.
+    """
+    return attempt.sequence is not None and any(
+        other.sequence is not None and other.sequence > attempt.sequence for other, _ in attempts
+    )
+
+
+def declined(dimensions):
+    """Zero usage for an attempt that was declined before execution, so it costs nothing."""
+    return DECLINED, dict.fromkeys(dimensions, 0)
 
 
 def normalize(

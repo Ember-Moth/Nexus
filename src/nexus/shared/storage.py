@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0043_cluster_policy"
+SCHEMA_REVISION = "0044_settlement_throughput"

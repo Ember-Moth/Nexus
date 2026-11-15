@@ -7,7 +7,9 @@ metadata:
     app.kubernetes.io/component: worker
 spec:
   # Safe to run several: each task claims its rows with FOR UPDATE SKIP LOCKED or a lease
-  # (settlement, outboxes, mail, exports, reconciliation, publication, auto-publish).
+  # (settlement, outboxes, mail, exports, reconciliation, publication, auto-publish). A
+  # settlement claim is the open transaction itself; a pod that dies, or a host that vanishes
+  # for 30 s (idle_in_transaction_session_timeout), gives its wallet back to the others.
   replicas: {{ .Values.worker.replicas }}
   revisionHistoryLimit: 5
   strategy:
@@ -79,3 +81,24 @@ spec:
       {{- with .Values.worker.affinity }}
       affinity: {{- toYaml . | nindent 8 }}
       {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "nexus.selector" (list . "worker") | nindent 14 }}
+{{- if gt (int .Values.worker.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "nexus.fullname" . }}-worker
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "nexus.selector" (list . "worker") | nindent 6 }}
+{{- end }}

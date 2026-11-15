@@ -295,7 +295,7 @@ CloudNativePG 的 `retentionPolicy`（默认 `30d`）决定恢复窗口：它会
 
 ### Worker 副本
 
-Worker 可以多副本运行。每个后台任务领取工作时都用 `FOR UPDATE SKIP LOCKED` 或数据库租约：结算、出箱、邮件、导出、对账、发布分发都是逐行领取，自动发布按集群取得 120 秒租约。代码见 `billing/persistence/*`、`identity/persistence/email.py`、`reporting/persistence/repository.py` 和 `publication/persistence/repository.py`。每个副本以 Pod 名作为 `NEXUS_WORKER_ID`，心跳互不覆盖。单节点时 1 个副本即可；节点超过一台后设为 2，Worker 所在节点故障时就不用等它重新调度。
+Worker 默认 2 个副本，按主机分散，并有 `maxUnavailable: 1` 的 PodDisruptionBudget。每个后台任务领取工作时都用 `FOR UPDATE SKIP LOCKED` 或数据库租约：结算按钱包领取一批任务，出箱、邮件、导出、对账、发布分发都是逐行领取，自动发布按集群取得 120 秒租约。代码见 `billing/persistence/*`、`identity/persistence/email.py`、`reporting/persistence/repository.py` 和 `publication/persistence/repository.py`。每个副本以 Pod 名作为 `NEXUS_WORKER_ID`，心跳互不覆盖。一个副本退出后，另一个立即接手它的钱包；Worker 所在节点故障时也不用等它重新调度。单节点的测试环境可以设 `worker.replicas: 1`。扩容前先看 ready 任务数和热点钱包，见[结算 Worker](operations.md#结算-worker)。
 
 ## 扩容 Relay 节点
 

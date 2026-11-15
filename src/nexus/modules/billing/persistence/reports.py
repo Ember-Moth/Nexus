@@ -311,6 +311,8 @@ class BillingReports:
                     await session.execute(
                         text("""
              SELECT (SELECT count(*) FROM billing.usage_jobs WHERE state='ready') usage_backlog,
+              (SELECT settlement_backlog_limit FROM billing.settings WHERE id=1)
+              settlement_backlog_limit,
               (SELECT count(*) FROM billing.usage_jobs WHERE state='waiting') waiting_for_facts,
               (SELECT count(*) FROM billing.usage_jobs WHERE state='review') usage_review,
               (SELECT count(*) FROM billing.request_runs WHERE reservation_state='held' AND

@@ -16,6 +16,10 @@ _GAUGES = {
     },
     "billing": {
         "usage_backlog": ("nexus_billing_usage_backlog", "Usage jobs ready to settle"),
+        "settlement_backlog_limit": (
+            "nexus_billing_settlement_backlog_limit",
+            "Ready usage jobs at which node reservations are refused",
+        ),
         "waiting_for_facts": ("nexus_billing_usage_waiting_for_facts", "Usage jobs awaiting facts"),
         "usage_review": ("nexus_billing_usage_review", "Usage jobs held for review"),
         "overdue_holds": ("nexus_billing_overdue_holds", "Held reservations past expiry"),

@@ -289,6 +289,8 @@ async def test_backlog_replay_and_worker_takeover(plane, http, admin, service_di
     for rid in ids:
         await submit(peer, raw, model["id"], dep["id"], rid)
     assert account_amounts(admin, org) == (100, 32)
+    # Admission reads a backlog gauge that reservations recount at most every 100 ms.
+    await asyncio.sleep(0.15)
     with pytest.raises(psycopg.errors.RaiseException, match="settlement_backlog"):
         await peer.reserve(raw, model["id"], 1, 1, uuid4())
     # Response-loss retries and already-admitted work remain accessible during backpressure.

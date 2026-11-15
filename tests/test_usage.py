@@ -1,6 +1,8 @@
+from types import SimpleNamespace
+
 import pytest
 
-from nexus.modules.billing.domain.usage import normalize
+from nexus.modules.billing.domain.usage import declined, failed_over, normalize
 
 
 def test_token_subsets_are_counted_once():
@@ -217,3 +219,21 @@ def test_chat_receipt_splits_cached_tokens_only_with_evidence():
     assert counts == {"input_uncached_tokens": 3, "input_cache_read_tokens": 5, "output_tokens": 3}
     with pytest.raises(ValueError, match="usage_format_mismatch"):
         normalize(receipt, priced, "openai.responses.v1")
+
+
+def test_failed_over_attempt_is_proven_declined():
+    first, second, third = (SimpleNamespace(sequence=n) for n in (1, 2, 3))
+    attempts = [(first, None), (second, None), (third, None)]
+    assert failed_over(first, attempts) and failed_over(second, attempts)
+    # The last attempt has no successor: nothing on the wire proves it was not executed.
+    assert not failed_over(third, attempts)
+    # Attempts registered without a node sequence (the management API) prove nothing.
+    unnumbered = SimpleNamespace(sequence=None)
+    assert not failed_over(unnumbered, [(unnumbered, None), (second, None)])
+    assert not failed_over(first, [(first, None), (unnumbered, None)])
+
+
+def test_declined_attempt_has_zero_usage_in_every_priced_dimension():
+    rule, counts = declined({"input_uncached_tokens": {}, "output_tokens": {}})
+    assert rule == "relay.declined/1"
+    assert counts == {"input_uncached_tokens": 0, "output_tokens": 0}

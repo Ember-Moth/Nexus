@@ -288,6 +288,15 @@ class Ledger:
             (rid,),
         ).fetchall()
 
+    def rules(self, rid):
+        return dict(
+            self.admin.execute(
+                "SELECT n.attempt_id,n.rule_version FROM billing.normalized_usage n "
+                "JOIN billing.request_attempts a ON a.id=n.attempt_id WHERE a.request_id=%s",
+                (rid,),
+            ).fetchall()
+        )
+
     def reviews(self, rid):
         return dict(
             self.admin.execute(
@@ -388,10 +397,12 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             assert status["charged_amount"] == "5.000000000000"
             assert status["reservation_state"] == "captured"
             assert ledger.debits(rid) == [(Decimal(-5),)]
-            # Each attempt's cost stands alone: the backup's priced usage and the primary's
-            # missing evidence, which goes to its own review instead of a zero.
-            assert cost1 is None and cost2 == Decimal("1.0")
-            assert ledger.reviews(rid) == {a1: "missing_usage"}
+            # Each attempt's cost stands alone: the backup's priced usage, and zero for the
+            # primary. The Relay fails over only from an attempt the vendor declined before
+            # executing it, so its missing usage is a proven zero and needs no review.
+            assert cost1 == Decimal(0) and cost2 == Decimal("1.0")
+            assert ledger.reviews(rid) == {}
+            assert ledger.rules(rid) == {a1: "relay.declined/1", a2: "anthropic.messages.v1/1"}
 
             # A 2xx stream already executed the generation even before any client byte.
             result = await client.post("/v1/messages", headers=hdr, json=body("stall", True))
@@ -433,6 +444,10 @@ async def test_failover_to_backup_deployment(http, admin, tls, relay_binary, mon
             status = await ledger.status(rid)
             assert status["reservation_state"] == "released" and ledger.debits(rid) == []
             assert status["charged_amount"] == "0.000000000000"
+            # The backup's 529 is the last attempt: nothing on the wire proves it was declined,
+            # so only it keeps a cost review. The primary it failed over from costs zero.
+            assert ledger.reviews(rid) == {a2: "missing_usage"}
+            assert ledger.rules(rid)[a1] == "relay.declined/1"
 
             result = await hanging
             assert result.status_code == 502

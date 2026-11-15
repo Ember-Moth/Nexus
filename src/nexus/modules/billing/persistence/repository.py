@@ -79,9 +79,24 @@ def period_bounds(at, period):
     return start, end
 
 
+class UsageBatch:
+    """Facts of the requests one settlement transaction claimed, and the writes it queued."""
+
+    def __init__(self, now):
+        self.now = now
+        self.priced = {}
+        self.corrected = {}
+        self.facts = {}
+        self.prices = {}
+        self.discounts = {}
+        self.budgets = {}
+        self.writes = {}
+
+
 class BillingRepository:
     def __init__(self, session):
         self._session = session
+        self._batch = None
 
     async def review_container(self):
         return (
@@ -99,36 +114,140 @@ class BillingRepository:
     async def stage_storage(self):
         return (await self._session.execute(text("SELECT billing.v1_stage_storage()"))).scalar_one()
 
-    async def claim_usage(self):
-        # Account, request, then task. An inbox writer takes request then task.
-        candidate_sql = text("""
-            SELECT a.*, r.id AS claim_request_id FROM billing.usage_jobs j
+    async def claim_usage(self, limit=1, request_id=None):
+        """Lock the wallet of the oldest due settlement job, then up to ``limit`` of its jobs.
+
+        Returns ``(account, [(request, generation)], now)`` or None. Locks follow the global
+        order account, request, task; an inbox writer takes request then task. Wallets and
+        requests another transaction holds are skipped rather than waited for, so concurrent
+        Workers settle different wallets and never wait on a node's admission.
+        """
+        only = " AND j.request_id=:rid" if request_id else ""
+        params = {"rid": request_id} if request_id else {}
+        account = (
+            await self._session.execute(
+                select(m.Account).from_statement(
+                    text(f"""
+            SELECT a.* FROM billing.usage_jobs j
             JOIN billing.request_runs r ON r.id=j.request_id
             JOIN billing.accounts a ON a.id=r.account_id
-            WHERE j.state='ready' AND j.next_attempt_at <= statement_timestamp()
+            WHERE j.state='ready' AND j.next_attempt_at <= statement_timestamp(){only}
             ORDER BY j.next_attempt_at,j.request_id
             LIMIT 1 FOR UPDATE OF a SKIP LOCKED
         """)
-        candidates = await self._session.execute(
-            select(m.Account, column("claim_request_id")).from_statement(candidate_sql)
-        )
-        candidate = candidates.one_or_none()
-        if candidate is None:
+                ),
+                params,
+            )
+        ).scalar_one_or_none()
+        if account is None:
             return None
-        account, request_id = candidate
-        request = await self.get("request", request_id, lock=True)
-        # All job creation/requeue paths serialize with the request. Still lock and
-        # recheck the job after taking the account and request locks.
-        task = (
+        # Every job creation and requeue path locks the request first, so a job that is
+        # still ready once its request is locked cannot change until this transaction ends.
+        rows = (
+            await self._session.execute(
+                select(m.RequestRun, column("claim_generation"), column("claim_at")).from_statement(
+                    text(f"""
+            SELECT r.*, j.generation AS claim_generation, clock_timestamp() AS claim_at
+            FROM billing.usage_jobs j JOIN billing.request_runs r ON r.id=j.request_id
+            WHERE r.account_id=:account AND j.state='ready'
+              AND j.next_attempt_at <= statement_timestamp(){only}
+            ORDER BY j.next_attempt_at,j.request_id
+            LIMIT :limit FOR UPDATE OF r, j SKIP LOCKED
+        """)
+                ),
+                {**params, "account": account.id, "limit": limit},
+            )
+        ).all()
+        if not rows:
+            return None
+        return account, [(row[0], row[1]) for row in rows], rows[0][2]
+
+    @asynccontextmanager
+    async def usage_batch(self, requests, now):
+        """Settle several claimed requests with their facts read up front and writes flushed once.
+
+        Inside the block the per-request repository calls of the settlement path read from the
+        prefetched facts and queue their writes; nothing reaches the database until the block
+        ends, when the ORM changes and the queued statements are written in that order.
+        """
+        ids = [request.id for request in requests]
+        batch = UsageBatch(now)
+        if len(ids) > 1:
+            # The report triggers of these requests' rows touch their report_changes rows in
+            # whatever order the ORM writes them, while report projection acknowledges rows
+            # in request order. Taking them in request order first prevents a lock cycle.
             await self._session.execute(
                 text(
-                    "SELECT generation FROM billing.usage_jobs WHERE request_id=:id "
-                    "AND state='ready' FOR UPDATE"
+                    "SELECT FROM billing.report_changes WHERE request_id=ANY(:ids) "
+                    "ORDER BY request_id FOR UPDATE"
                 ),
-                {"id": request_id},
+                {"ids": ids},
             )
-        ).one_or_none()
-        return (account, request, task.generation) if task else None
+        for attempt, price in (
+            await self._session.execute(
+                select(m.Attempt, m.PriceVersion)
+                .join(m.PriceVersion, m.Attempt.cost_price_version_id == m.PriceVersion.id)
+                .where(m.Attempt.request_id.in_(ids))
+                .order_by(m.Attempt.request_id, m.Attempt.id)
+                .with_for_update(of=m.Attempt)
+            )
+        ).all():
+            batch.priced.setdefault(attempt.request_id, []).append((attempt, price))
+        for rid, aid in await self._session.execute(
+            text("""SELECT DISTINCT a.request_id, c.attempt_id FROM billing.cost_corrections c
+            JOIN billing.request_attempts a ON a.id=c.attempt_id WHERE a.request_id=ANY(:ids)"""),
+            {"ids": ids},
+        ):
+            batch.corrected.setdefault(rid, set()).add(aid)
+        for row in await self._session.execute(
+            text(
+                "SELECT * FROM billing.usage_events WHERE request_id=ANY(:ids) "
+                "ORDER BY request_id,received_at,id"
+            ),
+            {"ids": ids},
+        ):
+            batch.facts.setdefault(row.request_id, []).append(row)
+        for price in (
+            await self._session.execute(
+                select(m.PriceVersion).where(
+                    m.PriceVersion.id.in_({r.sale_price_version_id for r in requests})
+                )
+            )
+        ).scalars():
+            batch.prices[price.id] = price
+        for discount in (
+            await self._session.execute(
+                select(m.DiscountVersion).where(
+                    m.DiscountVersion.id.in_({r.discount_version_id for r in requests})
+                )
+            )
+        ).scalars():
+            batch.discounts[discount.id] = discount
+        for period, hold in (
+            await self._session.execute(
+                select(m.BudgetPeriod, m.BudgetHold)
+                .join(m.BudgetHold, m.BudgetHold.period_id == m.BudgetPeriod.id)
+                .where(m.BudgetHold.request_id.in_(ids))
+                .order_by(m.BudgetPeriod.id)
+                .with_for_update()
+            )
+        ).all():
+            batch.budgets.setdefault(hold.request_id, []).append((period, hold))
+        self._batch = batch
+        try:
+            with self._session.no_autoflush:
+                yield batch
+            await self._session.flush()
+            for statement, rows in batch.writes.items():
+                await self._session.execute(text(statement), rows)
+        finally:
+            self._batch = None
+
+    async def _write(self, statement, params):
+        if self._batch is not None:
+            self._batch.writes.setdefault(statement, []).append(params)
+        else:
+            await self._session.execute(text(statement), params)
 
     async def retry_usage(self, rid, generation):
         await self._session.execute(
@@ -142,6 +261,8 @@ class BillingRepository:
         )
 
     async def usage_facts(self, rid):
+        if self._batch is not None:
+            return self._batch.facts.get(rid, [])
         return (
             await self._session.execute(
                 text(
@@ -153,12 +274,12 @@ class BillingRepository:
         ).all()
 
     async def save_normalization(self, eid, aid, rule, counts, reason):
-        await self._session.execute(
-            text("""
+        await self._write(
+            """
             INSERT INTO billing.normalized_usage(event_id, attempt_id, rule_version, quantities,
             review_reason)
             VALUES(:eid,:aid,:rule,cast(:counts AS jsonb),:reason) ON CONFLICT(event_id) DO NOTHING
-        """),
+        """,
             {
                 "eid": eid,
                 "aid": aid,
@@ -188,18 +309,20 @@ class BillingRepository:
         )
 
     async def cost_review(self, request, attempt_id, reason):
-        await self._session.execute(
-            text("""INSERT INTO billing.review_cases(organization_id,source_type,
+        await self._write(
+            """INSERT INTO billing.review_cases(organization_id,source_type,
             source_id,request_id,reason) VALUES(:org,'attempt',:id,:rid,:reason)
             ON CONFLICT(source_type,source_id) DO UPDATE SET reason=excluded.reason,state='open',
             resolved_at=NULL,resolution_id=NULL,version=billing.review_cases.version+1
             WHERE billing.review_cases.state<>'open' OR
              (billing.review_cases.reason<>excluded.reason AND
-             billing.review_cases.reason<>'statement_difference')"""),
+             billing.review_cases.reason<>'statement_difference')""",
             {"org": request.organization_id, "id": attempt_id, "rid": request.id, "reason": reason},
         )
 
     async def corrected_attempts(self, rid):
+        if self._batch is not None:
+            return self._batch.corrected.get(rid, set())
         return set(
             (
                 await self._session.execute(
@@ -211,6 +334,8 @@ class BillingRepository:
         )
 
     async def priced_attempts(self, request_id):
+        if self._batch is not None:
+            return self._batch.priced.get(request_id, [])
         return (
             await self._session.execute(
                 select(m.Attempt, m.PriceVersion)
@@ -222,6 +347,11 @@ class BillingRepository:
         ).all()
 
     async def settlement_prices(self, request):
+        if self._batch is not None:
+            return (
+                self._batch.prices[request.sale_price_version_id],
+                self._batch.discounts[request.discount_version_id],
+            )
         return (
             await self._session.execute(
                 select(m.PriceVersion, m.DiscountVersion)
@@ -232,8 +362,8 @@ class BillingRepository:
         ).one()
 
     async def finish_usage(self, rid, state, reason):
-        await self._session.execute(
-            text("UPDATE billing.usage_jobs SET state=:state,reason=:reason WHERE request_id=:rid"),
+        await self._write(
+            "UPDATE billing.usage_jobs SET state=:state,reason=:reason WHERE request_id=:rid",
             {"rid": rid, "state": state, "reason": reason},
         )
 
@@ -285,6 +415,8 @@ class BillingRepository:
         }
 
     async def now(self):
+        if self._batch is not None:
+            return self._batch.now
         return (await self._session.execute(select(func.clock_timestamp()))).scalar_one()
 
     async def lock(self, key):
@@ -377,7 +509,8 @@ class BillingRepository:
             setattr(row, name, value)
         if versioned:
             row.version += 1
-        await self._session.flush()
+        if self._batch is None:
+            await self._session.flush()
         return row
 
     async def flush(self):
@@ -560,7 +693,8 @@ class BillingRepository:
             reverses_entry_id=reverses,
         )
         self._session.add(row)
-        await self._session.flush()
+        if self._batch is None:
+            await self._session.flush()
         return row
 
     async def adjusted_amount(self, source_id):
@@ -672,6 +806,8 @@ class BillingRepository:
         return row
 
     async def request_budgets(self, request_id):
+        if self._batch is not None:
+            return self._batch.budgets.get(request_id, [])
         return (
             await self._session.execute(
                 select(m.BudgetPeriod, m.BudgetHold)

@@ -59,6 +59,7 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 | `nexus_api_db_connection_acquisitions_total`、`nexus_api_db_connection_acquire_seconds_total` | counter | 当前 API 进程取得数据库连接的次数和耗时 |
 | `nexus_api_db_pool_checked_out`、`nexus_db_waiting_locks` | gauge | 进程连接池占用、全库等待中的锁 |
 | `nexus_billing_usage_backlog`、`_usage_waiting_for_facts`、`_usage_review`、`_overdue_holds`、`_consumption_cases_open`、`_payment_cases_open`、`_reconciliation_differences`、`_conflicting_events`、`_duplicate_events` | gauge | 数据库当前计数 |
+| `nexus_billing_settlement_backlog_limit` | gauge | 当前 `settlement_backlog_limit`，见[结算 Worker](#结算-worker) |
 | `nexus_billing_payment_query_seconds`、`_notice_receive_seconds`、`_event_receive_seconds`、`_settlement_seconds`、`_payment_confirmation_to_credit_seconds`、`_payment_posting_seconds` | gauge | 最近 24 小时平均值，单位秒；没有样本时省略该行 |
 | `nexus_publication_backlog`、`nexus_publication_lag_seconds`、`nexus_publication_lagging_nodes` | gauge | 未分发的配置版本、最旧一项的等待时长、落后于期望修订的活跃节点 |
 
@@ -76,7 +77,7 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 
 会话按身份策略的 `sessions.session_ttl_seconds` 过期（`/api/v1/settings/authentication`，最长 24 小时），部署方须在到期前用专用的平台管理员账号重新登录并替换该文件。每次抓取会执行与 JSON 接口相同的三组数据库查询，抓取间隔建议不短于 30 秒。`/internal/` 前缀应继续只在内网入口开放。
 
-网关新增预留时检查全库 ready 结算任务数。达到 `billing.settings.settlement_backlog_limit` 时返回 `settlement_backlog`。默认阈值为 1024，部署方可在该单行配置中按实测容量设置正整数。已有请求可继续上报、重放或结算，积压下降后自动恢复新预留。该阈值按准入事务可见的已提交事实判断，已授权请求继续产生事件时，队列可以超过阈值。Worker 的 Redis 心跳包含进程累计的数据库连接取得次数与耗时。
+Worker 的 Redis 心跳包含进程累计的数据库连接取得次数与耗时。结算的扩展、监控和背压见[结算 Worker](#结算-worker)。
 
 ### 预留覆盖与核对要点
 
@@ -86,7 +87,39 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 - **工具循环的预留更高。** 带服务端工具或压缩的请求按可能的模型调用次数预留输入，资金与 TPM 占用随之上升，规则见[多次模型调用](relay-design.md#首期协议与计量细则)。批任务中含代码执行等无次数参数工具的项目被拒绝。
 - **容器扩展预留。** 长时间使用的容器会出现多条 `openai_container_v1` 请求：首个预留和 `billing.container_extensions` 中的扩展预留。会话复核时各自生成核对事项，按时间顺序分配供应商分钟数，每段使用独立的证据引用。`container.coverage_unreserved` 审计事件表示执行后无法补足预留，账户已冻结；`container.coverage_deferred` 表示因结算积压暂缓补足，该会话的下一次操作会先补足预留。
 - **向量存储预付。** 每个存储有一条随续期替换的预付预留（被取消的旧预留原因为 `storage_hold_replaced` 或 `storage_hold_applied`）。`vector_storage.renewal_failed` 后存储停止写入，`vector_storage.lapsed` 后按策略删除或停用。
-- **故障转移判定。** 厂商错误信封中的 429 一律记 `failed` 并释放客户预留；只有文档列明的类型会换部署。连接未建立的尝试在集群策略 `relay.max_attempts` 为 1 时也记 `failed`。没有用量的失败尝试只开成本核对项。
+- **故障转移判定。** 厂商错误信封中的 429 一律记 `failed` 并释放客户预留；只有文档列明的类型会换部署。连接未建立的尝试在集群策略 `relay.max_attempts` 为 1 时也记 `failed`。Relay 只在上一次尝试被证明没有执行（厂商文档列明的拒绝，或请求没有发出）时才开始下一次尝试，所以被换掉的尝试按零成本确认（归一化规则 `relay.declined/1`），不开核对项。尝试结果为 `declined` 时同样按零成本确认。其余没有用量的失败尝试，例如最后一次尝试、未列明类型的 429、执行中出错，仍各开一个 `missing_usage` 成本核对项，见[结算 Worker](#结算-worker)。
+
+## 结算 Worker
+
+Worker 的 `settlement` 消费者把 Relay 上报的用量事实结算成扣费和尝试成本，规则见[幂等结算](billing.md#幂等结算)。
+
+**批量结算。** 一个事务取最早到期任务所属的钱包，锁住它和它最多 32 个到期任务，按请求 ID 锁住它们的报表变更行（与报表投影的顺序一致，避免死锁），再用 6 条查询读出这些请求的尝试、成本价、用量事实、售价、折扣和预算占用，然后逐笔做与单笔结算相同的判定和过账，最后一次写入。每笔请求的扣费、流水、预算、审计和核对项都与逐笔结算相同。任何一笔出错时整批回滚，再逐笔重新结算，只有出错的那一笔按退避重试（`billing.usage_jobs.failures`），其余照常完成。热点钱包因此每批只加一次行锁，节点的预留最多等待一批的时长（实测见[Worker 优化后](relay-acceptance.md#worker-优化后)）。
+
+**多副本。** chart 默认 2 个副本，分散到不同节点，并有 `maxUnavailable: 1` 的 PodDisruptionBudget。领取钱包和任务都用 `SKIP LOCKED`，副本之间、副本与节点的预留之间都不互相等待：不同钱包并行结算，同一个钱包同一时刻只由一个副本结算。领取就是事务里的行锁，没有单独的租约：进程退出或连接断开时事务回滚，其他副本立即接管；宿主消失而连接没有关闭时，PostgreSQL 在 `idle_in_transaction_session_timeout`（Worker 连接为 30 秒）后结束该会话并释放锁。乱序、重放、并发领取、同一钱包并发和中途被杀的情形由 `tests/integration/test_settlement_concurrency.py` 覆盖。
+
+**监控 ready 任务数。** 以下指标来自 `/internal/metrics/prometheus`：
+
+| 指标 | 含义 | 建议告警 |
+| --- | --- | --- |
+| `nexus_billing_usage_backlog` | 到期待结算的 ready 任务数 | 持续 1 分钟超过 `nexus_billing_settlement_backlog_limit` 的一半；达到上限时节点开始拒绝新预留 |
+| `nexus_billing_settlement_backlog_limit` | 当前背压阈值 | 用于上面的比值 |
+| `nexus_billing_settlement_seconds` | 最近 24 小时最后一条用量证据到扣费的平均秒数 | 超过 2 秒 |
+| `nexus_billing_usage_waiting_for_facts` | 等待关闭事件或尝试事实的任务 | 持续增长说明节点上报有缺失 |
+| `nexus_billing_usage_review` | 进入核对的任务 | 与流量同比增长时检查核对原因 |
+
+没有 Prometheus 时可以直接查询：
+
+```sql
+SELECT count(*) FILTER (WHERE state='ready') AS ready,
+       count(*) FILTER (WHERE state='ready' AND failures>0) AS retrying,
+       min(next_attempt_at) FILTER (WHERE state='ready') AS oldest_due
+FROM billing.usage_jobs;
+SELECT ready, observed_at FROM billing.settlement_backlog;  -- 准入使用的计数
+```
+
+ready 持续偏高而 Worker 的 CPU 不高，多数是热点钱包：一个钱包同一时刻只能由一个副本结算，增加副本没有帮助。`retrying` 不为 0 说明有请求反复出错，Worker 日志中有 `worker.consumer_failed`。
+
+**背压。** 节点新增预留时，`billing.request_runs` 的触发器读取 `billing.settlement_backlog` 中的 ready 计数，达到 `billing.settings.settlement_backlog_limit` 时返回 `settlement_backlog`（节点返回 503）。计数由预留自己刷新：发现它早于 100 毫秒的那个预留重新计数（最多数到阈值），其他预留用 `SKIP LOCKED` 跳过、沿用上次的值，所以准入不再在企业锁内扫描队列，Worker 全部停止时背压也照常生效。阈值因此最多滞后 100 毫秒，已授权的请求继续产生事件时队列也可以超过阈值。已有请求可继续上报、重放或结算，积压降到阈值以下后自动恢复新预留。默认阈值为 2048，部署方可在该单行配置中设置正整数，按“可接受的清空秒数 × 单个钱包的清空速度”估算：热点钱包只能由一个副本结算，所以不按副本数放大。取值依据见[Worker 优化后](relay-acceptance.md#worker-优化后)。
 
 ## 网关配置自动发布
 

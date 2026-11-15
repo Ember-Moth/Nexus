@@ -121,6 +121,7 @@ def reset_identity(admin):
         "payment_notification_per_channel=DEFAULT,payment_notification_per_ip=DEFAULT,"
         f"settlement_backlog_limit=DEFAULT,{unlocked}"
     )
+    admin.execute("UPDATE billing.settlement_backlog SET ready=0,observed_at='-infinity'")
     admin.execute(
         "UPDATE reporting.export_policy SET per_org_minute=DEFAULT,ttl_seconds=DEFAULT,"
         f"max_rows=DEFAULT,{unlocked}"

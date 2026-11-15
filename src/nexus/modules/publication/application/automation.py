@@ -17,7 +17,7 @@ from nexus.shared.telemetry import event
 logger = logging.getLogger("nexus.publication")
 # Races with an administrator, moving sources and storage outages resolve on their own.
 TRANSIENT = frozenset({"cluster_changed", "source_changed", "storage_unavailable"})
-MIN_SPACING = 0.2
+MIN_SPACING = 0.5
 
 
 class AutoPublisher:

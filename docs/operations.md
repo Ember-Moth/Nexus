@@ -88,6 +88,52 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 - **向量存储预付。** 每个存储有一条随续期替换的预付预留（被取消的旧预留原因为 `storage_hold_replaced` 或 `storage_hold_applied`）。`vector_storage.renewal_failed` 后存储停止写入，`vector_storage.lapsed` 后按策略删除或停用。
 - **故障转移判定。** 厂商错误信封中的 429 一律记 `failed` 并释放客户预留；只有文档列明的类型会换部署。连接未建立的尝试在 `NEXUS_RELAY_MAX_ATTEMPTS=1` 时也记 `failed`。没有用量的失败尝试只开成本核对项。
 
+## 网关配置自动发布
+
+集群的 auto_publish 为 true 时，Worker 会把源变化自动发布到该集群，协议细节见[自动发布](plane-protocol.md#自动发布)。迁移 0037 之前已存在的集群保持 false，仍需手动发布；此后新建的集群默认为 true。
+
+### 生效时延
+
+| 变更 | 生效方式 |
+| --- | --- |
+| 撤销 Key、冻结或停用企业、收缩访问策略 | 授权时实时检查数据库，提交后立即生效，与自动发布无关 |
+| 新签发或轮换的 Key、新模型和部署、路由、限额、扩大的访问策略、价格资格 | 发布后生效。auto_publish 为 true 时，源静默 3 秒后发布，持续变化时最迟 30 秒。分发和节点重新加载另需约 0.02–1.7 秒（1 千至 10 万个 Key 的实测），新 Key 约 4 秒后可用 |
+| 新开通企业（`all` 或 `personal` 范围） | 随下一次自动发布纳入。企业还需要平台访问策略、路由和可用余额才能调用 |
+
+时间窗口由 `NEXUS_AUTO_PUBLISH_QUIET_SECONDS`（默认 3）、`NEXUS_AUTO_PUBLISH_MAX_DELAY_SECONDS`（默认 30，不得小于前者）和兜底轮询间隔 `NEXUS_AUTO_PUBLISH_POLL_SECONDS`（默认 30）设置，只需配置在 Worker 上。缩短静默窗口能减少等待，但持续变更时会产生更多修订，每个修订都要由所有节点重新加载。节点应用旧配置后，只有 5 秒窗口可以继续用旧修订准入。
+
+### 开启、暂停和恢复
+
+- 开启或关闭：`PATCH /api/v1/gateway-clusters/{cluster_id}`，携带 If-Match，请求体为 `{"auto_publish": true}` 或 `{"auto_publish": false}`。关闭后不再自动发布，手动发布接口照常可用。
+- 回滚：带 rollback_revision 的手动发布会同时把 auto_publish 置为 false，集群状态显示为 `paused`，`paused` 字段记录回滚生成的修订和时间。这样可以避免 Worker 马上用当前配置覆盖回滚。
+- 恢复：确认可以发布当前配置后，PATCH `{"auto_publish": true}`。Worker 会在静默窗口后用当前配置发布一个更高修订，暂停记录也随之清除。
+
+### 状态与排查
+
+`GET /api/v1/gateway-clusters` 的每个集群包含 auto_publish、organization_scope 和 auto_publish_status：
+
+| 字段 | 含义 |
+| --- | --- |
+| `state` | `disabled` 已关闭；`paused` 因回滚暂停；`pending` 有未发布的变化，等待静默窗口；`failing` 最近一次发布校验失败且源未再变化；`current` 已与源一致；`unknown` 开启后尚未检查 |
+| `pending_since` | 第一次未发布变化被发现的时间 |
+| `checked_at` | Worker 最近一次检查该集群的时间 |
+| `last_published` | 最近一次自动发布的修订、时间和触发它的源变化，例如 `{"identity": ["41", "42"]}` |
+| `last_failure` | 最近一次失败的错误码、说明和时间。恢复后仍保留，用于事后追查 |
+| `paused` | 回滚暂停的原因、修订和时间 |
+
+`failing` 时按 `last_failure.code` 处理：`invalid_snapshot` 的说明会指出缺少售价或成本价、部署缺少路由，或企业不是 active；`unsupported_capability` 表示有节点缺少所需能力，需要升级节点后重新登记。修正源数据或重新登记节点后，Worker 会自动重试，无需手动发布。如果状态长时间停留在 `pending`，检查 Worker 心跳中 `auto_publish` 是否为 ok，以及数据库通知是否可达。Worker 断开后会退回到每 30 秒轮询一次。
+
+Worker 日志事件：`publication.auto_published`，outcome 为 published 或 unchanged，后者表示内容未变而未生成修订；`publication.auto_publish_failed` 表示校验失败；`publication.auto_publish_deferred` 表示发布与人工操作冲突或源仍在变化，会稍后重试；`publication.auto_publish_error` 表示意外错误或存储不可用。事件都带 cluster_id 和 error_code。`/internal/metrics` 增加以下指标：
+
+| 指标 | 含义 |
+| --- | --- |
+| `nexus_publication_auto_pending` | 有未发布变化的集群数 |
+| `nexus_publication_auto_pending_seconds` | 最早一个未发布变化已等待的秒数 |
+| `nexus_publication_auto_failing` | 处于 failing 的集群数 |
+| `nexus_publication_auto_paused` | 因回滚暂停的集群数 |
+
+建议告警条件：`auto_pending_seconds` 超过最大延迟加一分钟、`auto_failing` 大于 0，或 `auto_paused` 持续超过约定时间。审计中自动发布的 `config.released` 没有 actor_id，details.actor 为 `auto_publisher`。
+
 ## Relay 可观测性
 
 ### 存活与就绪
@@ -181,6 +227,14 @@ Prometheus 用平台管理员的会话令牌抓取，令牌写入只有 Promethe
 4. 拥有平台角色的用户默认不能再用邮件找回密码，改由其他管理员签发 setup token。确需保留时设置 `NEXUS_PLATFORM_EMAIL_RECOVERY=true`。
 5. 按业务量检查发信额度（`NEXUS_MAIL_*`，见[发信限额](identity-api.md#发信限额)）和保留登录名 `NEXUS_RESERVED_LOGINS`。默认全局每小时 1000 封。
 6. 已有账号不受新的登录名规则影响，可继续用原写法登录。
+
+## 升级到 0037（网关自动发布）
+
+1. 迁移 0037 修改 `publication.gateway_clusters`：加两列，并重建范围 CHECK 约束。这一步要取 ACCESS EXCLUSIVE 锁，表很小，但每次 Relay 调用都会读集群行，所以执行期间网关调用会短暂等待。迁移还会在 identity、catalog、billing 三张 `source_revision` 表上各建一个通知触发器。遇到长事务时，迁移会按 `NEXUS_MIGRATION_LOCK_TIMEOUT_MS` 超时，处理掉长事务后重新执行即可。
+2. 同时替换 API 和 Worker。只有新 Worker 才有 `auto_publish` 任务；旧 Worker 继续分发已有修订，不会自动发布。
+3. 存量集群的 auto_publish 为 false。逐个确认集群当前快照不是有意保留的回滚，也不是在等发布窗口的内容，然后再用 PATCH 打开。打开后如果内容和源一致，不会产生新修订。
+4. 修订数会随自动发布增加。关注 Redis 内存和 PostgreSQL 中 `publication.config_snapshots` 的增长（见[配置快照规模](control-plane-acceptance.md#配置快照规模)），以及 `nexus_publication_auto_*` 指标。Redis 中被取代的快照副本 10 分钟后过期。
+5. `all` 和 `personal` 集群只负责下发企业。企业要能调用，仍需要平台访问策略、路由和可用余额。自 0036 起自助注册默认关闭。
 
 ## 数据库迁移
 

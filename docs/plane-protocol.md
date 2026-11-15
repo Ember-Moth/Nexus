@@ -17,11 +17,33 @@
 ## 节点接入与配置发布
 
 1. 部署管理员创建 `nexus_bridge` 和 `nexus_gateway` 两个 NOLOGIN 角色。迁移身份须能 SET ROLE 到 identity、catalog、billing、publication 的模块角色及 nexus_bridge，以建立函数所有权。节点使用各自的 LOGIN 身份，继承 nexus_gateway 的权限并具有目标数据库 CONNECT 权限。各函数的实际授权清单随迁移固化。仓库的本机依赖脚本会准备组角色，节点登录及其凭据由部署方配置。
-2. 平台管理员调用 `POST /api/v1/gateway-clusters`，提供 name、region、organization_ids、deployment_ids 和 public_key。公钥使用 Base64 编码的 32 字节 Curve25519 公钥。catalog 用 PyNaCl/libsodium sealed box 封装上游凭据，密文内部绑定集群、凭据和版本。部署方把私钥交给相应集群。
-3. 用 `PUT /api/v1/gateway-clusters/{cluster_id}/principals/{node_id}` 登记 database_role、node_id、capabilities 与 active。节点身份由 PostgreSQL 登录角色确定。集群 PATCH 使用 If-Match，可暂停集群、修改范围或轮换公钥。key_grace_seconds 指定旧密钥包读取窗口，0 表示立即截止。缩小组织或部署范围会使先前范围的快照失效。新增范围随下一次发布生效。
+2. 平台管理员调用 `POST /api/v1/gateway-clusters`，提供 name、region、organization_scope、deployment_ids 和 public_key；organization_scope 为 `listed` 时同时提供 organization_ids。公钥使用 Base64 编码的 32 字节 Curve25519 公钥。catalog 用 PyNaCl/libsodium sealed box 封装上游凭据，密文内部绑定集群、凭据和版本。部署方把私钥交给相应集群。auto_publish 默认为 true，新集群由 Worker 自动发布，见[自动发布](#自动发布)。
+
+   | organization_scope | 发布哪些企业 | organization_ids |
+   | --- | --- | --- |
+   | `listed`（默认） | 列表中的企业，最多 256 个，任一不是 active 时发布失败 | 1–256 个 |
+   | `all` | 发布时所有 active 企业，无数量上限 | 必须为空 |
+   | `personal` | 发布时所有 active 的个人企业（自助注册产生），企业客户留给专属集群 | 必须为空 |
+
+   规则范围在每次发布时由 identity 的只读契约 `identity.v1_scope_organizations` 解析。企业开通后在下一次发布时纳入；停用或归档后在下一次发布时移出，移出前其 Key 已被授权实时拒绝，因此移出不使旧快照失效。
+3. 用 `PUT /api/v1/gateway-clusters/{cluster_id}/principals/{node_id}` 登记 database_role、node_id、capabilities 与 active。节点身份由 PostgreSQL 登录角色确定。集群 PATCH 使用 If-Match，可暂停集群、修改范围、切换 organization_scope、开关 auto_publish 或轮换公钥。key_grace_seconds 指定旧密钥包读取窗口，0 表示立即截止。缩小组织或部署范围会使先前范围的快照失效：从 `all` 改为 `personal` 或 `listed`、从 `personal` 改为 `listed`，以及 `listed` 列表删掉企业，都会递增 scope_generation；改为 `all` 只扩大范围，不递增。新增范围随下一次发布生效。
 4. 路由和限额按自然键用 PUT 写入。`PUT /api/v1/route-policies/{organization_id}/{model_id}` 为组织及模型设置部署候选 candidates，每个候选含 deployment_id、priority 和 weight。组织 owner 可通过 `PUT /api/v1/organizations/{organization_id}/quota-policies/{layer}/{scope_type}/{scope_id}/{metric}` 设置 customer 层限额，请求体为 `{"limit_value": …}`；platform 层由平台管理员维护。scope_type 为 organization 时 scope_id 即组织 ID。多个适用上限共同约束请求。不带 If-Match 时只创建，成功返回 201；策略已存在则返回 428。更新时携带上一版本的 If-Match，成功返回 200；版本不是当前版本或策略不存在时返回 412。`GET /api/v1/route-policies`、`GET /api/v1/organizations/{organization_id}/quota-policies` 和 `GET /api/v1/gateway-clusters` 使用 limit 与 cursor 分页。原 `POST /api/v1/route-policies` 和 `POST /api/v1/organizations/{organization_id}/quota-policies` 仍按原语义工作，但已标记为废弃，新客户端应改用 PUT。
-5. 调用 `POST /api/v1/gateway-clusters/{cluster_id}/releases`，附带 Idempotency-Key，正常发布使用空对象。rollback_revision 可选择历史资源集合。发布前重新核对源版本、当前价格和凭据资格，回滚生成更高修订。查询 `GET /api/v1/gateway-clusters/{cluster_id}/releases/{revision}` 获取期望修订、已分发修订、任务和各节点最近的确认。
+5. auto_publish 为 true 时，Worker 在源变化后自动发布。也可以调用 `POST /api/v1/gateway-clusters/{cluster_id}/releases` 手动发布，附带 Idempotency-Key，正常发布使用空对象。rollback_revision 可选择历史资源集合；回滚会暂停该集群的自动发布。两种发布都重新核对源版本、当前价格和凭据资格，回滚生成更高修订。查询 `GET /api/v1/gateway-clusters/{cluster_id}/releases/{revision}` 获取期望修订、已分发修订、任务和各节点最近的确认。
 6. 节点调用 get_config_snapshot，校验原始字节的 SHA-256 后应用并确认。普通更新给已应用旧配置的节点保留最多 5 秒传播窗口。权限收缩、Key 失效、凭据撤销及集群范围变动由数据库实时检查。旧节点仍可提交其在途请求的结束证据。分发 Worker 每 30 秒核对并重写当前副本，Redis 清空期间节点可从 PostgreSQL 恢复。
+
+### 自动发布
+
+auto_publish 为 true 且集群 active 时，Worker 的 auto_publish 任务负责发布该集群。
+
+- **触发**。集群的源向量包括 scope_generation、key_version、范围配置摘要、identity、catalog 和 billing 的源修订，以及范围内生效价格的版本。它与集群期望快照所代表的向量不一致时，集群进入 pending。期望快照所代表的向量是发布时记录的 `source_revision`；如果后来确认内容未变，则是确认时的向量。identity 的源修订是全平台计数，其他企业的变化也会推进它。Worker 先比较快照内容摘要，内容相同就只记录新向量，不生成修订，也不让节点重新加载。
+- **唤醒**。identity、catalog、billing 的 `source_revision` 每次推进，集群配置每次改版，都会在提交时发出 PostgreSQL 通知 `nexus_source_revision`，Worker 用 LISTEN 接收。轮询只作兜底，间隔为 `NEXUS_AUTO_PUBLISH_POLL_SECONDS`（默认 30 秒），也用于发现定时生效的价格。通知只作为提示：连接断开重连后，Worker 会立即检查一遍。
+- **去抖**。源向量连续 `NEXUS_AUTO_PUBLISH_QUIET_SECONDS`（默认 3 秒）不变后发布。源持续变化时，最迟在第一次未发布的变化之后 `NEXUS_AUTO_PUBLISH_MAX_DELAY_SECONDS`（默认 30 秒）发布。
+- **系统执行者**。自动发布与手动发布共用同一提交步骤：两次读取源并核对一致，校验价格完整、凭据资格、路由和节点能力，在集群行锁下用 `desired_revision + 1` 生成修订。审计 `config.released` 的 actor_id 为空，details 记录 `actor: auto_publisher`、修订号和触发它的源向量变化（`trigger`，每项为 `[之前, 现在]`）。只有 Worker 能调用这条路径，HTTP 发布接口的执行者总是由会话令牌解析出的管理员。
+- **并发**。每个集群在 `publication.cluster_automation` 中有一行，Worker 用 `FOR UPDATE SKIP LOCKED` 取得 120 秒租约后才处理，多个 Worker 不会同时发布同一集群。自动发布与手动发布都在锁定集群行后核对 desired_revision；落后的一方返回 `cluster_changed`，不会生成重复或乱序的修订。自动发布遇到这种冲突会稍后重新判断。
+- **回滚**。手动回滚提交时，若集群开启了 auto_publish，会在同一事务中将其置为 false 并记录暂停，集群版本加 1。暂停期间 Worker 不再发布该集群。管理员用 PATCH 将 auto_publish 设为 true 后恢复；恢复后的第一次发布会用当前配置覆盖回滚内容。
+- **失败**。`invalid_snapshot`、`unsupported_capability` 等校验失败不会生成修订，失败原因和时间记录在集群状态的 `last_failure` 中。之后只有源向量或集群版本变化才会重试，例如补齐价格、修正路由、登记具备能力的节点；在此之前不重复尝试。`source_changed`、`storage_unavailable` 和意外错误会在退避后重试。一个集群失败不影响其他集群。
+
+使用默认设置时，新签发的 Key 约 4 秒后可用，三次实测为 3.7–4.1 秒。这包括 3 秒静默窗口、发布和分发，以及节点收到通知后重新加载的时间。快照越大，发布和加载越慢，实测见[控制平面验收](control-plane-acceptance.md#配置快照规模)。auto_publish 为 false 时，集群行为与引入自动发布之前相同。
 
 ## 数据库身份与权限
 
@@ -177,7 +199,7 @@ Key 撤销、组织冻结和权限收缩在请求授权时查数据库实时状�
 | 用途 | 键示例 | 权威来源或过期规则 |
 | --- | --- | --- |
 | 配置当前版本 | `nexus:v1:cfg:{cluster_id}:current` | PostgreSQL，版本单调增加 |
-| 配置快照 | `nexus:v1:cfg:{cluster_id}:snapshot:42` | PostgreSQL，不可变 |
+| 配置快照 | `nexus:v1:cfg:{cluster_id}:snapshot:42` | PostgreSQL，不可变；当前修订常驻，被取代的修订 10 分钟后过期 |
 | 配置通知频道 | `nexus:v1:cfg:cluster_id:changed` | 提示信息，不作为可靠记录 |
 | RPM 和 TPM | `nexus:v1:limit:{organization_id}:policy_id:metric:window` | 原子窗口计数，过期回收 |
 | 并发租约 | `nexus:v1:concurrency:{organization_id}:policy_id:concurrency` | 请求租约集合，续租及过期回收 |

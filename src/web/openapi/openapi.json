@@ -23331,6 +23331,171 @@
         ],
         "title": "AuthPolicyView"
       },
+      "AutoPublishFailure": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "at"
+        ],
+        "title": "AutoPublishFailure"
+      },
+      "AutoPublishPause": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "const": "rollback",
+            "title": "Reason"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "title": "Revision"
+          },
+          "at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason",
+          "revision",
+          "at"
+        ],
+        "title": "AutoPublishPause"
+      },
+      "AutoPublishRelease": {
+        "properties": {
+          "revision": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "title": "Revision"
+          },
+          "at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "trigger": {
+            "additionalProperties": {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Trigger",
+            "description": "Source vector entries that changed, as [previous, current]; list-valued entries are shown as short digests"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision",
+          "at",
+          "trigger"
+        ],
+        "title": "AutoPublishRelease"
+      },
+      "AutoPublishStatus": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "paused",
+              "pending",
+              "failing",
+              "current",
+              "unknown"
+            ],
+            "title": "State",
+            "description": "unknown until the auto-publisher first checks an enabled cluster"
+          },
+          "pending_since": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "First unpublished source change; the release waits for a quiet window"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_published": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoPublishRelease"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoPublishFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paused": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoPublishPause"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state",
+          "pending_since",
+          "checked_at",
+          "last_published",
+          "last_failure",
+          "paused"
+        ],
+        "title": "AutoPublishStatus"
+      },
       "BedrockGuardrail": {
         "properties": {
           "guardrailIdentifier": {
@@ -24431,6 +24596,17 @@
             "minLength": 1,
             "title": "Region"
           },
+          "organization_scope": {
+            "type": "string",
+            "enum": [
+              "listed",
+              "all",
+              "personal"
+            ],
+            "title": "Organization Scope",
+            "description": "listed publishes organization_ids; all and personal resolve every active (personal) organization at each release and require organization_ids to be empty",
+            "default": "listed"
+          },
           "organization_ids": {
             "items": {
               "type": "string",
@@ -24438,7 +24614,6 @@
             },
             "type": "array",
             "maxItems": 256,
-            "minItems": 1,
             "title": "Organization Ids"
           },
           "deployment_ids": {
@@ -24454,6 +24629,12 @@
           "public_key": {
             "type": "string",
             "title": "Public Key"
+          },
+          "auto_publish": {
+            "type": "boolean",
+            "title": "Auto Publish",
+            "description": "Publish source changes without a manual release",
+            "default": true
           }
         },
         "additionalProperties": false,
@@ -24461,7 +24642,6 @@
         "required": [
           "name",
           "region",
-          "organization_ids",
           "deployment_ids",
           "public_key"
         ],
@@ -24498,6 +24678,23 @@
             "title": "Key Grace Seconds",
             "default": 3600
           },
+          "organization_scope": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "listed",
+                  "all",
+                  "personal"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organization Scope",
+            "description": "listed publishes organization_ids; all and personal resolve every active (personal) organization at each release and require organization_ids to be empty"
+          },
           "organization_ids": {
             "anyOf": [
               {
@@ -24531,6 +24728,18 @@
               }
             ],
             "title": "Deployment Ids"
+          },
+          "auto_publish": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Publish",
+            "description": "true also resumes automatic publication paused by a rollback"
           }
         },
         "additionalProperties": false,
@@ -24551,6 +24760,15 @@
           "region": {
             "type": "string",
             "title": "Region"
+          },
+          "organization_scope": {
+            "type": "string",
+            "enum": [
+              "listed",
+              "all",
+              "personal"
+            ],
+            "title": "Organization Scope"
           },
           "organization_ids": {
             "items": {
@@ -24581,6 +24799,13 @@
             "type": "boolean",
             "title": "Active"
           },
+          "auto_publish": {
+            "type": "boolean",
+            "title": "Auto Publish"
+          },
+          "auto_publish_status": {
+            "$ref": "#/components/schemas/AutoPublishStatus"
+          },
           "desired_revision": {
             "type": "string",
             "pattern": "^[0-9]+$",
@@ -24606,11 +24831,14 @@
           "id",
           "name",
           "region",
+          "organization_scope",
           "organization_ids",
           "deployment_ids",
           "public_key",
           "key_version",
           "active",
+          "auto_publish",
+          "auto_publish_status",
           "desired_revision",
           "distributed_revision",
           "version",

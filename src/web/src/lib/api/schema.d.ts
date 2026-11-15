@@ -2174,6 +2174,53 @@ export type components = {
             /** Version */
             version: number;
         };
+        /** AutoPublishFailure */
+        AutoPublishFailure: {
+            at: components["schemas"]["Timestamp"];
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /** AutoPublishPause */
+        AutoPublishPause: {
+            at: components["schemas"]["Timestamp"];
+            /**
+             * Reason
+             * @constant
+             */
+            reason: "rollback";
+            /** Revision */
+            revision: string;
+        };
+        /** AutoPublishRelease */
+        AutoPublishRelease: {
+            at: components["schemas"]["Timestamp"];
+            /** Revision */
+            revision: string;
+            /**
+             * Trigger
+             * @description Source vector entries that changed, as [previous, current]; list-valued entries are shown as short digests
+             */
+            trigger: {
+                [key: string]: (string | null)[];
+            };
+        };
+        /** AutoPublishStatus */
+        AutoPublishStatus: {
+            checked_at: components["schemas"]["Timestamp"] | null;
+            last_failure: components["schemas"]["AutoPublishFailure"] | null;
+            last_published: components["schemas"]["AutoPublishRelease"] | null;
+            paused: components["schemas"]["AutoPublishPause"] | null;
+            /** @description First unpublished source change; the release waits for a quiet window */
+            pending_since: components["schemas"]["Timestamp"] | null;
+            /**
+             * State
+             * @description unknown until the auto-publisher first checks an enabled cluster
+             * @enum {string}
+             */
+            state: "disabled" | "paused" | "pending" | "failing" | "current" | "unknown";
+        };
         /** BedrockGuardrail */
         BedrockGuardrail: {
             /** Guardrailidentifier */
@@ -2619,12 +2666,25 @@ export type components = {
         };
         /** Cluster */
         Cluster: {
+            /**
+             * Auto Publish
+             * @description Publish source changes without a manual release
+             * @default true
+             */
+            auto_publish: boolean;
             /** Deployment Ids */
             deployment_ids: string[];
             /** Name */
             name: string;
             /** Organization Ids */
-            organization_ids: string[];
+            organization_ids?: string[];
+            /**
+             * Organization Scope
+             * @description listed publishes organization_ids; all and personal resolve every active (personal) organization at each release and require organization_ids to be empty
+             * @default listed
+             * @enum {string}
+             */
+            organization_scope: "listed" | "all" | "personal";
             /** Public Key */
             public_key: string;
             /** Region */
@@ -2634,6 +2694,11 @@ export type components = {
         ClusterUpdate: {
             /** Active */
             active?: boolean | null;
+            /**
+             * Auto Publish
+             * @description true also resumes automatic publication paused by a rollback
+             */
+            auto_publish?: boolean | null;
             /** Deployment Ids */
             deployment_ids?: string[] | null;
             /**
@@ -2643,6 +2708,11 @@ export type components = {
             key_grace_seconds: number;
             /** Organization Ids */
             organization_ids?: string[] | null;
+            /**
+             * Organization Scope
+             * @description listed publishes organization_ids; all and personal resolve every active (personal) organization at each release and require organization_ids to be empty
+             */
+            organization_scope?: ("listed" | "all" | "personal") | null;
             /** Public Key */
             public_key?: string | null;
         };
@@ -2650,6 +2720,9 @@ export type components = {
         ClusterView: {
             /** Active */
             active: boolean;
+            /** Auto Publish */
+            auto_publish: boolean;
+            auto_publish_status: components["schemas"]["AutoPublishStatus"];
             /** Deployment Ids */
             deployment_ids: string[];
             /** Desired Revision */
@@ -2667,6 +2740,11 @@ export type components = {
             name: string;
             /** Organization Ids */
             organization_ids: string[];
+            /**
+             * Organization Scope
+             * @enum {string}
+             */
+            organization_scope: "listed" | "all" | "personal";
             /**
              * Public Key
              * @description Base64 Curve25519 public key

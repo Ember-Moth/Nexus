@@ -1445,6 +1445,66 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organizations/{organization_id}/upstream-purges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Purge
+         * @description Delete the upstream copies a key holds, or one of them, through the purge queue.
+         *
+         *     Organization owners and platform administrators only. Poll the Location for progress.
+         */
+        post: operations["purge_api_v1_organizations__organization_id__upstream_purges_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{organization_id}/upstream-purges/{purge_request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Purge Request */
+        get: operations["purge_request_api_v1_organizations__organization_id__upstream_purges__purge_request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/{organization_id}/upstream-resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resources
+         * @description Upstream copies held for the organization's API keys, revoked keys included,
+         *     newest first. Developers see keys of their granted projects.
+         */
+        get: operations["resources_api_v1_organizations__organization_id__upstream_resources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organizations/{organization_id}/usage": {
         parameters: {
             query?: never;
@@ -1781,6 +1841,26 @@ export type paths = {
         get: operations["auth_policy_api_v1_settings_authentication_get"];
         /** Update Policy */
         put: operations["update_policy_api_v1_settings_authentication_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/upstream-resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * All Resources
+         * @description Upstream copies across organizations, for platform administrators.
+         */
+        get: operations["all_resources_api_v1_upstream_resources_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -4028,6 +4108,13 @@ export type components = {
             /** Next Cursor */
             next_cursor?: string | null;
         };
+        /** Page[UpstreamResourceView] */
+        Page_UpstreamResourceView_: {
+            /** Items */
+            items: components["schemas"]["UpstreamResourceView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** Page[UpstreamView] */
         Page_UpstreamView_: {
             /** Items */
@@ -4435,6 +4522,66 @@ export type components = {
         Publish: {
             /** Effective At */
             effective_at?: string | null;
+        };
+        /**
+         * PurgeRequestCreate
+         * @description Delete every upstream copy the key holds, or the one given by kind and resource_id.
+         */
+        PurgeRequestCreate: {
+            /**
+             * Api Key Id
+             * Format: uuid
+             */
+            api_key_id: string;
+            /** Kind */
+            kind?: ("response" | "file" | "conversation" | "vector_store" | "container" | "batch") | null;
+            /** Resource Id */
+            resource_id?: string | null;
+        };
+        /** PurgeRequestView */
+        PurgeRequestView: {
+            /**
+             * Api Key Id
+             * Format: uuid
+             */
+            api_key_id: string;
+            created_at: components["schemas"]["Timestamp"];
+            /** Failed */
+            failed: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: ("response" | "file" | "conversation" | "vector_store" | "container" | "batch") | null;
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Pending */
+            pending: number;
+            /** Purged */
+            purged: number;
+            /**
+             * Requested By
+             * Format: uuid
+             */
+            requested_by: string;
+            /** Resource Id */
+            resource_id: string | null;
+            /**
+             * State
+             * @description pending while any covered purge is pending; then failed if any gave up, otherwise purged
+             * @enum {string}
+             */
+            state: "pending" | "purged" | "failed";
+            /**
+             * Total
+             * @description Purges the request covers
+             */
+            total: number;
         };
         Quantities: {
             [key: string]: number | string;
@@ -5085,6 +5232,35 @@ export type components = {
             statement_id?: string | null;
             waiver?: components["schemas"]["NonnegativeMoney"] | null;
         };
+        /** ResourcePurge */
+        ResourcePurge: {
+            /** Attempts */
+            attempts: number;
+            created_at: components["schemas"]["Timestamp"];
+            finished_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Last Error
+             * @description Error code of the last failed attempt
+             */
+            last_error: string | null;
+            /** @description When a pending purge is next attempted; null once it has finished */
+            next_attempt_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "key_inactive" | "orphan" | "owner_request";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "purged" | "failed";
+        };
         /** ReviewBasis */
         ReviewBasis: {
             evidence: components["schemas"]["Nonblank"];
@@ -5357,6 +5533,52 @@ export type components = {
             /** Name */
             name?: string | null;
             status?: components["schemas"]["Status"] | null;
+        };
+        /** UpstreamResourceView */
+        UpstreamResourceView: {
+            /**
+             * Api Key Id
+             * Format: uuid
+             */
+            api_key_id: string;
+            /**
+             * Cluster Id
+             * Format: uuid
+             */
+            cluster_id: string;
+            created_at: components["schemas"]["Timestamp"];
+            /**
+             * Deployment Id
+             * Format: uuid
+             */
+            deployment_id: string;
+            /**
+             * Handle
+             * @description The ID Relay returns to the key holder; null when no handle was saved
+             */
+            handle: string | null;
+            /**
+             * Id
+             * Format: uuid
+             * @description Handle ID; for an upstream copy whose handle was never saved, the purge ID
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "response" | "file" | "conversation" | "vector_store" | "container" | "batch";
+            /** Organization Id */
+            organization_id: string | null;
+            /** Project Id */
+            project_id: string | null;
+            purge: components["schemas"]["ResourcePurge"] | null;
+            /**
+             * State
+             * @description retained: held upstream with no purge queued; pending: a purge is queued or retrying; purged: the purge deleted the upstream copy; failed: the purge gave up after its last attempt and the copy may remain; deleted: the key holder deleted it without a purge
+             * @enum {string}
+             */
+            state: "retained" | "pending" | "purged" | "failed" | "deleted";
         };
         /** UpstreamView */
         UpstreamView: {
@@ -15525,6 +15747,266 @@ export interface operations {
             };
         };
     };
+    purge_api_v1_organizations__organization_id__upstream_purges_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurgeRequestCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurgeRequestView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition or resource conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    purge_request_api_v1_organizations__organization_id__upstream_purges__purge_request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organization_id: string;
+                purge_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurgeRequestView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resources_api_v1_organizations__organization_id__upstream_resources_get: {
+        parameters: {
+            query?: {
+                api_key_id?: string | null;
+                cursor?: string | null;
+                kind?: ("response" | "file" | "conversation" | "vector_store" | "container" | "batch") | null;
+                limit?: number;
+                project_id?: string | null;
+                state?: ("retained" | "pending" | "purged" | "failed" | "deleted") | null;
+            };
+            header?: never;
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_UpstreamResourceView_"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     usage_api_v1_organizations__organization_id__usage_get: {
         parameters: {
             query?: {
@@ -17751,6 +18233,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    all_resources_api_v1_upstream_resources_get: {
+        parameters: {
+            query?: {
+                api_key_id?: string | null;
+                cursor?: string | null;
+                kind?: ("response" | "file" | "conversation" | "vector_store" | "container" | "batch") | null;
+                limit?: number;
+                organization_id?: string | null;
+                project_id?: string | null;
+                state?: ("retained" | "pending" | "purged" | "failed" | "deleted") | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_UpstreamResourceView_"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
                 };
             };
             /** @description Internal server error */

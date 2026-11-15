@@ -292,7 +292,11 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Read Cluster
+         * @description One gateway cluster; its ETag is the If-Match for the next PATCH.
+         */
+        get: operations["read_cluster_api_v1_gateway_clusters__cluster_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -300,6 +304,26 @@ export type paths = {
         head?: never;
         /** Update */
         patch: operations["update_api_v1_gateway_clusters__cluster_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/gateway-clusters/{cluster_id}/principals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Principals
+         * @description Registered gateway nodes of the cluster ordered by node id.
+         */
+        get: operations["principals_api_v1_gateway_clusters__cluster_id__principals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/gateway-clusters/{cluster_id}/principals/{node_id}": {
@@ -326,7 +350,11 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Releases
+         * @description Configuration releases of the cluster, newest revision first.
+         */
+        get: operations["releases_api_v1_gateway_clusters__cluster_id__releases_get"];
         put?: never;
         /** Release */
         post: operations["release_api_v1_gateway_clusters__cluster_id__releases_post"];
@@ -847,7 +875,11 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Exports
+         * @description Export jobs the caller may read, newest first.
+         */
+        get: operations["list_exports_api_v1_organizations__organization_id__exports_get"];
         put?: never;
         /** Enqueue */
         post: operations["enqueue_api_v1_organizations__organization_id__exports_post"];
@@ -3842,6 +3874,13 @@ export type components = {
             /** Next Cursor */
             next_cursor?: string | null;
         };
+        /** Page[ExportJob] */
+        Page_ExportJob_: {
+            /** Items */
+            items: components["schemas"]["ExportJob"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** Page[FundingView] */
         Page_FundingView_: {
             /** Items */
@@ -3933,6 +3972,13 @@ export type components = {
             /** Next Cursor */
             next_cursor?: string | null;
         };
+        /** Page[PrincipalView] */
+        Page_PrincipalView_: {
+            /** Items */
+            items: components["schemas"]["PrincipalView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** Page[ProjectView] */
         Page_ProjectView_: {
             /** Items */
@@ -3953,6 +3999,13 @@ export type components = {
             items: components["schemas"]["ReceivingView"][];
             /** Next Cursor */
             next_cursor?: string | null;
+        };
+        /** Page[ReleaseRecord] */
+        Page_ReleaseRecord_: {
+            /** Items */
+            items: components["schemas"]["ReleaseRecord"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** Page[ReviewCase] */
         Page_ReviewCase_: {
@@ -4303,6 +4356,24 @@ export type components = {
             capabilities?: string[];
             /** Database Role */
             database_role: string;
+            /**
+             * Node Id
+             * Format: uuid
+             */
+            node_id: string;
+        };
+        /** PrincipalView */
+        PrincipalView: {
+            /** Active */
+            active: boolean;
+            applied_at: components["schemas"]["Timestamp"] | null;
+            /** Applied Revision */
+            applied_revision: string;
+            /** Capabilities */
+            capabilities: string[];
+            /** Database Role */
+            database_role: string;
+            last_ack: components["schemas"]["NodeAck"] | null;
             /**
              * Node Id
              * Format: uuid
@@ -4754,6 +4825,31 @@ export type components = {
             /** Attempts */
             attempts: number;
             delivered_at: components["schemas"]["Timestamp"] | null;
+        };
+        /** ReleaseRecord */
+        ReleaseRecord: {
+            /**
+             * Actor Id
+             * @description Platform administrator who requested it, if any
+             */
+            actor_id: string | null;
+            created_at: components["schemas"]["Timestamp"];
+            distribution: components["schemas"]["ReleaseDelivery"];
+            /**
+             * Initiator
+             * @description operator: requested through the release endpoint; auto_publisher: published by the worker after a source change
+             * @enum {string}
+             */
+            initiator: "operator" | "auto_publisher";
+            /** Revision */
+            revision: string;
+            /**
+             * Rollback Revision
+             * @description Historical revision whose resources this release republished
+             */
+            rollback_revision: string | null;
+            /** Sha256 */
+            sha256: string;
         };
         /** ReleaseStatus */
         ReleaseStatus: {
@@ -7121,6 +7217,82 @@ export interface operations {
             };
         };
     };
+    read_cluster_api_v1_gateway_clusters__cluster_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     update_api_v1_gateway_clusters__cluster_id__patch: {
         parameters: {
             query?: never;
@@ -7230,6 +7402,85 @@ export interface operations {
             };
         };
     };
+    principals_api_v1_gateway_clusters__cluster_id__principals_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                cluster_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PrincipalView_"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     principal_api_v1_gateway_clusters__cluster_id__principals__node_id__put: {
         parameters: {
             query?: never;
@@ -7284,6 +7535,85 @@ export interface operations {
             };
             /** @description Idempotency key reuse, state transition or resource conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    releases_api_v1_gateway_clusters__cluster_id__releases_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                cluster_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ReleaseRecord_"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10930,6 +11260,85 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_exports_api_v1_organizations__organization_id__exports_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ExportJob_"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource does not exist or is not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
                 };
             };
             /** @description Internal server error */

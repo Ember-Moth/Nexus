@@ -15,7 +15,6 @@ from nacl.public import PrivateKey
 from test_billing import funding, headers, post_funding, publish_price, receiving
 from test_catalog import make_deployment, make_policy
 from test_identity_api import auth, create_org
-from test_personal_organizations import register
 from test_plane import provision_plane, register_node
 from test_project_credentials import account, key, project
 
@@ -185,7 +184,8 @@ async def test_source_notifications_wake_the_worker(http):
         await database.close()
 
 
-async def test_personal_organization_is_served_by_an_all_cluster(http, admin):
+async def test_personal_organization_is_served_by_an_all_cluster(http, admin, signup):
+    # Self-service registration is off by default; signup opens it with email verification.
     client, root, app, _ = http
     async with provision_plane(http, admin) as values:
         _, _, org, model, dep, _, _, _ = values
@@ -197,7 +197,7 @@ async def test_personal_organization_is_served_by_an_all_cluster(http, admin):
         dsn = await register_node(client, root, admin, cid)
         auto = publisher(app)
         assert (await auto.tick())[0] == 1
-        user = await register(client, "self-service-" + uuid4().hex[:6])
+        user = await signup("self-service-" + uuid4().hex[:6])
         personal = {"id": user["personal_organization_id"]}
         await app.state.process_billing()
         # Platform operators grant the model, route it and fund the wallet; no release follows.
@@ -558,7 +558,7 @@ async def test_superseded_snapshot_copies_expire(plane, http, admin):
     assert (await peer.refresh())["revision"] == "2"
 
 
-async def test_organization_lifecycle_advances_the_identity_revision(http, admin):
+async def test_organization_lifecycle_advances_the_identity_revision(http, admin, signup):
     client, root, app, _ = http
     organizations = app.state.publication.organizations
     await app.state.process_billing()  # settle organizations created by the fixture
@@ -591,7 +591,7 @@ async def test_organization_lifecycle_advances_the_identity_revision(http, admin
         await status(org, value)
         assert revision() > seen and await added() == expected
     seen = revision()
-    user = await register(client, "lifecycle-" + uuid4().hex[:6])
+    user = await signup("lifecycle-" + uuid4().hex[:6])
     await app.state.process_billing()
     assert revision() > seen
     assert await added() == {user["personal_organization_id"]: True}

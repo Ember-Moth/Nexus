@@ -2,21 +2,24 @@
 
 import logging
 import secrets
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from nexus.shared.policy import ImportPlan, PolicyRejected, changes, plan
 from nexus.shared.telemetry import event, request_id
 
 from ..domain.email import mailbox
 from ..domain.errors import IdentityError, MailRejected, registration_unavailable, unauthorized
 from ..domain.logins import new_login
 from ..domain.tokens import digest_token
-from .schemas import PublicAuthOptions, RegistrationCreated, VerificationPending
+from .schemas import AuthPolicy, PublicAuthOptions, RegistrationCreated, VerificationPending
 
 logger = logging.getLogger("nexus.mail")
 
 # "exists" tells a mailbox owner that the login they tried is taken. Its token is never sent; the
 # prefix only keeps the stored digest unique and unusable as any other proof.
 PREFIXES = {"register": "nxv_", "bind": "nxb_", "reset": "nxr_", "exists": "nxe_"}
+# Audit resource of system changes to the singleton authentication policy.
+POLICY_RESOURCE = UUID(int=0)
 
 
 class EmailAuthentication:
@@ -41,30 +44,83 @@ class EmailAuthentication:
         if not self.providers.mail_ready:
             raise IdentityError("mail_unavailable", "Email delivery is not configured", 503)
 
+    def _check_policy(self, policy, error):
+        # Without verification the registration response would have to say whether a login
+        # exists, and anyone could open accounts in bulk without owning a mailbox.
+        if policy.registration and not policy.email_verification:
+            raise error(
+                "registration_requires_email_verification",
+                "Enable email verification before opening registration",
+                422,
+            )
+        if policy.email_verification and not self.providers.mail_ready:
+            raise error("mail_unavailable", "Email delivery is not configured", 503)
+        if policy.turnstile and not self.providers.turnstile_ready:
+            raise error("turnstile_not_configured", "Configure Turnstile before enabling it", 409)
+
     async def update_policy(self, session, body, version):
         async with self._access.authenticated(session) as (tx, actor):
             self._access.platform_admin(actor)
-            # Without verification the registration response would have to say whether a login
-            # exists, and anyone could open accounts in bulk without owning a mailbox.
-            if body.registration and not body.email_verification:
+            current = await tx.email.policy()
+            if current.managed is not None:
                 raise IdentityError(
-                    "registration_requires_email_verification",
-                    "Enable email verification before opening registration",
-                    422,
+                    "policy_managed_externally",
+                    "The authentication policy is managed by a policy file",
+                    409,
                 )
-            if body.email_verification:
-                self.require_mail()
-            if body.turnstile and not self.providers.turnstile_ready:
-                raise IdentityError(
-                    "turnstile_not_configured", "Configure Turnstile before enabling it", 409
-                )
+            if current.version != version:
+                raise IdentityError("version_conflict", "Authentication policy has changed", 412)
+            self._check_policy(body, IdentityError)
             result = await tx.email.set_policy(body, version)
             if not result:
                 raise IdentityError("version_conflict", "Authentication policy has changed", 412)
             await tx.audit.record(
-                actor.user.id, "auth_policy.updated", actor.user.id, details=body.model_dump()
+                actor.user.id,
+                "auth_policy.updated",
+                actor.user.id,
+                details=changes(
+                    current.model_dump(mode="json", exclude={"version", "managed"}),
+                    result.model_dump(mode="json", exclude={"version", "managed"}),
+                ),
             )
-            return result
+        self._settings.put(result)
+        return result
+
+    async def plan_import(self, mode, values, file_sha256):
+        """Plan the ``identity.auth_policy`` group of a policy file; nothing is written yet."""
+        group = "identity.auth_policy"
+        current = await self._read_policy()
+        target, found, skipped = plan(
+            group,
+            mode,
+            current.model_dump(mode="json", exclude={"version", "managed"}),
+            current.version,
+            current.managed is not None,
+            values,
+            AuthPolicy,
+        )
+        policy = AuthPolicy.model_validate(target)
+
+        def rejected(code, message, status):
+            return PolicyRejected(group, message)
+
+        self._check_policy(policy, rejected)
+
+        async def write(details):
+            async with self._transactions() as tx:
+                result = await tx.email.set_policy(
+                    policy, current.version, managed=file_sha256 if mode == "managed" else None
+                )
+                if not result:
+                    raise IdentityError(
+                        "version_conflict", "Authentication policy has changed", 412
+                    )
+                await tx.audit.record_system(
+                    "auth_policy.updated", POLICY_RESOURCE, {**details, **found}
+                )
+            self._settings.put(result)
+
+        return ImportPlan(group, mode, mode == "managed", found, skipped, write if found else None)
 
     async def _read_policy(self):
         async with self._transactions() as tx:
@@ -96,7 +152,8 @@ class EmailAuthentication:
         cannot drain the budgets that other requesters share.
         """
         try:
-            wait = await self._mail_limits.allow(recipient, peer, account)
+            budgets = (await self._settings.get()).mail
+            wait = await self._mail_limits.allow(recipient, peer, account, budgets)
         except Exception:
             raise IdentityError(
                 "authentication_unavailable", "Authentication is temporarily unavailable", 503
@@ -123,7 +180,7 @@ class EmailAuthentication:
                 digest=digest_token(token, prefix),
                 version=version,
                 ciphertext=ciphertext,
-                queue_ttl=self._mail_queue_ttl,
+                queue_ttl=(await self._settings.get()).mail.queue_ttl_seconds,
             )
         )
 
@@ -146,7 +203,7 @@ class EmailAuthentication:
         if not policy.registration:
             raise registration_unavailable()
         await self._throttle("register:" + peer, peer)
-        login = new_login(body.login, self._reserved_logins)
+        login = new_login(body.login, frozenset(policy.reserved_logins))
         address = mailbox(body.email if body.email is not None else login)
         self.require_mail()
         await self._challenge(policy, "register", body.turnstile_token)
@@ -239,9 +296,9 @@ class EmailAuthentication:
         # addresses and for accounts that may not recover by email.
         await self._mail_budget(address, peer)
         async with self._transactions() as tx:
-            await self.current(tx, version)
+            policy = await self.current(tx, version)
             user_id = await tx.email.recipient(
-                address, platform_recovery=self._platform_email_recovery
+                address, platform_recovery=policy.platform_email_recovery
             )
             if not user_id:
                 return
@@ -258,7 +315,7 @@ class EmailAuthentication:
             raise unauthorized()
         password_hash = await self._hash(body.password.get_secret_value())
         async with self._transactions() as tx:
-            await self.current(tx, version)
+            policy = await self.current(tx, version)
             user = await tx.directory.user(proof["user_id"], lock=True)
             row = await tx.email.consume(digest, "reset")
             if (
@@ -269,7 +326,7 @@ class EmailAuthentication:
             ):
                 raise unauthorized()
             # A platform role granted after the token was sent still closes this path.
-            if not self._platform_email_recovery and (await tx.directory.roles(user.id)).roles:
+            if not policy.platform_email_recovery and (await tx.directory.roles(user.id)).roles:
                 raise unauthorized()
             await tx.directory.replace_password(user.id, password_hash)
             await tx.audit.record(user.id, "user.password_reset", user.id)

@@ -1,6 +1,57 @@
 from sqlalchemy import text
 
+from nexus.shared.views import managed_source
+
 from ..application.schemas import AuthPolicyView
+
+# Columns of identity.auth_policy and the policy group each one belongs to.
+GROUPS = {
+    "sign_in": {
+        "window_seconds": "login_window_seconds",
+        "per_account": "login_per_account",
+        "per_ip": "login_per_ip",
+    },
+    "mail": {
+        "window_seconds": "mail_window_seconds",
+        "per_recipient": "mail_per_recipient",
+        "per_recipient_total": "mail_per_recipient_total",
+        "per_account": "mail_per_account",
+        "per_ip": "mail_per_ip",
+        "global_limit": "mail_global",
+        "queue_ttl_seconds": "mail_queue_ttl_seconds",
+    },
+    "sessions": {
+        "session_ttl_seconds": "session_ttl_seconds",
+        "password_setup_ttl_seconds": "password_setup_ttl_seconds",
+    },
+}
+FLAT = (
+    "registration",
+    "email_verification",
+    "turnstile",
+    "reserved_logins",
+    "platform_email_recovery",
+)
+WRITABLE = FLAT + tuple(c for group in GROUPS.values() for c in group.values())
+POLICY_COLUMNS = ",".join((*WRITABLE, "version", "managed_sha256", "managed_at"))
+# Sentinel: an administrator's write leaves the lock as it is (it is refused while set).
+KEEP = object()
+
+
+def policy_view(row):
+    values = {name: row[name] for name in (*FLAT, "version")}
+    for group, columns in GROUPS.items():
+        values[group] = {field: row[column] for field, column in columns.items()}
+    return AuthPolicyView(**values, managed=managed_source(row))
+
+
+def policy_columns(policy):
+    values = {name: getattr(policy, name) for name in FLAT}
+    for group, columns in GROUPS.items():
+        part = getattr(policy, group)
+        values.update({column: getattr(part, field) for field, column in columns.items()})
+    return values
+
 
 # Matches the expression of email_purge_idx.
 PURGE_AT = "(CASE WHEN ciphertext IS NULL THEN expires_at ELSE deliver_by END)"
@@ -15,35 +66,44 @@ class EmailRepository:
         row = (
             (
                 await self.session.execute(
-                    text(
-                        "SELECT registration,email_verification,turnstile,version "
-                        "FROM identity.auth_policy "
-                        "WHERE singleton" + lock
-                    )
+                    text(f"SELECT {POLICY_COLUMNS} FROM identity.auth_policy WHERE singleton{lock}")
                 )
             )
             .mappings()
             .one()
         )
-        return AuthPolicyView(**row)
+        return policy_view(row)
 
-    async def set_policy(self, body, version):
+    async def set_policy(self, policy, version, *, managed=KEEP):
+        """Store a complete policy if the stored version is still ``version``.
+
+        ``managed`` is the SHA-256 of the policy file that locks the row, or None to unlock it.
+        """
+        lock = (
+            ""
+            if managed is KEEP
+            else ",managed_sha256=:managed,managed_at=CASE WHEN CAST(:managed AS text) IS NULL "
+            "THEN NULL ELSE clock_timestamp() END"
+        )
+        params = {**policy_columns(policy), "version": version}
+        if managed is not KEEP:
+            params["managed"] = managed
         row = (
             (
                 await self.session.execute(
-                    text("""
-            UPDATE identity.auth_policy SET registration=:registration,
-                email_verification=:email_verification,turnstile=:turnstile,version=version+1
+                    text(f"""
+            UPDATE identity.auth_policy SET {", ".join(f"{c}=:{c}" for c in WRITABLE)},
+                version=version+1{lock}
             WHERE singleton AND version=:version
-            RETURNING registration,email_verification,turnstile,version
+            RETURNING {POLICY_COLUMNS}
         """),
-                    {**body.model_dump(), "version": version},
+                    params,
                 )
             )
             .mappings()
             .one_or_none()
         )
-        return AuthPolicyView(**row) if row else None
+        return policy_view(row) if row else None
 
     async def verified(self, user_id):
         return (

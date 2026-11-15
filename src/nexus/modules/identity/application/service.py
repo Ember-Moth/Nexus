@@ -4,6 +4,7 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 
 from nexus.shared.errors import BootstrapRejected
+from nexus.shared.policy import CachedPolicy
 
 from ..domain.errors import IdentityError, forbidden, missing, unauthorized
 from ..domain.logins import login_candidates, new_login
@@ -179,15 +180,9 @@ class IdentityService(EmailAuthentication):
         passwords: Passwords,
         auth_limits: AuthLimits,
         *,
-        login_window: int,
-        session_ttl: int,
-        setup_ttl: int,
         providers,
         mail_cipher,
         mail_limits: MailLimits,
-        mail_queue_ttl: int = 3600,
-        platform_email_recovery: bool = False,
-        reserved_logins: frozenset[str] = frozenset(),
         login_hash_slots: int = 2,
         account_hash_slots: int = 1,
         hash_queue_timeout: float = 5.0,
@@ -196,15 +191,11 @@ class IdentityService(EmailAuthentication):
         self._access = AccessControl(transactions)
         self._passwords = passwords
         self._auth_limits = auth_limits
-        self._login_window = login_window
-        self._session_ttl = session_ttl
-        self._setup_ttl = setup_ttl
         self.providers = providers
         self.cipher = mail_cipher
         self._mail_limits = mail_limits
-        self._mail_queue_ttl = mail_queue_ttl
-        self._platform_email_recovery = platform_email_recovery
-        self._reserved_logins = reserved_logins
+        # Limits, lifetimes and reserved logins; the switches are always read fresh.
+        self._settings = CachedPolicy(self._read_policy)
         # Sign-in has its own Argon2 slots: a flood of sign-ups, resets or mailbox proofs can
         # only queue behind each other.
         self._login_slots = asyncio.Semaphore(login_hash_slots)
@@ -234,7 +225,14 @@ class IdentityService(EmailAuthentication):
 
     async def _throttle(self, subject: str, peer: str):
         try:
-            allowed = await self._auth_limits.allow(subject, peer)
+            limits = (await self._settings.get()).sign_in
+            allowed = await self._auth_limits.allow(
+                subject,
+                peer,
+                account_limit=limits.per_account,
+                ip_limit=limits.per_ip,
+                window=limits.window_seconds,
+            )
         except Exception:
             raise IdentityError(
                 "authentication_unavailable", "Authentication is temporarily unavailable", 503
@@ -244,7 +242,7 @@ class IdentityService(EmailAuthentication):
                 "rate_limited",
                 "Too many authentication attempts",
                 429,
-                retry_after=self._login_window,
+                retry_after=limits.window_seconds,
             )
 
     async def _verify(self, password_hash, password, *, login=False):
@@ -277,7 +275,8 @@ class IdentityService(EmailAuthentication):
 
     async def _new_session(self, tx, user_id):
         token = "nxs_" + secrets.token_urlsafe(32)
-        expires = await tx.directory.now() + timedelta(seconds=self._session_ttl)
+        ttl = (await self._settings.get()).sessions.session_ttl_seconds
+        expires = await tx.directory.now() + timedelta(seconds=ttl)
         await tx.directory.create_session(user_id, digest_token(token, "nxs_"), expires)
         await tx.audit.record(user_id, "session.created", user_id)
         return SessionCreated(access_token=token, expires_at=expires)
@@ -315,7 +314,8 @@ class IdentityService(EmailAuthentication):
                 "user_disabled", "Disabled users cannot receive password setup credentials", 409
             )
         token = "nxp_" + secrets.token_urlsafe(32)
-        expires = await tx.directory.now() + timedelta(seconds=self._setup_ttl)
+        ttl = (await self._settings.get()).sessions.password_setup_ttl_seconds
+        expires = await tx.directory.now() + timedelta(seconds=ttl)
         await tx.directory.issue_setup(user.id, digest_token(token, "nxp_"), expires)
         await tx.audit.record(actor.user.id, "password_setup.issued", user.id)
         return SetupIssued(user=user, setup_token=token, expires_at=expires)

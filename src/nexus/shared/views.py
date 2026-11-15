@@ -54,3 +54,17 @@ def meter_counts(values):
 MeterCounts = Annotated[
     dict[str, int], PlainSerializer(meter_counts, return_type=dict[str, int | str])
 ]
+
+
+class ManagedSource(View):
+    """The policy file that locked a policy group; only another import can change the group."""
+
+    file_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    imported_at: Timestamp
+
+
+def managed_source(row) -> ManagedSource | None:
+    """From the ``managed_sha256`` and ``managed_at`` columns every policy row carries."""
+    if row["managed_sha256"] is None:
+        return None
+    return ManagedSource(file_sha256=row["managed_sha256"], imported_at=row["managed_at"])

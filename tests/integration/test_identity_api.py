@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from policies import put_policy
 
 from nexus.api import create_app
 
@@ -419,14 +420,14 @@ async def test_finance_role_is_not_a_platform_administrator(http, admin):
 
 
 async def test_authentication_rate_limits_and_fail_closed(http):
-    _, _, _, settings = http
-    settings = settings.model_copy(
-        update={
-            "redis_namespace": "nexus:rate:" + uuid4().hex,
-            "login_per_account": 2,
-            "login_per_ip": 3,
-        }
+    admin_client, root, _, settings = http
+    policy = await put_policy(
+        admin_client,
+        root,
+        "/api/v1/settings/authentication",
+        {"sign_in": {"per_account": 2, "per_ip": 3}},
     )
+    settings = settings.model_copy(update={"redis_namespace": "nexus:rate:" + uuid4().hex})
     app = create_app(settings)
     async with (
         app.router.lifespan_context(app),
@@ -441,7 +442,7 @@ async def test_authentication_rate_limits_and_fail_closed(http):
             "/api/v1/auth/sessions", json={"login": "root-admin", "password": PASSWORD}
         )
         assert limited.status_code == 429
-        assert limited.headers["Retry-After"] == str(settings.login_window_seconds)
+        assert limited.headers["Retry-After"] == str(policy["sign_in"]["window_seconds"])
         assert (
             await client.post(
                 "/api/v1/auth/sessions", json={"login": "other-login", "password": "bad"}
@@ -456,7 +457,7 @@ async def test_authentication_rate_limits_and_fail_closed(http):
         ).status_code == 429
 
         class Unavailable:
-            async def allow(self, subject, peer):
+            async def allow(self, subject, peer, **limits):
                 raise RuntimeError("private dependency detail")
 
         app.state.identity_service._auth_limits = Unavailable()
@@ -500,7 +501,13 @@ async def test_auth_limits_use_only_ingress_verified_ips_from_the_configured_bff
 
     from nexus.http import client_ip_signature
 
-    _, _, _, settings = http
+    admin_client, root, _, settings = http
+    await put_policy(
+        admin_client,
+        root,
+        "/api/v1/settings/authentication",
+        {"sign_in": {"per_account": 2, "per_ip": 2}},
+    )
     secret = "bff-shared-secret-with-enough-entropy"
     app = create_app(
         settings.model_copy(
@@ -508,8 +515,6 @@ async def test_auth_limits_use_only_ingress_verified_ips_from_the_configured_bff
                 "auth_proxy_peers": [ip_address("127.0.0.2")],
                 "auth_proxy_secret": SecretStr(secret),
                 "redis_namespace": "nexus:proxy-test:" + uuid4().hex,
-                "login_per_account": 2,
-                "login_per_ip": 2,
             }
         )
     )

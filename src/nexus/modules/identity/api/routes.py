@@ -133,6 +133,7 @@ def create_router(
             "turnstile_not_configured",
             "registration_requires_email_verification",
             "version_conflict",
+            "policy_managed_externally",
             "mail_unavailable",
             "precondition_required",
             "invalid_version",

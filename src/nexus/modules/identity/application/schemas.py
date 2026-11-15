@@ -1,6 +1,7 @@
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -12,6 +13,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from nexus.shared.views import ManagedSource
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +66,7 @@ class VerificationPending(Schema):
     email_verification_required: Literal[True] = True
 
 
-class AuthPolicy(Schema):
+class AuthSwitches(Schema):
     registration: bool = Field(
         default=False,
         description="Self-service registration; requires email_verification. Omitted means closed.",
@@ -72,12 +75,86 @@ class AuthPolicy(Schema):
     turnstile: bool
 
 
+class SignInLimits(Schema):
+    """Attempts per window for one account and for one client address (IPv4 or IPv6 /64)."""
+
+    window_seconds: int = Field(ge=1, le=3600)
+    per_account: int = Field(ge=1, le=1000)
+    per_ip: int = Field(ge=1, le=10000)
+
+
+class MailBudgets(Schema):
+    """Identity mail per window, shared by registration, mailbox binding and recovery."""
+
+    window_seconds: int = Field(ge=60, le=86400)
+    per_recipient: int = Field(
+        ge=1, le=1000, description="One recipient, per requester IPv4 address or IPv6 /64"
+    )
+    per_recipient_total: int = Field(ge=1, le=10000, description="One recipient, all requesters")
+    per_account: int = Field(
+        ge=1, le=10000, description="One registering login or one signed-in account"
+    )
+    per_ip: int = Field(ge=1, le=100000, description="One requester, all recipients")
+    global_limit: int = Field(ge=1, le=10_000_000)
+    queue_ttl_seconds: int = Field(
+        ge=60,
+        le=86400,
+        description="Unsent mail is dropped after this; tokens last 15 minutes from sending",
+    )
+
+    @model_validator(mode="after")
+    def recipient_total(self):
+        if self.per_recipient > self.per_recipient_total:
+            raise ValueError("per_recipient must not exceed per_recipient_total")
+        return self
+
+
+class CredentialLifetimes(Schema):
+    session_ttl_seconds: int = Field(ge=60, le=86400)
+    password_setup_ttl_seconds: int = Field(ge=60, le=86400)
+
+
+def normalize_logins(values: list[str]) -> list[str]:
+    """Reserved logins are compared after the same folding as new logins."""
+    folded = {unicodedata.normalize("NFKC", value).strip().lower() for value in values}
+    if "" in folded:
+        raise ValueError("reserved logins must not be blank")
+    return sorted(folded)
+
+
+# Plain aliases keep these out of the named OpenAPI components.
+ReservedLogin = Annotated[str, Field(min_length=1, max_length=254)]
+ReservedLogins = Annotated[list[ReservedLogin], Field(max_length=1000)]
+
+
+class AuthPolicy(AuthSwitches):
+    """The complete authentication policy; a PUT replaces all of it."""
+
+    sign_in: SignInLimits
+    mail: MailBudgets
+    sessions: CredentialLifetimes
+    reserved_logins: ReservedLogins = Field(
+        description="Logins that self-service registration may not claim"
+    )
+    platform_email_recovery: bool = Field(
+        description="Whether holders of a platform role may recover access by email"
+    )
+
+    @field_validator("reserved_logins")
+    @classmethod
+    def fold_reserved(cls, values):
+        return normalize_logins(values)
+
+
 class AuthPolicyView(AuthPolicy):
     registration: bool
+    managed: ManagedSource | None = Field(
+        description="The policy file that locked this policy; writes are refused while set"
+    )
     version: int
 
 
-class PublicAuthOptions(AuthPolicy):
+class PublicAuthOptions(AuthSwitches):
     registration: bool
     turnstile_site_key: str | None
     email_delivery_available: bool

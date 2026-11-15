@@ -7,11 +7,11 @@ from uuid import UUID
 
 from .schemas import (
     ApplicationIdentity,
-    AuthPolicy,
     AuthPolicyView,
     GrantView,
     InvitationView,
     KeyView,
+    MailBudgets,
     MemberListItem,
     MemberView,
     OrganizationCreated,
@@ -34,11 +34,15 @@ class Actor:
 
 
 class AuthLimits(Protocol):
-    async def allow(self, subject: str, peer: str) -> bool: ...
+    async def allow(
+        self, subject: str, peer: str, *, account_limit: int, ip_limit: int, window: int
+    ) -> bool: ...
 
 
 class MailLimits(Protocol):
-    async def allow(self, recipient: str, peer: str, account: str | None) -> int:
+    async def allow(
+        self, recipient: str, peer: str, account: str | None, budgets: MailBudgets
+    ) -> int:
         """Count one message, or return the seconds until a spent budget frees up."""
         ...
 
@@ -61,6 +65,8 @@ class Administrators(Protocol):
 
 class Audit(Protocol):
     async def record_bootstrap(self, user_id: UUID) -> None: ...
+
+    async def record_system(self, action: str, resource_id: UUID, details: dict) -> None: ...
 
     async def record(
         self,
@@ -249,7 +255,7 @@ class Policies(Protocol):
 
 class Email(Protocol):
     async def policy(self, *, share: bool = False) -> AuthPolicyView: ...
-    async def set_policy(self, body: AuthPolicy, version: int) -> AuthPolicyView | None: ...
+    async def set_policy(self, policy: AuthPolicyView, version: int) -> AuthPolicyView | None: ...
     async def verified(self, user_id: UUID) -> str | None: ...
     async def recipient(self, email: str, *, platform_recovery: bool) -> UUID | None: ...
     async def bind(self, user_id: UUID, email: str) -> None: ...

@@ -635,6 +635,18 @@ class AuditRepository:
             )
         )
 
+    async def record_system(self, action: str, resource_id: UUID, details: dict) -> None:
+        """An operator command run outside any session, such as a settings import."""
+        self._session.add(
+            AuditEvent(
+                id=uuid4(),
+                actor_type="system",
+                action=action,
+                resource_id=resource_id,
+                details=details,
+            )
+        )
+
     async def record(
         self,
         actor_id: UUID,

@@ -6,6 +6,7 @@ import httpx
 import psycopg
 import pytest
 from mail_stub import install_mail
+from policies import body_of, put_policy
 from test_identity_api import PASSWORD, auth, create_user, login
 
 from nexus.api import create_app
@@ -27,7 +28,9 @@ async def open_registration(client, root, **changes):
     settings = API + "/settings/authentication"
     current = await client.get(settings, headers=auth(root))
     response = await client.put(
-        settings, headers=auth(root, current.json()["version"]), json={**OPEN, **changes}
+        settings,
+        headers=auth(root, current.json()["version"]),
+        json={**body_of(current.json()), **OPEN, **changes},
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -78,22 +81,35 @@ async def test_verified_signup_login_and_recovery(delivery, admin):
     client, root, mail, messages, actions = delivery
     settings = API + "/settings/authentication"
     policy = (await client.get(settings, headers=auth(root))).json()
-    assert policy == {
+    switches = {"registration", "email_verification", "turnstile", "version"}
+    assert {k: v for k, v in policy.items() if k in switches} == {
         "registration": False,
         "email_verification": False,
         "turnstile": False,
         "version": 1,
     }
+    # Limits, lifetimes and reserved logins share the row and its version.
+    assert policy["sign_in"] == {"window_seconds": 60, "per_account": 10, "per_ip": 60}
+    assert policy["sessions"] == {"session_ttl_seconds": 28800, "password_setup_ttl_seconds": 86400}
+    assert policy["managed"] is None
+    rest = body_of(policy)
+    switches_only = await client.put(
+        settings,
+        headers=auth(root, 1),
+        json={"registration": False, "email_verification": False, "turnstile": False},
+    )
+    assert switches_only.status_code == 422, "a PUT replaces the whole policy"
     unverified = await client.put(
         settings,
         headers=auth(root, 1),
-        json={"registration": True, "email_verification": False, "turnstile": True},
+        json={**rest, "registration": True, "email_verification": False, "turnstile": True},
     )
     assert unverified.status_code == 422
     assert unverified.json()["error"]["code"] == "registration_requires_email_verification"
     payload = {"registration": True, "email_verification": True, "turnstile": True}
-    assert (await client.put(settings, headers=auth(root, 1), json=payload)).status_code == 200
-    assert (await client.put(settings, headers=auth(root, 1), json=payload)).status_code == 412
+    replaced = {**rest, **payload}
+    assert (await client.put(settings, headers=auth(root, 1), json=replaced)).status_code == 200
+    assert (await client.put(settings, headers=auth(root, 1), json=replaced)).status_code == 412
     options = (await client.get(API + "/auth/options")).json()
     assert options == {
         **payload,
@@ -146,7 +162,7 @@ async def test_verified_signup_login_and_recovery(delivery, admin):
     me = (await client.get(API + "/me", headers=auth(session))).json()
     assert me["verified_email"] == recipient and len(me["memberships"]) == 1
     assert (await client.get(settings, headers=auth(session))).status_code == 403
-    assert (await client.put(settings, headers=auth(session, 2), json=payload)).status_code == 403
+    assert (await client.put(settings, headers=auth(session, 2), json=replaced)).status_code == 403
     assert (
         await client.post(API + "/auth/sessions", json={**login_body, "turnstile_token": None})
     ).status_code == 403
@@ -396,14 +412,7 @@ async def test_mail_budget_exhausted_by_one_requester_does_not_lock_out_others(h
 async def test_account_ip_and_global_mail_budgets(http, admin):
     _, _, _, settings = http
     app = create_app(
-        settings.model_copy(
-            update={
-                "redis_namespace": "nexus:mail-budget:" + uuid4().hex,
-                "mail_per_account": 2,
-                "mail_per_ip": 4,
-                "mail_global": 6,
-            }
-        )
+        settings.model_copy(update={"redis_namespace": "nexus:mail-budget:" + uuid4().hex})
     )
     async with (
         app.router.lifespan_context(app),
@@ -416,6 +425,12 @@ async def test_account_ip_and_global_mail_budgets(http, admin):
         install_mail(app.state.identity_service, settings)
         await app.state.identity_service.bootstrap_admin("root-admin", PASSWORD)
         root = await login(first, "root-admin")
+        await put_policy(
+            first,
+            root,
+            API + "/settings/authentication",
+            {"mail": {"per_account": 2, "per_ip": 4, "global_limit": 6}},
+        )
         await create_user(first, root, "spray-member")
         session = await login(first, "spray-member")
 
@@ -493,7 +508,9 @@ async def test_platform_roles_recover_through_administrators_not_email(delivery,
     # Administrators can still issue setup credentials, and deployments may opt back in.
     issued = await client.post(f"{API}/users/{root_id}/password-reset-tokens", headers=auth(root))
     assert issued.status_code == 201
-    mail._platform_email_recovery = True
+    await put_policy(
+        client, root, API + "/settings/authentication", {"platform_email_recovery": True}
+    )
     await client.post(API + "/auth/password/forgot", json={"email": "root@example.com"})
     assert await mail.dispatch_email() == 1 and messages.pop().to == "root@example.com"
 

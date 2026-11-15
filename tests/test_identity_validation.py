@@ -63,11 +63,12 @@ def test_new_logins_reject_hidden_and_malformed_characters(value):
 
 
 @pytest.mark.parametrize("value", ["admin", "ADMIN", "ａｄｍｉｎ", " Root "])
-def test_reserved_logins_cover_every_spelling(settings_factory, value):
+def test_reserved_logins_cover_every_spelling(value):
+    from nexus.modules.identity.application.schemas import normalize_logins
     from nexus.modules.identity.domain.errors import IdentityError
     from nexus.modules.identity.domain.logins import new_login
 
-    reserved = frozenset(settings_factory().reserved_logins)
+    reserved = frozenset(normalize_logins(["Admin", "root", "system"]))
     with pytest.raises(IdentityError):
         new_login(value, reserved)
     assert new_login("admin-team", reserved) == "admin-team"
@@ -80,8 +81,15 @@ def test_sign_in_also_finds_logins_stored_before_normalization():
     assert login_candidates(" John ") == ("john",)
 
 
-def test_configured_reserved_logins_are_normalized(settings_factory):
-    assert settings_factory(reserved_logins=["ＯＰＳ", "Billing "]).reserved_logins == [
-        "billing",
-        "ops",
-    ]
+def test_configured_reserved_logins_are_normalized():
+    from pydantic import ValidationError
+
+    from nexus.modules.identity.application.schemas import AuthPolicy, normalize_logins
+
+    assert normalize_logins(["ＯＰＳ", "Billing ", "ops"]) == ["billing", "ops"]
+    field = AuthPolicy.model_fields["reserved_logins"]
+    assert field.is_required()
+    with pytest.raises(ValueError):
+        normalize_logins(["  "])
+    with pytest.raises(ValidationError):
+        AuthPolicy.model_validate({"email_verification": False, "turnstile": False})

@@ -36,29 +36,29 @@
 
 ### 邮件投递
 
-邮箱令牌在邮件交给服务商后 15 分钟内有效，成功兑换后失效。API 将发送任务与验证记录一起写入 PostgreSQL。Worker 领取并发送，加密暂存的令牌在发送成功后清除；每次投递尝试都从当时起重新计算 15 分钟，因此发信队列积压不会让验证和重置邮件在发出前过期。未发出的任务在 `NEXUS_MAIL_QUEUE_TTL_SECONDS`（默认 3600 秒）后丢弃，并记 `mail.expired`。
+邮箱令牌在邮件交给服务商后 15 分钟内有效，成功兑换后失效。API 将发送任务与验证记录一起写入 PostgreSQL。Worker 领取并发送，加密暂存的令牌在发送成功后清除；每次投递尝试都从当时起重新计算 15 分钟，因此发信队列积压不会让验证和重置邮件在发出前过期。未发出的任务在身份策略的 `mail.queue_ttl_seconds`（默认 3600 秒）后丢弃，并记 `mail.expired`。
 
 服务商同步拒收某封邮件（Cloudflare 的 `permanent_bounces`、Resend 除 401/403/408/409/425/429 外的 4xx、SMTP 对收件人或正文的 5xx）时，该任务直接删除，不再重试，Worker 仍保持就绪。网络错误、5xx、限流和凭据错误（401/403、SMTP 认证失败）视为服务商不可用：任务退避重试，Worker 在该轮报告 `identity_mail` 不可用。SMTP 和 Cloudflare 在供应商已受理但回执丢失时可能重复投递同一令牌。重发找回密码或绑定邮箱的请求会替换该账号上一次同用途的令牌。
 
 ### 发信限额
 
-注册、绑定和找回共用一套发信额度，按规范化后的收件地址计数（email_validator 的 UTS-46 映射之后，大小写、全角等写法落到同一个桶），在每个 `NEXUS_MAIL_WINDOW_SECONDS` 窗口内：
+注册、绑定和找回共用一套发信额度，按规范化后的收件地址计数（email_validator 的 UTS-46 映射之后，大小写、全角等写法落到同一个桶），在每个 `mail.window_seconds`（默认 3600 秒）窗口内。各额度是身份策略 `mail` 分组的字段，修改方式见[身份策略](#身份策略)：
 
-| 额度 | 参数 | 默认 | 键 |
+| 额度 | 字段 | 默认 | 键 |
 | --- | --- | --- | --- |
-| 单个收件人，单个请求来源 | `NEXUS_MAIL_PER_RECIPIENT` | 3 | 请求方地址（IPv4 或 IPv6 /64）+ 收件地址 |
-| 单个收件人，全部来源 | `NEXUS_MAIL_PER_RECIPIENT_TOTAL` | 10 | 收件地址 |
-| 单个账户 | `NEXUS_MAIL_PER_ACCOUNT` | 10 | 注册时为登录名，绑定时为当前账号；匿名找回不计 |
-| 单个请求来源 | `NEXUS_MAIL_PER_IP` | 20 | 请求方地址 |
-| 全局 | `NEXUS_MAIL_GLOBAL` | 1000 | — |
+| 单个收件人，单个请求来源 | `mail.per_recipient` | 3 | 请求方地址（IPv4 或 IPv6 /64）+ 收件地址 |
+| 单个收件人，全部来源 | `mail.per_recipient_total` | 10 | 收件地址 |
+| 单个账户 | `mail.per_account` | 10 | 注册时为登录名，绑定时为当前账号；匿名找回不计 |
+| 单个请求来源 | `mail.per_ip` | 20 | 请求方地址 |
+| 全局 | `mail.global_limit` | 1000 | — |
 
 一次请求只有在全部额度都有余量时才计数，任一额度用尽返回 429 `rate_limited`，`Retry-After` 为该额度剩余的秒数。额度在 Turnstile 校验（以及绑定时的密码校验）通过之后才扣减，未通过挑战的请求不消耗共享额度；找回密码在查询账号之前扣减，邮箱是否存在不影响结果。
 
-按“来源 + 收件人”计数是为了避免锁定：攻击者用尽自己的额度后，账号主人从自己的网络仍能收到邮件。“全部来源”的额度只用来限制同一邮箱可被发送的总量；要用尽它，需要至少 4 个不同来源在同一窗口内参与，此时受害者最多被阻断到窗口结束。更看重可用性的部署可以调高 `NEXUS_MAIL_PER_RECIPIENT_TOTAL`。
+按“来源 + 收件人”计数是为了避免锁定：攻击者用尽自己的额度后，账号主人从自己的网络仍能收到邮件。“全部来源”的额度只用来限制同一邮箱可被发送的总量；要用尽它，需要至少 4 个不同来源在同一窗口内参与，此时受害者最多被阻断到窗口结束。更看重可用性的部署可以调高 `mail.per_recipient_total`。
 
 ## 认证开关与发送渠道
 
-平台管理员读取 `GET /settings/authentication`，用返回的 ETag 作为 `If-Match` 调用 `PUT /settings/authentication`，提交 `{"registration":true,"email_verification":true,"turnstile":false}` 这样的完整策略。三项默认关闭，省略 `registration` 视为关闭。
+平台管理员读取 `GET /settings/authentication`，用返回的 ETag 作为 `If-Match` 调用 `PUT /settings/authentication`，提交包含 `"registration":true,"email_verification":true,"turnstile":false` 的完整策略。三项默认关闭，省略 `registration` 视为关闭。同一资源还包含下文的限额、有效期和保留登录名，PUT 时一并提交，见[身份策略](#身份策略)。
 
 - `registration` 控制自助注册，只能与 `email_verification` 同时开启，否则返回 422 `registration_requires_email_verification`；数据库约束同样禁止这种组合。不验证就开放注册时，注册响应必然暴露登录名是否已存在，任何人也能不拥有邮箱就批量开户，因此不再允许。关闭注册后，尚未确认的注册也无法完成。
 - `email_verification` 需要已配置发信渠道。
@@ -78,11 +78,11 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 
 ### 平台角色的找回
 
-拥有任一平台角色（`platform_admin`、`platform_finance`）的用户默认不能用邮件找回密码：`POST /auth/password/forgot` 照常返回 202，但不发信；角色在重置邮件发出后才授予的，该令牌也会被拒绝。这类用户由另一位平台管理员调用 `POST /users/{id}/password-reset-tokens` 签发一次性凭据。部署方可设置 `NEXUS_PLATFORM_EMAIL_RECOVERY=true` 恢复邮件找回。
+拥有任一平台角色（`platform_admin`、`platform_finance`）的用户默认不能用邮件找回密码：`POST /auth/password/forgot` 照常返回 202，但不发信；角色在重置邮件发出后才授予的，该令牌也会被拒绝。这类用户由另一位平台管理员调用 `POST /users/{id}/password-reset-tokens` 签发一次性凭据。平台管理员可打开身份策略的 `platform_email_recovery` 恢复邮件找回。
 
 ### 登录名
 
-新建登录名（自助注册、管理员创建、引导管理员）先做 NFKC 规范化，再去除首尾空格并转成小写，长度为 3–254 个字符，不能含空白、控制字符或不可见字符（零宽字符、双向控制符、变体选择符、Hangul 填充符等）。自助注册还不能使用保留名，默认包括 `admin`、`administrator`、`root`、`system`、`support`、`security`、`postmaster` 等，可用 `NEXUS_RESERVED_LOGINS`（JSON 列表，整体替换内置列表）调整；保留名按规范化后的写法比较，管理员创建和引导管理员不受此限。
+新建登录名（自助注册、管理员创建、引导管理员）先做 NFKC 规范化，再去除首尾空格并转成小写，长度为 3–254 个字符，不能含空白、控制字符或不可见字符（零宽字符、双向控制符、变体选择符、Hangul 填充符等）。自助注册还不能使用保留名，默认包括 `admin`、`administrator`、`root`、`system`、`support`、`security`、`postmaster` 等，可通过身份策略的 `reserved_logins` 调整（整体替换列表）；保留名按规范化后的写法比较，管理员创建和引导管理员不受此限。
 
 登录、邀请时按规范化后的写法查找账号，并兼容升级前按原规则保存的登录名，存量用户不受影响；同一账号的各种写法共用一个登录限流桶。
 
@@ -139,21 +139,33 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 
 会话、设置密码凭据与邀请令牌分别使用独立前缀和 32 字节随机值，数据库仅保存 SHA-256 摘要。密码使用 Argon2id，验证与哈希在线程任务中执行，登录与其他操作（注册、找回、重置、绑定、设置密码）各有独立的并发上限，注册洪峰不会挤占登录。排队超过 `NEXUS_HASH_QUEUE_TIMEOUT_SECONDS` 时返回 503 `authentication_unavailable` 和 `Retry-After: 1`。过期会话和密码凭据在读取时失效，历史记录按部署策略维护。
 
-| 参数 | 默认值 |
+以下是每个进程的环境变量：
+
+| 环境变量 | 默认值 |
 | --- | --- |
-| `NEXUS_SESSION_TTL_SECONDS` | 28800，8 小时 |
-| `NEXUS_PASSWORD_SETUP_TTL_SECONDS` | 86400，24 小时 |
-| `NEXUS_LOGIN_WINDOW_SECONDS` | 60 |
-| `NEXUS_LOGIN_PER_ACCOUNT` | 每窗口 10 次 |
-| `NEXUS_LOGIN_PER_IP` | 每窗口 60 次 |
 | `NEXUS_LOGIN_HASH_CONCURRENCY` | 2，登录的 Argon2 并发 |
 | `NEXUS_ACCOUNT_HASH_CONCURRENCY` | 1，注册、找回等其他操作的 Argon2 并发 |
 | `NEXUS_HASH_QUEUE_TIMEOUT_SECONDS` | 5 |
-| `NEXUS_MAIL_WINDOW_SECONDS` 等 | 见[发信限额](#发信限额) |
-| `NEXUS_MAIL_QUEUE_TTL_SECONDS` | 3600 |
-| `NEXUS_PLATFORM_EMAIL_RECOVERY` | false |
-| `NEXUS_RESERVED_LOGINS` | 内置保留名列表 |
 | `NEXUS_AUTH_PROXY_PEERS` / `NEXUS_AUTH_PROXY_SECRET` | 未设置 |
+| 发信服务商与 Turnstile 的连接参数和密钥 | 见 `.env.example` |
+
+### 身份策略
+
+登录限额、身份邮件额度、会话与密码设置凭据的有效期、保留登录名和平台角色的邮件找回保存在 `identity.auth_policy`，与注册、邮箱验证、Turnstile 开关共用一行和一个版本号。平台管理员通过 `GET/PUT /api/v1/settings/authentication` 或管理后台“平台 → 设置 → 身份”修改：
+
+| 字段 | 默认值 | 范围 |
+| --- | --- | --- |
+| `sign_in.window_seconds` | 60 | 1–3600 |
+| `sign_in.per_account` | 每窗口 10 次 | 1–1000 |
+| `sign_in.per_ip` | 每窗口 60 次 | 1–10000 |
+| `mail.window_seconds`、`mail.per_*`、`mail.global_limit` | 见[发信限额](#发信限额) | `per_recipient` 不得大于 `per_recipient_total` |
+| `mail.queue_ttl_seconds` | 3600 | 60–86400 |
+| `sessions.session_ttl_seconds` | 28800，8 小时 | 60–86400 |
+| `sessions.password_setup_ttl_seconds` | 86400，24 小时 | 60–86400 |
+| `reserved_logins` | 内置保留名列表 | 最多 1000 个，按新登录名的规则规范化 |
+| `platform_email_recovery` | false | — |
+
+PUT 提交完整策略，必须携带 `If-Match`，版本不符返回 412 `version_conflict`，取值越界或缺少字段返回 422。该组被策略文件锁定时返回 409 `policy_managed_externally`（`managed` 字段给出文件摘要和导入时间），只能通过 `nexus settings import` 修改，见[运维：策略文件导入](operations.md#策略文件导入)。每次修改写入 identity 审计 `auth_policy.updated`，`details` 记录每个变化字段的旧值和新值。每个 API 和 Worker 进程最多缓存 2 秒，修改所在的进程立即生效；新的有效期只影响此后签发的会话和凭据。版本号在任何字段变化时递增，正在进行中的注册、登录或找回流程恰好遇到修改时，会按原有规则返回 409 `auth_policy_changed`，客户端重新读取选项后重试即可。
 
 注册、登录与密码兑换受 Redis 原子限流控制，键中不保留明文登录名、IP 或令牌。注册、绑定和找回在发信额度之外，另按请求来源各做一次登录阈值的预节流，以限制 Turnstile 校验和数据库读取的次数。Redis 不可用时拒绝新的认证请求，已建立会话的业务授权仍以 PostgreSQL 为准。
 

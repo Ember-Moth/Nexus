@@ -7,7 +7,13 @@ use crate::{
     upstream::{Upstream, read_body},
 };
 use serde_json::Value;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -297,23 +303,19 @@ pub(super) fn resume(
     lifetime: std::time::Duration,
 ) -> axum::response::Response {
     let (tx, rx) = tokio::sync::mpsc::channel(2);
+    let complete = Arc::new(AtomicBool::new(false));
+    let replay_complete = complete.clone();
     let tasks = node.tasks.clone();
     tasks.spawn(async move {
         let _permit = (permit, stream);
         let replayed =
             tokio::time::timeout(lifetime, replay(&node, &binding, upstream, cursor, &tx)).await;
-        if !matches!(replayed, Ok(Ok(()))) {
-            let _ = tokio::time::timeout(
-                node.stream_idle,
-                tx.send(Err(std::io::Error::other(
-                    "stored response stream interrupted",
-                ))),
-            )
-            .await;
+        // Any other end aborts the connection instead of closing the stream cleanly.
+        if matches!(replayed, Ok(Ok(()))) {
+            replay_complete.store(true, Ordering::Release);
         }
     });
-    let stream =
-        futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|v| (v, rx)) });
+    let stream = super::stream_body(rx, complete);
     axum::response::Response::builder()
         .header(http::header::CONTENT_TYPE, "text/event-stream")
         .header(http::header::CACHE_CONTROL, "no-cache")

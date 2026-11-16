@@ -13,7 +13,10 @@ use axum::body::Bytes;
 use serde_json::Value;
 use std::{
     io,
-    sync::{Arc, atomic::AtomicU64},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::{
@@ -69,6 +72,7 @@ struct Downstream {
     tx: mpsc::Sender<Result<Bytes, io::Error>>,
     received: oneshot::Receiver<()>,
     written: Arc<AtomicU64>,
+    complete: Arc<AtomicBool>,
 }
 impl Downstream {
     fn new(
@@ -80,6 +84,7 @@ impl Downstream {
         let (tx, rx) = mpsc::channel(2);
         let (receipt, received) = oneshot::channel();
         let written = Arc::new(AtomicU64::new(0));
+        let complete = Arc::new(AtomicBool::new(false));
         Self {
             search_metered: Default::default(),
             resources: None,
@@ -96,12 +101,14 @@ impl Downstream {
                     body: rx,
                     receipt,
                     written: written.clone(),
+                    complete: complete.clone(),
                     applied: policy.applied,
                 },
             )),
             tx,
             received,
             written,
+            complete,
         }
     }
     async fn closed(&mut self) {
@@ -457,14 +464,11 @@ pub async fn forward(
 
         return;
     }
-    if !matches!(result, Ok(Ok(()))) {
-        let _ = timeout(
-            node.stream_idle,
-            downstream
-                .tx
-                .send(Err(io::Error::other("upstream stream interrupted"))),
-        )
-        .await;
+    // Only a stream that ended as it should closes its chunked body. Any other end, including
+    // a client too slow to take one more event, aborts the connection once the queued events
+    // are written, so the client cannot mistake a cut-short stream for a complete one.
+    if matches!(result, Ok(Ok(()))) {
+        downstream.complete.store(true, Ordering::Release);
     }
     drop(downstream.tx);
     // The terminal chunk is written once the client has read what the socket still holds.

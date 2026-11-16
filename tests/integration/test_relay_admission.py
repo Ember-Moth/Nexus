@@ -453,3 +453,52 @@ async def test_a_slow_reader_that_keeps_reading_receives_and_pays_for_its_stream
         ).fetchone()[0]
         assert closed == "succeeded", (closed, drained)
         assert account_amounts(admin, relay.org) == (95, 0)
+
+
+async def test_a_reader_that_stops_loses_the_stream_without_a_clean_end(
+    http,
+    admin,
+    tls,  # noqa: F811
+    relay_binary,  # noqa: F811
+):
+    # The client reads the head, then nothing for longer than the idle time, so the Relay gives
+    # up on the stream. Reading again must not find the chunked terminator: a client that sees
+    # it would take a cut-short stream for a complete one.
+    provider = Provider(stream_bytes=4 * 1024 * 1024)
+    env = {"NEXUS_RELAY_STREAM_IDLE_MS": "1000"}
+    async with relay_plane(http, admin, tls, relay_binary, provider, env=env) as relay:
+        payload = json.dumps(body(relay, stream=True)).encode()
+        sock = socket.socket()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        sock.setblocking(False)
+        loop = asyncio.get_running_loop()
+        await loop.sock_connect(sock, ("127.0.0.1", relay.base_url.port))
+        await loop.sock_sendall(
+            sock,
+            b"POST /v1/responses HTTP/1.1\r\nHost: localhost\r\n"
+            + f"Authorization: Bearer {relay.token}\r\n".encode()
+            + f"Content-Length: {len(payload)}\r\n\r\n".encode()
+            + payload,
+        )
+        received = bytearray()
+        try:
+            async with asyncio.timeout(60):
+                while b"\r\n\r\n" not in received:
+                    received += await loop.sock_recv(sock, 4096)
+                await asyncio.sleep(4)
+                while chunk := await loop.sock_recv(sock, 65536):
+                    received += chunk
+        except ConnectionResetError:
+            pass
+        finally:
+            sock.close()
+        assert received.startswith(b"HTTP/1.1 200 OK")
+        assert b"response.completed" not in received
+        assert not received.endswith(b"0\r\n\r\n")
+        await wait_events(admin, 2)
+        await http[2].state.usage.process()
+        closed = admin.execute(
+            "SELECT envelope#>>'{payload,delivery_outcome}' FROM billing.usage_events "
+            "WHERE kind='request.closed'"
+        ).fetchone()[0]
+        assert closed != "succeeded", closed

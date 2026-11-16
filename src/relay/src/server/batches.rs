@@ -391,6 +391,8 @@ fn results_response(
     permit: super::tenancy::Admitted,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::channel(2);
+    let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let results_complete = complete.clone();
     let tasks = node.tasks.clone();
     tasks.spawn(async move{
         let _permit=permit;
@@ -411,10 +413,10 @@ fn results_response(
                 }
             }
         }.await;
-        if result.is_err(){let _=tx.send(Err(std::io::Error::other("unavailable batch result"))).await;}
+        // Any other end aborts the connection instead of closing the results cleanly.
+        if result.is_ok(){results_complete.store(true,std::sync::atomic::Ordering::Release);}
     });
-    let stream =
-        futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|v| (v, rx)) });
+    let stream = super::stream_body(rx, complete);
     Response::builder()
         .header(header::CONTENT_TYPE, "application/x-jsonl")
         .body(Body::from_stream(stream))

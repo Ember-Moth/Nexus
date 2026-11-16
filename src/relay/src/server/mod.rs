@@ -559,19 +559,13 @@ async fn generate(
             body,
             receipt,
             written,
+            complete,
             applied,
         } => {
             wire.track_stream(receipt, written);
-            let stream = futures_util::stream::unfold(body, move |mut rx| {
-                let owner = owner.clone();
-                async move {
-                    let item = rx.recv().await?;
-                    let item = match (item, owner) {
-                        (Ok(frame), Some((owner, kid))) => Ok(seal_frames(&frame, &owner, kid)),
-                        (item, _) => item,
-                    };
-                    Some((item, rx))
-                }
+            let stream = stream_body(body, complete).map(move |item| match (item, &owner) {
+                (Ok(frame), Some((owner, kid))) => Ok(seal_frames(&frame, owner, *kid)),
+                (item, _) => item,
             });
             applied
                 .headers(Response::builder())
@@ -582,6 +576,45 @@ async fn generate(
                 .expect("SSE response metadata")
         }
     }
+}
+
+/// Unsent bytes a client connection may queue in the kernel before the socket stops taking writes.
+///
+/// Streams judge a slow client by write progress: bytes the kernel takes from the socket. Linux
+/// reports a full socket writable again only after a third of its send buffer drained, and on a
+/// fast link that buffer grows to megabytes, so a client that reads steadily but slowly showed
+/// no progress for many seconds and lost its stream. With this limit the socket takes more as
+/// soon as the client reads a few kilobytes. Bytes in flight are not counted, so it does not slow
+/// a fast client. macOS already wakes writers once 2 KiB are free.
+const CLIENT_UNSENT_LIMIT: u32 = 16 * 1024;
+
+fn limit_unsent(stream: &tokio::net::TcpStream) {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Err(error) = socket2::SockRef::from(stream).set_tcp_notsent_lowat(CLIENT_UNSENT_LIMIT) {
+        warn!(%error, "TCP_NOTSENT_LOWAT not applied to a client connection");
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = (stream, CLIENT_UNSENT_LIMIT);
+}
+
+/// The frames of a streamed response. When the writer stops without marking the stream
+/// `complete`, the body ends with an error: hyper then aborts the connection instead of writing
+/// the chunked terminator, which a client would read as a complete response.
+fn stream_body(
+    body: tokio::sync::mpsc::Receiver<Result<axum::body::Bytes, std::io::Error>>,
+    complete: Arc<AtomicBool>,
+) -> impl futures_util::Stream<Item = Result<axum::body::Bytes, std::io::Error>> {
+    futures_util::stream::unfold(Some(body), move |rx| {
+        let complete = complete.clone();
+        async move {
+            let mut rx = rx?;
+            match rx.recv().await {
+                Some(item) => Some((item, Some(rx))),
+                None if complete.load(Ordering::Acquire) => None,
+                None => Some((Err(std::io::Error::other("stream interrupted")), None)),
+            }
+        }
+    })
 }
 
 /// Seal the JSON data of whole SSE frames. The stream writer emits one complete frame per chunk.
@@ -813,6 +846,7 @@ pub async fn serve(
     loop {
         let (stream, _) =
             tokio::select! {biased;_=stop.cancelled()=>break,res=listener.accept()=>res?};
+        limit_unsent(&stream);
         let wire = Delivery::default();
         let io = TokioIo::new(Socket {
             stream,
@@ -877,4 +911,54 @@ pub async fn serve(
         "drain finished"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod stream_body_tests {
+    use super::*;
+    use axum::body::Bytes;
+
+    async fn collect(complete: bool) -> Vec<Result<Bytes, std::io::Error>> {
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let flag = Arc::new(AtomicBool::new(false));
+        let body = stream_body(rx, flag.clone());
+        tx.send(Ok(Bytes::from_static(b"data: a\n\n")))
+            .await
+            .unwrap();
+        flag.store(complete, Ordering::Release);
+        drop(tx);
+        body.collect().await
+    }
+
+    #[tokio::test]
+    async fn a_completed_stream_ends_cleanly() {
+        let items = collect(true).await;
+        assert_eq!(items.len(), 1);
+        assert!(items[0].is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_stream_cut_short_ends_with_an_error_after_its_queued_frames() {
+        let items = collect(false).await;
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[0].as_ref().unwrap(),
+            &Bytes::from_static(b"data: a\n\n")
+        );
+        assert!(items[1].is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[tokio::test]
+    async fn client_connections_limit_their_unsent_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let _client = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (accepted, _) = listener.accept().await.unwrap();
+        limit_unsent(&accepted);
+        let lowat = socket2::SockRef::from(&accepted)
+            .tcp_notsent_lowat()
+            .unwrap();
+        assert_eq!(lowat, CLIENT_UNSENT_LIMIT);
+    }
 }

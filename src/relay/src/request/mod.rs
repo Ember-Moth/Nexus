@@ -41,6 +41,9 @@ pub enum Response {
         receipt: oneshot::Sender<()>,
         /// Bytes the connection wrote to the client; the stream's waits follow its progress.
         written: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        /// Set once the stream ended as it should. A body that ends without it was cut short,
+        /// and the connection is aborted instead of closing the chunked body cleanly.
+        complete: std::sync::Arc<std::sync::atomic::AtomicBool>,
         applied: crate::protocol::approximation::Choices,
     },
 }

@@ -29,6 +29,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.10"
+# TCP_NOTSENT_LOWAT on client connections (already in the tree through hyper-util).
+socket2 = { version = "0.6", features = ["all"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "json", "uuid"] }
 thiserror = "2"
 tiktoken-rs = "0.12.1"

@@ -26,9 +26,17 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 
 ## 导出和审计
 
-向 `POST /organizations/{org}/exports` 提交 kind 和 filters，取得 202 与任务标识。kind 可选 requests、charges、ledger 和平台财务专用的 attempt_costs。通过同一路径下的 `/{id}` 查看状态，ready 后访问 `/{id}/download` 获取 UTF-8 CSV。`GET /organizations/{org}/exports` 按提交时间从新到旧分页列出任务，可见范围与单个读取一致：组织 owner 和财务只见本人提交的任务，平台角色可见全部，attempt_costs 任务仅平台财务可见。下载重新核验管理会话、组织角色、请求者和筛选范围。过期副本由 Worker 清除。CSV 文本处理表格公式前缀。任务使用短事务和租约代次，过期执行者的结果无法替换新的文件。
+向 `POST /organizations/{org}/exports` 提交 kind 和 filters，取得 202 与任务标识。kind 可选 requests、charges、ledger 和平台财务专用的 attempt_costs。通过同一路径下的 `/{id}` 查看状态，ready 后访问 `/{id}/download`，取得一个预签名下载地址（`{url, expires_at}`，响应带 `Cache-Control: no-store`），再直接从对象存储下载 UTF-8 CSV（带 BOM），文件名由 `response-content-disposition` 设为 `nexus-<kind>-<id>.csv`。地址 5 分钟内有效，并且不会晚于导出本身的过期时间；它本身就是凭据，不要转发。管理后台的“下载 CSV”按钮也是先取地址再让浏览器打开，BFF 不中转文件。`GET /organizations/{org}/exports` 按提交时间从新到旧分页列出任务，可见范围与单个读取一致：组织 owner 和财务只见本人提交的任务，平台角色可见全部，attempt_costs 任务仅平台财务可见。签发下载地址前重新核验管理会话、组织角色、请求者和筛选范围，每次签发记一条 `export.downloaded` 审计；任务已过期时返回 409 `export_unavailable`，不签发地址。CSV 文本处理表格公式前缀。
 
 默认每组织每分钟可创建 10 个任务，每份最多 10000 行，文件保留 86400 秒。平台管理员在“平台 → 设置 → 报表”或 `PUT /api/v1/settings/reporting` 修改（`exports.per_org_minute`、`exports.max_rows`、`exports.ttl_seconds`），下一次导出即使用新值。文件上限为 16 MiB，超限任务报告失败，可缩短查询期间后重新导出。
+
+**文件存放与清理。** 文件不进数据库。Worker 生成 CSV 后先上传到对象存储（生产是 R2 的 `nexus-app` bucket，见[部署手册：对象存储](deployment.md#对象存储cloudflare-r2)），键为 `exports/<企业 ID>/<导出 ID>/<代次>.csv`，再用租约代次（fence）提交，`reporting.export_jobs` 只记录对象键和大小。每次执行用自己的代次作键，所以：
+
+- 执行者在上传后、提交前崩溃，或者租约过期后才回来，它的提交被代次拒绝，不会覆盖接手者的文件，ready 任务指向的一定是提交者自己上传的对象；
+- 上传失败记为 `storage_unavailable`，任务 2 秒后重试，连续 5 次失败后标记为 failed；
+- 没有提交成功的上传留在该导出的前缀下，过期时一并删除。
+
+导出一到期就拿不到下载地址。Worker 随后把任务标为 expired，再由 `export_cleanup` 消费者删除该导出前缀下的全部对象。删除以 5 分钟的租约领取（`purge_at`）：对象存储不可用时记 `reporting.export_purge_failed` 日志，本轮停止，不影响过期本身，也不影响导出处理，租约到期后重试。删除完成后 `object_key` 和 `purge_at` 清空。如果某次执行在删除之后才上传完成，它被拒绝的提交会重新安排删除；只有它在上传之后、提交之前崩溃，而导出恰好在此期间过期并已清理过，对象才会留下，由 R2 生命周期规则兜底清理。上传失败记 `reporting.export_upload_failed` 日志。
 
 `GET /audit-events` 支持 organization_id、action、trace_id、limit 和 cursor。平台角色可查平台范围，企业 owner 和财务须指定所属组织。审计合并各模块只读记录，返回操作人、时间、动作、对象、受控原因代码和决定引用。自由文本依据在平台财务核对详情内读取。
 

@@ -8,7 +8,6 @@ from nexus.http import (
     business_errors,
     credentials,
     cursor_value,
-    error_responses,
     expected_version,
 )
 from nexus.shared.errors import ServiceError
@@ -18,6 +17,7 @@ from ..application.schemas import (
     AuditEvent,
     CacheUsage,
     ChargeRecord,
+    ExportDownload,
     ExportJob,
     ExportRequest,
     LedgerRecord,
@@ -31,10 +31,6 @@ from ..application.schemas import (
     VectorStorageDay,
 )
 from ..application.service import Reports
-
-
-class CsvResponse(Response):
-    media_type = "text/csv"
 
 
 def create_router(get_service):
@@ -164,22 +160,18 @@ def create_router(get_service):
 
     @router.get(
         "/organizations/{organization_id}/exports/{export_id}/download",
-        response_class=CsvResponse,
-        responses={
-            200: {
-                "description": "UTF-8 CSV with a byte order mark",
-                "content": {"text/csv": {"schema": {"type": "string", "format": "binary"}}},
-            },
-            **error_responses(409),
-        },
+        response_model=ExportDownload,
+        responses=business_errors("export_unavailable"),
     )
-    async def download(organization_id: UUID, export_id: UUID, token: Token, service: Service):
-        content = await service.export(token, organization_id, export_id, download=True)
-        return Response(
-            content,
-            media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{export_id}.csv"'},
-        )
+    async def download(
+        organization_id: UUID, export_id: UUID, token: Token, service: Service, response: Response
+    ):
+        """A short-lived URL that downloads a ready export (UTF-8 CSV with a byte order mark).
+
+        The file comes straight from object storage; each call is audited as a download.
+        """
+        response.headers["Cache-Control"] = "no-store"
+        return await service.export(token, organization_id, export_id, download=True)
 
     @router.get("/settings/reporting", response_model=ReportingPolicyView)
     async def reporting_policy(service: Service, token: Token, response: Response):

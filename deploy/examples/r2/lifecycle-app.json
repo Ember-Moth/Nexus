@@ -1,0 +1,11 @@
+{
+  "Rules": [
+    {
+      "ID": "exports-safety-net",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "exports/"},
+      "Expiration": {"Days": 31},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}
+    }
+  ]
+}

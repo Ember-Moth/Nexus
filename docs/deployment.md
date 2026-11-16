@@ -64,7 +64,7 @@ chart 中不出现任何明文。生产用 [External Secrets 示例](../deploy/e
 | `nexus-integrations` | `smtp-password`、`resend-api-key`、`cloudflare-email-api-token`、`turnstile-secret-key`，均可选 | API、Worker |
 | `nexus-deployer` | `login`、`password` | Relay 节点登记 Job 用这个平台管理员登录 |
 | `nexus-backup-r2` | `ACCESS_KEY_ID`、`ACCESS_SECRET_KEY`、`ACCESS_REGION`（R2 为 `auto`） | CloudNativePG 的 WAL 归档和备份；备份 bucket 的 R2 API Token |
-| `nexus-app-r2` | `ACCESS_KEY_ID`、`ACCESS_SECRET_KEY` | API、Worker（`objectStorage.enabled` 时）；应用 bucket 的 R2 API Token |
+| `nexus-app-r2` | `ACCESS_KEY_ID`、`ACCESS_SECRET_KEY` | API、Worker、策略导入 Job，必需；应用 bucket 的 R2 API Token：API 用它签发导出下载地址，Worker 用它上传和删除导出文件 |
 
 数据库和 Redis 口令通过 Kubernetes `$(VAR)` 展开拼进连接 URL，因此只能包含 URL 安全字符，例如 `openssl rand -hex 32` 的输出。需要整条连接串时，把 `secrets.database.<角色>.urlKey` 设为 Secret 中保存完整 URL 的键。
 
@@ -130,7 +130,7 @@ values 的 `policy.groups` 渲染成策略文件 `policy.yaml`（`{version: 1, g
 | `NEXUS_PAYMENT_PUBLIC_BASE_URL`、`NEXUS_PAYMENT_RETURN_URL` | 启动参数 | 生产环境必须是 HTTPS |
 | `NEXUS_MOCK_PAYMENT_URL` | — | 生产环境禁止设置 |
 | `NEXUS_MIGRATION_LOCK_TIMEOUT_MS`、`NEXUS_MIGRATION_STATEMENT_TIMEOUT_MS` | 启动参数 | `config.migrate`，只进迁移 Job |
-| `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION` | 派生 | 来自 `objectStorage.*`，见[对象存储](#对象存储cloudflare-r2)；变量名以导出改造的最终实现为准 |
+| `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION` | 派生 | 来自 `objectStorage.*`，API、Worker 和策略导入 Job 都必需；`objectStorage.endpointURL` 没有默认值，不填时 chart 渲染失败。见[对象存储](#对象存储cloudflare-r2) |
 | `NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID`、`NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY` | 密钥 | `nexus-app-r2` |
 | `NEXUS_API_URL`、`NEXUS_WEB_ORIGIN` | 派生 | 管理后台 |
 | `NEXUS_COOKIE_SECURE`、`NEXUS_WEB_CLIENT_IP_HEADER` | 启动参数 | 管理后台，后者默认 `x-real-ip` |
@@ -231,12 +231,13 @@ Traefik 用 `X-Real-Ip` 传递客户端地址，来源有两种：
 | --- | --- | --- | --- | --- |
 | `nexus-backups` | `postgres/<环境>/` | WAL 归档和基础备份 | CloudNativePG（Barman Cloud 插件） | `nexus-backup-r2` |
 | `nexus-backups` | `etcd/<环境>/` | k3s etcd 快照 | k3s server | `config.yaml` 中的 `etcd-s3-access-key` 等 |
-| `nexus-app` | — | 导出文件（导出改存 R2 之后） | API、Worker | `nexus-app-r2` |
+| `nexus-app` | `exports/<企业 ID>/<导出 ID>/` | 导出 CSV，每次执行一个对象（`<代次>.csv`） | Worker 上传和删除；API 只在本地签发下载地址 | `nexus-app-r2` |
 
 - **端点**：`https://<account_id>.r2.cloudflarestorage.com`，region 固定为 `auto`。CloudNativePG 的 `endpointURL` 带 `https://`；k3s 的 `etcd-s3-endpoint` 不带协议。
 - **API Token**：在 Cloudflare 控制台的 R2 → Manage API Tokens 中签发，权限选 **Object Read & Write**，并限定到单个 bucket：备份 bucket 一个、应用 bucket 一个。CloudNativePG 和 k3s 可以共用备份 bucket 的 Token；分开签发则可以单独吊销。恢复演练另签一个只读（Object Read only）的 Token。Token 的 Access Key ID 和 Secret Access Key 只显示一次，直接存进密钥库。
 - **数据驻留**：有驻留要求时，创建 bucket 时就指定 jurisdiction，例如 `wrangler r2 bucket create nexus-backups --jurisdiction eu`。之后端点改为 `https://<account_id>.eu.r2.cloudflarestorage.com`。jurisdiction 创建后不能更改，数据也不能在 jurisdiction 之间搬移。
 - **其他 S3 兼容存储**：配置项完全相同，只换 endpoint 和凭据。冒烟用的本地替身就是这样配置的。
+- **应用 bucket**：values 的 `objectStorage.endpointURL` 必填，`bucket`、`region` 默认是 `nexus-app` 和 `auto`，凭据来自 `objectStorage.credentialsSecret`（默认 `nexus-app-r2`）。API 和 Worker 缺少任何一项都无法启动，没有退回数据库存储的选项。bucket 保持私有，不开公开访问，也不需要自定义域名或 CORS：用户点击下载时，API 核验权限后返回一个 5 分钟有效的预签名 GET 地址，浏览器直接到 `endpointURL` 下载，管理后台的 BFF 不中转文件。因此 `endpointURL` 必须是用户浏览器能访问的地址，R2 的 `https://<account_id>.r2.cloudflarestorage.com` 满足这一点；换成集群内部的 S3 服务时要另行暴露。文件的存放、代次和清理见[运维：导出和审计](operations.md#导出和审计)。
 
 ### 保留期
 
@@ -251,6 +252,19 @@ CloudNativePG 的 `retentionPolicy`（默认 `30d`）决定恢复窗口：它会
 | 全部 | 未完成的分段上传 7 天后清理 | — |
 
 可以在控制台的 bucket 设置 → Object lifecycle rules 中录入这些规则，也可以用 S3 API（`aws s3api put-bucket-lifecycle-configuration --endpoint-url https://<account_id>.r2.cloudflarestorage.com --bucket nexus-backups --lifecycle-configuration file://lifecycle-backups.json`）。调大 `retentionPolicy` 或拉长基础备份间隔时，要同步调大 `postgres/` 的过期天数。
+
+应用 bucket 的导出文件由 Worker 在导出过期时删除（删除失败会重试），生命周期规则只兜底清理没删掉的对象，例如上传后、提交前崩溃且导出随后过期的那次执行留下的文件。规则的过期天数不能短于导出的最长保留期：`exports.ttl_seconds` 的上限是 2592000 秒（30 天），从导出创建时算起，而对象在创建之后才上传，所以 31 天的规则不会先于数据库删掉仍可下载的文件。[`deploy/examples/r2/lifecycle-app.json`](../deploy/examples/r2/lifecycle-app.json)：
+
+| 前缀 | 过期 | 依据 |
+| --- | --- | --- |
+| `exports/` | 31 天 | `exports.ttl_seconds` 上限 30 天 + 1 天余量 |
+| `exports/` | 未完成的分段上传 1 天后清理 | 导出文件不超过 16 MiB，用单次上传 |
+
+```bash
+aws s3api put-bucket-lifecycle-configuration --endpoint-url https://<account_id>.r2.cloudflarestorage.com --bucket nexus-app --lifecycle-configuration file://deploy/examples/r2/lifecycle-app.json
+```
+
+R2 的生命周期按对象上传时间计算，删除最多可能延后一天左右。代码里调高 `exports.ttl_seconds` 的上限时，要同步调大这条规则。
 
 ## 首次部署
 
@@ -272,7 +286,7 @@ CloudNativePG 的 `retentionPolicy`（默认 `30d`）决定恢复窗口：它会
    helm upgrade --install nexus deploy/helm/nexus -n nexus -f my-values.yaml --wait --timeout 15m
    ```
 
-   首次安装时保持 `relay.replicas: 0`。pre-install 钩子依次执行建库（授予权限）、迁移和策略导入。
+   `my-values.yaml` 至少填写 `hosts.*` 和 `objectStorage.endpointURL`（参考 [`deploy/examples/values-production.yaml`](../deploy/examples/values-production.yaml)）。首次安装时保持 `relay.replicas: 0`。pre-install 钩子依次执行建库（授予权限）、迁移和策略导入。
 4. **管理员**：按初始化流程创建第一个管理员（待定：初始化流程由另一项改动提供，届时在此补充具体步骤），再按 [登录与企业成员](identity-api.md) 建立日常账号。为 Relay 节点登记 Job 建一个专用平台管理员，例如 `deployer`，把它的登录名和密码写入 `nexus-deployer`。
 5. **目录与计价**：配置模型、上游、凭据、部署（含 `relay_profile`）、售价、成本价、路由和企业。见[模型与上游目录](catalog-api.md)和[定价](billing-api.md)。
 6. **集群**：用 `nexus-relay-cluster` 私钥对应的公钥调用 `POST /api/v1/gateway-clusters`，记下返回的 `id`。公钥可以这样计算：
@@ -446,7 +460,7 @@ etcd 快照里本来就有后两样，但它们必须独立保存一份：只有
 **平台**
 
 - [ ] 磁盘 fsync 延迟达标；`k3s secrets-encrypt status` 为 Enabled；server token 已离线保存。
-- [ ] R2 的 `nexus-backups` 和 `nexus-app` 已创建（需要时指定 jurisdiction）；两个 Token 都只能访问各自的 bucket；生命周期规则按[保留期](#保留期)设置。
+- [ ] R2 的 `nexus-backups` 和 `nexus-app` 已创建（需要时指定 jurisdiction）；两个 Token 都只能访问各自的 bucket；两个 bucket 的生命周期规则（含 `nexus-app` 的 `exports/` 31 天）按[保留期](#保留期)设置。
 - [ ] etcd 定时快照已经出现在 R2 中，并完成过一次从 R2 的恢复演练；server token 和 `encryption-config.json` 已离线保存。
 - [ ] `nexus-pg` 的 `ContinuousArchiving` 状态为 True，基础备份成功，完成过一次从 R2 的时间点恢复演练。
 - [ ] 四样恢复材料都存放在集群之外。
@@ -482,7 +496,7 @@ VMHOME=$(limactl shell nexus-k3s sh -c 'echo $HOME'); KUBECTL="limactl shell nex
 ```
 
 - `setup-vm.sh` 负责准备集群：
-  - 在集群外起一个 R2 替身（versitygw，S3 兼容网关）。它和 R2 一样使用 region `auto`，并建好 `nexus-backups` 和 `nexus-app` 两个 bucket；chart 和 k3s 的配置项与 R2 一一对应，只有 endpoint 指向替身；
+  - 在集群外起一个 R2 替身（versitygw，S3 兼容网关）。它和 R2 一样使用 region `auto`，并建好 `nexus-backups` 和 `nexus-app` 两个 bucket；chart 和 k3s 的配置项与 R2 一一对应，只有 endpoint 指向替身（`smoke.py` 安装应用时设置 `objectStorage.endpointURL`，并用同一对密钥创建 `nexus-app-r2`）；
   - 安装 k3s（`cluster-init`、`secrets-encryption`、快照上传到替身的 `nexus-backups/etcd/smoke/`）、Helm、cert-manager、CloudNativePG 和 Barman Cloud 插件；
   - 应用 Traefik 设置；
   - 建一个私有 CA 的 ClusterIssuer 代替 ACME；

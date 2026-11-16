@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0045_indexed_admission"
+SCHEMA_REVISION = "0046_export_objects"

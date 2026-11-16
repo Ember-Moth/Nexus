@@ -111,17 +111,19 @@ redis:
   caSecret: nexus-redis-tls
   caConfigMap: ""
 
-# Application object storage (Cloudflare R2): export files, once the reporting module stores them
-# there. A bucket of its own, separate from the backup bucket, with its own R2 API token
-# (Object Read & Write on this bucket only). The variable names injected into the API and Worker
-# are provisional until that change lands:
+# Application object storage, S3 API (Cloudflare R2): export files under exports/. Required: the
+# API signs short-lived download URLs and the Worker uploads and deletes the files. Browsers
+# download from endpointURL directly, so it must be reachable from them. A bucket of its own,
+# separate from the backup bucket, with its own R2 API token (Object Read & Write on this bucket
+# only) and a lifecycle rule on exports/ as a safety net (docs/deployment.md). Injected into the
+# API, the Worker and the policy Job as
 #   ConfigMap  NEXUS_OBJECT_STORAGE_ENDPOINT_URL, NEXUS_OBJECT_STORAGE_BUCKET,
 #              NEXUS_OBJECT_STORAGE_REGION
 #   Secret     NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID, NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY
 #              (keys ACCESS_KEY_ID and ACCESS_SECRET_KEY of credentialsSecret)
 objectStorage:
-  enabled: false
-  endpointURL: https://ACCOUNT_ID.r2.cloudflarestorage.com
+  # https://<account_id>.r2.cloudflarestorage.com (with a jurisdiction: <account_id>.eu.r2...).
+  endpointURL: ""
   bucket: nexus-app
   region: auto
   credentialsSecret: nexus-app-r2

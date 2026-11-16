@@ -7,6 +7,7 @@ from nexus.config import RuntimeSettings
 from nexus.infrastructure.auth_limits import RedisAuthLimits, RedisMailLimits
 from nexus.infrastructure.cache import Cache
 from nexus.infrastructure.credential_cipher import CredentialCipher
+from nexus.infrastructure.object_storage import ObjectStorage
 from nexus.infrastructure.payment_http import PaymentHttp, ProviderHttp
 from nexus.infrastructure.postgres import Database
 from nexus.modules import billing, catalog, identity, publication, reporting
@@ -119,6 +120,7 @@ class Application:
             namespace=settings.redis_namespace,
         )
         self._storage = {name.value: self.database.for_module(name) for name in ModuleName}
+        self.files = ObjectStorage.from_settings(settings)
         roots = {
             version: base64.urlsafe_b64decode(secret.get_secret_value())
             for version, secret in settings.previous_encryption_keys.items()
@@ -183,6 +185,7 @@ class Application:
                 ]
             ],
             self.identity.require_platform_admin,
+            self.files,
         )
         self.routing = catalog.RoutingPolicies(
             self._storage["catalog"],
@@ -276,7 +279,7 @@ class Application:
 
     async def close(self) -> None:
         await self._notifications.close()
-        jobs = [self.database.close(), self.cache.close()]
+        jobs = [self.database.close(), self.cache.close(), self.files.close()]
         if self.payment_http:
             jobs.append(self.payment_http.close())
         await asyncio.gather(*jobs)

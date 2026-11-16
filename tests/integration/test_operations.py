@@ -6,6 +6,7 @@ from time import monotonic
 from uuid import UUID, uuid4
 
 import pytest
+from exports import download
 from policies import put_policy
 from test_api_contract import exact, pages
 from test_billing import (
@@ -78,8 +79,7 @@ async def test_usage_project_projection_finance_and_export(http, admin):
     assert result.status_code == 202, result.text
     path = base + "/exports/" + result.json()["id"]
     await app.state.reports.process_export()
-    response = await client.get(path + "/download", headers=auth(finance))
-    assert response.status_code == 200, response.text
+    _, response = await download(client, path, auth(finance))
     assert str(a.request_id) in response.text and "cost_amount" not in response.text
     member = (await client.get(base + "/members", headers=auth(root))).json()["items"]
     m = next(m for m in member if m["user_id"] == user["user"]["id"])
@@ -308,11 +308,8 @@ async def test_refund_uses_its_own_posting_period_and_stable_pagination(http, ad
     )
     assert export.status_code == 202, export.text
     await app.state.reports.process_export()
-    download = await client.get(
-        base + f"/exports/{export.json()['id']}/download", headers=auth(root)
-    )
-    assert download.status_code == 200, download.text
-    [refund_row] = csv.DictReader(io.StringIO(download.content.decode("utf-8-sig")))
+    _, file = await download(client, base + f"/exports/{export.json()['id']}", auth(root))
+    [refund_row] = csv.DictReader(io.StringIO(file.content.decode("utf-8-sig")))
     assert refund_row["kind"] == "refund" and Decimal(refund_row["amount"]) == -2
 
 
@@ -344,18 +341,23 @@ async def test_projection_crash_replays_and_export_is_fenced_and_expires(http, a
     )
     await reports.process_export()
     async with reports.tx() as repo:
-        await repo.finish_export(old, b"obsolete", 1)
-    path = base + "/" + out.json()["id"] + "/download"
-    assert b"funding_credit" in (await client.get(path, headers=auth(root))).content
+        assert not await repo.finish_export(old, (f"exports/{org['id']}/stale.csv", 8), 1)
+    path = base + "/" + out.json()["id"]
+    _, file = await download(client, path, auth(root))
+    assert b"funding_credit" in file.content
+    assert admin.execute("SELECT state,object_key FROM reporting.export_jobs").fetchone() == (
+        "ready",
+        f"exports/{org['id']}/{out.json()['id']}/2.csv",
+    )
     admin.execute(
         "UPDATE reporting.export_jobs SET expires_at=clock_timestamp()-interval '1 second'"
     )
-    assert (await client.get(path, headers=auth(root))).status_code == 409
+    assert (await client.get(path + "/download", headers=auth(root))).status_code == 409
     await reports.process_export()
-    assert admin.execute("SELECT state,content FROM reporting.export_jobs").fetchone() == (
-        "expired",
-        None,
-    )
+    assert await reports.purge_exports() == 1
+    assert admin.execute(
+        "SELECT state,object_key,purge_at FROM reporting.export_jobs"
+    ).fetchone() == ("expired", None, None)
 
 
 async def test_integrity_case_requires_recheck_and_audit_is_redacted(http, admin):

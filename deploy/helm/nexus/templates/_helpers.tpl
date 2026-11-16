@@ -131,7 +131,7 @@ Usage: include "nexus.databaseEnv" (list . "api" "NEXUS_DATABASE_URL")
 {{- end }}
 {{- end -}}
 
-{{/* API and Worker secrets: encryption key ring, BFF secret, mail and Turnstile credentials. */}}
+{{/* API and Worker secrets: encryption key ring, BFF secret, mail, Turnstile and R2 credentials. */}}
 {{- define "nexus.controlPlaneSecretEnv" -}}
 {{- $root := index . 0 -}}
 - name: NEXUS_ENCRYPTION_KEY
@@ -157,14 +157,22 @@ Usage: include "nexus.databaseEnv" (list . "api" "NEXUS_DATABASE_URL")
 - name: NEXUS_TURNSTILE_SECRET_KEY
   valueFrom:
     secretKeyRef: {name: {{ $root.Values.secrets.integrations }}, key: turnstile-secret-key, optional: true}
-{{- if $root.Values.objectStorage.enabled }}
 - name: NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID
   valueFrom:
     secretKeyRef: {name: {{ $root.Values.objectStorage.credentialsSecret }}, key: ACCESS_KEY_ID}
 - name: NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY
   valueFrom:
     secretKeyRef: {name: {{ $root.Values.objectStorage.credentialsSecret }}, key: ACCESS_SECRET_KEY}
-{{- end }}
+{{- end -}}
+
+{{/* Object storage startup parameters, added to a dict of environment values: (list $ $dict). */}}
+{{- define "nexus.objectStorageConfig" -}}
+{{- $root := index . 0 -}}
+{{- $data := index . 1 -}}
+{{- $storage := $root.Values.objectStorage -}}
+{{- $_ := set $data "NEXUS_OBJECT_STORAGE_ENDPOINT_URL" (required "objectStorage.endpointURL is required: https://<account_id>.r2.cloudflarestorage.com" $storage.endpointURL) -}}
+{{- $_ = set $data "NEXUS_OBJECT_STORAGE_BUCKET" (required "objectStorage.bucket is required" $storage.bucket) -}}
+{{- $_ = set $data "NEXUS_OBJECT_STORAGE_REGION" (required "objectStorage.region is required" $storage.region) -}}
 {{- end -}}
 
 {{/* CA files every database and Redis client mounts. */}}

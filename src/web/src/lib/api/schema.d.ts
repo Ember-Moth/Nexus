@@ -941,7 +941,12 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        /** Download */
+        /**
+         * Download
+         * @description A short-lived URL that downloads a ready export (UTF-8 CSV with a byte order mark).
+         *
+         *     The file comes straight from object storage; each call is audited as a download.
+         */
         get: operations["download_api_v1_organizations__organization_id__exports__export_id__download_get"];
         put?: never;
         post?: never;
@@ -3421,6 +3426,16 @@ export type components = {
          */
         ErrorResponse: {
             error: components["schemas"]["ErrorBody"];
+        };
+        /** ExportDownload */
+        ExportDownload: {
+            /** @description When the URL stops working: a few minutes, never after the export expires */
+            expires_at: components["schemas"]["Timestamp"];
+            /**
+             * Url
+             * @description Presigned GET URL of the CSV file in object storage. It serves the file as an attachment, needs no other credentials and must not be shared
+             */
+            url: string;
         };
         /** ExportJob */
         ExportJob: {
@@ -12361,13 +12376,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description UTF-8 CSV with a byte order mark */
+            /** @description Successful Response */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/csv": string;
+                    "application/json": components["schemas"]["ExportDownload"];
                 };
             };
             /** @description Session is missing, expired or revoked */

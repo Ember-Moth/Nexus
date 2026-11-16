@@ -264,6 +264,16 @@ class ExportJob(View):
     expires_at: Timestamp
 
 
+class ExportDownload(View):
+    url: str = Field(
+        description="Presigned GET URL of the CSV file in object storage. It serves the file as"
+        " an attachment, needs no other credentials and must not be shared"
+    )
+    expires_at: Timestamp = Field(
+        description="When the URL stops working: a few minutes, never after the export expires"
+    )
+
+
 class ExportPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     per_org_minute: int = Field(ge=1, le=1000, description="Exports one organization may queue")

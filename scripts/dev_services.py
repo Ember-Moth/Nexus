@@ -13,7 +13,7 @@ def main() -> None:
     if args.action == "start":
         services.start()
         services.profiles(root)
-        print("Native services ready. Profiles: .env.api, .env.worker, .env.migrate")
+        print("PostgreSQL, Redis and S3 (moto) ready. Profiles: .env.api .env.worker .env.migrate")
         print("Run: uv run nexus --env-file .env.migrate migrate")
     else:
         services.stop()

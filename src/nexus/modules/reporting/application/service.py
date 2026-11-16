@@ -2,18 +2,36 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import re
+from datetime import timedelta
 from uuid import UUID
 
 from nexus.shared.errors import ServiceError
 from nexus.shared.policy import ImportPlan, plan
 from nexus.shared.reporting import next_cursor
+from nexus.shared.telemetry import event
 
 from .schemas import ReportFilter, ReportingPolicy
+
+logger = logging.getLogger("nexus.reporting")
 
 GROUP = "reporting.export_policy"
 # Audit resource of changes to the singleton export policy.
 POLICY_RESOURCE = UUID(int=0)
+# Largest export file; a larger one fails as export_too_large.
+MAX_EXPORT_BYTES = 16 * 1024 * 1024
+CSV_CONTENT_TYPE = "text/csv; charset=utf-8"
+# Lifetime of a download URL, cut short by the export's own expiry.
+DOWNLOAD_URL_SECONDS = 300
+# Expired exports whose objects one pass deletes, and when a failed deletion is retried.
+PURGE_BATCH = 20
+PURGE_RETRY_SECONDS = 300
+
+
+def export_prefix(organization_id, export_id):
+    """Every object of one export: one per attempt that uploaded, named by its fence."""
+    return f"exports/{organization_id}/{export_id}/"
 
 
 def policy_changes(before, after):
@@ -105,9 +123,9 @@ def csv_field(value):
 
 
 class Reports:
-    def __init__(self, transactions, access, source, audits, administrator):
+    def __init__(self, transactions, access, source, audits, administrator, files):
         self.tx, self.access, self.source, self.audits = transactions, access, source, audits
-        self.administrator = administrator
+        self.administrator, self.files = administrator, files
 
     async def policy(self, token):
         await self.administrator(token)
@@ -277,19 +295,22 @@ class Reports:
         if not download:
             return job
         async with self.tx() as repo:
-            data = await repo.download(org, id)
+            stored = await repo.download(org, id)
             await repo.audit(actor, "export.downloaded", id, org, {"kind": job["kind"]})
-            return data
+        seconds = max(1, min(DOWNLOAD_URL_SECONDS, int(stored["remaining"])))
+        url = await self.files.download_url(
+            stored["object_key"], filename=f"nexus-{job['kind']}-{id}.csv", seconds=seconds
+        )
+        return {"url": url, "expires_at": stored["now"] + timedelta(seconds=seconds)}
 
     async def process_export(self):
         async with self.tx() as repo:
+            await repo.expire()
             job = await repo.claim()
             max_rows = (await repo.policy()).exports.max_rows
         if job is None:
             return 0
-        data = None
-        count = None
-        error = None
+        data = count = error = stored = None
         try:
             page = await self._page(
                 job["organization_id"],
@@ -307,14 +328,60 @@ class Reports:
             for row in page["items"]:
                 writer.writerow([csv_field(row.get(k)) for k in fields])
             data = buffer.getvalue().encode("utf-8-sig")
-            if len(data) > 16 * 1024 * 1024:
+            if len(data) > MAX_EXPORT_BYTES:
                 raise ValueError("export_too_large")
             count = len(page["items"])
         except ValueError:
-            error = "export_too_large"
-            data = None
+            error, data = "export_too_large", None
         except Exception:
-            error = "source_unavailable"
+            error, data = "source_unavailable", None
+        if data is not None:
+            # Each attempt writes a key of its own, so a stale attempt can never replace the file
+            # of the attempt that committed. Uploading before the commit means a ready job always
+            # names an object that exists.
+            key = f"{export_prefix(job['organization_id'], job['id'])}{job['fence']}.csv"
+            try:
+                await self.files.put(key, data, CSV_CONTENT_TYPE)
+                stored = (key, len(data))
+            except Exception as failure:
+                error = "storage_unavailable"
+                event(
+                    logger,
+                    logging.WARNING,
+                    "reporting.export_upload_failed",
+                    job_id=str(job["id"]),
+                    attempt=job["attempts"],
+                    error_type=type(failure).__name__,
+                )
         async with self.tx() as repo:
-            await repo.finish_export(job, data, count, error)
+            await repo.finish_export(job, stored, count, error)
         return 1
+
+    async def purge_exports(self):
+        """Delete the objects of expired exports; a failed deletion is retried later.
+
+        A failure never holds up expiry itself: the job is already expired and unavailable.
+        """
+        async with self.tx() as repo:
+            due = await repo.purge_due(PURGE_BATCH, PURGE_RETRY_SECONDS)
+        done = []
+        for job in due:
+            try:
+                await self.files.delete_prefix(export_prefix(job["organization_id"], job["id"]))
+            except Exception as failure:
+                event(
+                    logger,
+                    logging.WARNING,
+                    "reporting.export_purge_failed",
+                    job_id=str(job["id"]),
+                    error_type=type(failure).__name__,
+                )
+                # The store is probably unreachable: the rest of the batch waits for its lease
+                # instead of each request timing out in turn.
+                break
+            done.append(job)
+        if done:
+            async with self.tx() as repo:
+                for job in done:
+                    await repo.purged(job)
+        return len(done)

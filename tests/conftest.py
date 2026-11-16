@@ -16,6 +16,11 @@ def settings_factory():
             "encryption_key": base64.urlsafe_b64encode(bytes(range(32))).decode(),
             "worker_id": "test-worker",
             "dependency_timeout": 0.2,
+            "object_storage_endpoint_url": "http://127.0.0.1:3",
+            "object_storage_bucket": "nexus-app",
+            "object_storage_region": "us-east-1",
+            "object_storage_access_key_id": "test-access-key",
+            "object_storage_secret_access_key": "test-object-secret",
         }
         return RuntimeSettings(**(values | overrides))
 

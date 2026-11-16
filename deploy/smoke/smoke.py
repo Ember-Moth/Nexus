@@ -441,7 +441,10 @@ def prepare_secrets() -> dict:
     )
     create_secret("nexus-deployer", {"login": "smoke-admin", "password": secrets.token_urlsafe(24)})
     expect(secret_exists("nexus-backup-r2"), "backup bucket credentials present")
-    ok("Secrets present", "db x3, redis, encryption, auth-proxy, relay-cluster, deployer")
+    # The R2 stand-in has one key pair; production has a token per bucket.
+    s3 = {k: secret_value("nexus-backup-r2", k) for k in ("ACCESS_KEY_ID", "ACCESS_SECRET_KEY")}
+    create_secret("nexus-app-r2", s3)
+    ok("Secrets present", "db x3, redis, encryption, auth-proxy, relay-cluster, deployer, R2 x2")
     return {
         "admin_login": secret_value("nexus-deployer", "login"),
         "admin_password": secret_value("nexus-deployer", "password"),
@@ -497,8 +500,12 @@ def psql(query: str, database="nexus") -> str:
     ).strip()  # fmt: skip
 
 
+# Values that depend on the cluster, filled in by main(): the R2 stand-in's endpoint.
+CLUSTER_VALUES: list[str] = []
+
+
 def app_values(extra=()) -> list[str]:
-    return ["-f", str(HERE / "values-app.yaml"), *extra]
+    return ["-f", str(HERE / "values-app.yaml"), *CLUSTER_VALUES, *extra]
 
 
 def install_app(extra=(), wait=True) -> None:
@@ -746,6 +753,7 @@ def main() -> int:
         "jsonpath={.items[0].status.addresses[?(@.type=='InternalIP')].address}",
     )
     step(f"cluster reachable; Traefik at {address}")
+    CLUSTER_VALUES.extend(["--set", f"objectStorage.endpointURL=http://{address}:7070"])
     if args.fresh:
         reset()
     kubectl("create", "namespace", NS, check=False)

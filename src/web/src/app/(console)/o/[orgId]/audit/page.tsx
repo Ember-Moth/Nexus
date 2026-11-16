@@ -6,7 +6,7 @@ import { DownloadIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { DataTable } from "@/components/data-table";
-import { EmptyState, ErrorAlert, LoadingRows, Spinner } from "@/components/feedback";
+import { EmptyState, ErrorAlert, LoadingRows, Spinner, useErrorToast } from "@/components/feedback";
 import { LoadMoreFooter, PageContainer, PageHeader } from "@/components/page";
 import { useOrgWorkspace } from "@/components/shell/workspace";
 import { StatusBadge, toneFor } from "@/components/status-badge";
@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useI18n } from "@/i18n/provider";
-import { API_BASE, call, nexus } from "@/lib/api/client";
+import { call, nexus } from "@/lib/api/client";
 import { pollUntil, useCursorList } from "@/lib/api/hooks";
 import { orgKey } from "@/lib/api/queries";
 import type { AuditEvent, ExportJob, ExportKind } from "@/lib/api/types";
@@ -39,6 +39,26 @@ function ExportRow({ orgId, initial }: { orgId: string; initial: ExportJob }) {
         )
       ).data,
     refetchInterval: pollUntil<ExportJob>(isFinished),
+  });
+  const showError = useErrorToast();
+  // The API answers with a presigned URL valid for a few minutes: the browser fetches the file
+  // from object storage itself and the BFF never relays it. The URL serves the CSV as an
+  // attachment, so the console stays on this page.
+  const download = useMutation({
+    mutationFn: async () =>
+      (
+        await call(() =>
+          nexus.GET("/api/v1/organizations/{organization_id}/exports/{export_id}/download", {
+            params: { path: { organization_id: orgId, export_id: exportId } },
+          }),
+        )
+      ).data,
+    onSuccess: ({ url }) => window.location.assign(url),
+    onError: (error) => {
+      showError(error);
+      // The export may have expired in the meantime; show its current state.
+      void job.refetch();
+    },
   });
   if (job.error) {
     return (
@@ -71,11 +91,9 @@ function ExportRow({ orgId, initial }: { orgId: string; initial: ExportJob }) {
         {maybeT(`audit.exportStates.${state}`) ?? state}
       </StatusBadge>
       {state === "ready" ? (
-        <Button variant="outline" size="sm" asChild>
-          <a href={`${API_BASE}/api/v1/organizations/${orgId}/exports/${exportId}/download`} download>
-            <DownloadIcon />
-            {t("audit.download")}
-          </a>
+        <Button variant="outline" size="sm" disabled={download.isPending} onClick={() => download.mutate()}>
+          {download.isPending ? <Spinner className="size-3" /> : <DownloadIcon />}
+          {t("audit.download")}
         </Button>
       ) : null}
     </div>

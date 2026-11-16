@@ -8,7 +8,7 @@
 | `catalog` | `deployments` 将 `models` 连接到 `upstreams` 和对应的 `upstream_credentials`。`route_policies` 与 `quota_policies` 提供候选部署和运行限额。 |
 | `billing` | `accounts` 是企业钱包。`ledger_entries` 保存已过账流水；`request_runs` 和 `request_attempts` 分别保存客户结算与上游尝试成本。支付订单、外部观察、收据和账务核对均归本模块。 |
 | `publication` | `gateway_principals` 把数据库登录绑定到节点与集群。`config_snapshots` 以集群和修订号标识内容，`credential_envelopes` 保存密文包，`config_outbox` 跟踪分发，`node_config_acks` 记录节点确认。`cluster_automation` 每个集群一行，记录期望快照对应的源向量、待发布的变化、最近一次自动发布和失败、回滚暂停，以及 Worker 租约。 |
-| `reporting` | `request_facts` 保存可重建的费用与用量投影。`export_jobs` 跟踪导出状态、内容与过期时间，`audit_events` 记录导出操作。 |
+| `reporting` | `request_facts` 保存可重建的费用与用量投影。`export_jobs` 跟踪导出状态、过期时间和文件在对象存储中的键（`object_key`、`size_bytes`），文件本身不进数据库；`purge_at` 是过期后删除对象的计划和租约。`audit_events` 记录导出操作。 |
 
 ## 跟踪一笔充值
 
@@ -28,4 +28,4 @@
 
 租户资源带组织 ID，项目、服务账号、Key、预算和资金单据通过复合外键维护归属。人员停用、Key 撤销、模型归档后保留历史费用引用。支付渠道轮换保留历史配置引用和验签版本；密文依赖的历史根密钥由部署方保管。
 
-请求发生、事件接收、资金记账和投影复制分别记录时间。按发生时间与按记账时间查询时，跨期退费可能落在不同期间。导出文件和 Redis 心跳按各自期限过期；原始用量、历史价格、收款事实、资金流水及核对依据由持久化存储保留。部署方确定归档和备份保留期，并验证还原后的账户核对结果。[恢复演练](control-plane-acceptance.md#物理备份恢复)
+请求发生、事件接收、资金记账和投影复制分别记录时间。按发生时间与按记账时间查询时，跨期退费可能落在不同期间。导出文件和 Redis 心跳按各自期限过期：导出文件在对象存储的 `exports/<企业 ID>/<导出 ID>/` 下，Worker 在导出过期时删除，R2 生命周期规则兜底；原始用量、历史价格、收款事实、资金流水及核对依据由持久化存储保留。部署方确定归档和备份保留期，并验证还原后的账户核对结果。[恢复演练](control-plane-acceptance.md#物理备份恢复)

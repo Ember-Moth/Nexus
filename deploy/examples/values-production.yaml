@@ -20,6 +20,9 @@ config:
     NEXUS_TURNSTILE_HOSTNAME: console.nexus.example.com
     NEXUS_PAYMENT_PUBLIC_BASE_URL: https://api.nexus.example.com
     NEXUS_PAYMENT_RETURN_URL: https://console.nexus.example.com/payments
+# Export files; credentials in the nexus-app-r2 Secret (docs/deployment.md#对象存储cloudflare-r2).
+objectStorage:
+  endpointURL: https://ACCOUNT_ID.r2.cloudflarestorage.com
 relay:
   # Set after POST /api/v1/gateway-clusters; then raise replicas (docs/deployment.md).
   clusterId: ""

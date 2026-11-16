@@ -2470,6 +2470,7 @@
           "reports"
         ],
         "summary": "Download",
+        "description": "A short-lived URL that downloads a ready export (UTF-8 CSV with a byte order mark).\n\nThe file comes straight from object storage; each call is audited as a download.",
         "operationId": "download_api_v1_organizations__organization_id__exports__export_id__download_get",
         "security": [
           {
@@ -2500,12 +2501,11 @@
         ],
         "responses": {
           "200": {
-            "description": "UTF-8 CSV with a byte order mark",
+            "description": "Successful Response",
             "content": {
-              "text/csv": {
+              "application/json": {
                 "schema": {
-                  "type": "string",
-                  "format": "binary"
+                  "$ref": "#/components/schemas/ExportDownload"
                 }
               }
             }
@@ -2551,6 +2551,9 @@
           },
           "409": {
             "description": "Idempotency key reuse, state transition or resource conflict",
+            "x-error-codes": [
+              "export_unavailable"
+            ],
             "content": {
               "application/json": {
                 "schema": {
@@ -28475,6 +28478,26 @@
         ],
         "title": "ErrorResponse",
         "description": "The envelope of every management API error."
+      },
+      "ExportDownload": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Presigned GET URL of the CSV file in object storage. It serves the file as an attachment, needs no other credentials and must not be shared"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "When the URL stops working: a few minutes, never after the export expires"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "title": "ExportDownload"
       },
       "ExportJob": {
         "properties": {

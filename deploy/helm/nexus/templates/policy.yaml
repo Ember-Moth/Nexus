@@ -18,6 +18,7 @@ the release then stops. The application never reads or writes Kubernetes objects
 {{- $fullname := include "nexus.fullname" . }}
 {{- $document := dict "version" 1 "groups" .Values.policy.groups }}
 {{- $env := mustMergeOverwrite (deepCopy .Values.config.controlPlane) (deepCopy .Values.config.api) }}
+{{- include "nexus.objectStorageConfig" (list . $env) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

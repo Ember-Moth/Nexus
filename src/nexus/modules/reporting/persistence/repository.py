@@ -271,21 +271,28 @@ class ReportingRepository:
         return [dict(row) for row in rows]
 
     async def download(self, org, id):
-        result = await self.execute(
-            """SELECT content FROM reporting.export_jobs WHERE organization_id=:org AND id=:id
-          AND state='ready' AND expires_at>clock_timestamp()""",
+        """The object of a ready export, the database time and the export's seconds left."""
+        rows = await self.rows(
+            """SELECT object_key,clock_timestamp() now,
+                extract(epoch FROM expires_at-clock_timestamp()) remaining
+             FROM reporting.export_jobs WHERE organization_id=:org AND id=:id
+             AND state='ready' AND expires_at>clock_timestamp()""",
             org=org,
             id=id,
         )
-        data = result.scalar_one_or_none()
-        if data is None:
+        if not rows:
             raise ServiceError("export_unavailable", "Export is unavailable", 409)
-        return bytes(data)
+        return dict(rows[0])
+
+    async def expire(self):
+        # A job that ever ran may have objects, including uploads of attempts that lost their
+        # fence or crashed before committing: all of them are deleted with the job's prefix.
+        await self.execute("""
+            UPDATE reporting.export_jobs SET state='expired',lease_until=NULL,
+             purge_at=CASE WHEN fence>0 THEN clock_timestamp() END
+            WHERE expires_at<=clock_timestamp() AND state<>'expired'""")
 
     async def claim(self):
-        await self.execute("""
-                UPDATE reporting.export_jobs SET state='expired',content=NULL,lease_until=NULL
-           WHERE expires_at<=clock_timestamp() AND state<>'expired'""")
         jobs = await self.rows("""
                 WITH due AS (SELECT id FROM reporting.export_jobs WHERE expires_at>clock_timestamp()
          AND ((state='queued' AND available_at<=clock_timestamp()) OR (state='running' AND
@@ -296,22 +303,30 @@ class ReportingRepository:
          RETURNING j.id,j.organization_id,j.kind,j.filters,j.actor_id,j.fence,j.attempts""")
         return dict(jobs[0]) if jobs else None
 
-    async def finish_export(self, job, data, count, error=None):
+    async def finish_export(self, job, stored, count, error=None):
+        """Record an attempt's outcome; ``stored`` is the (key, size) of its uploaded file.
+
+        Only the attempt that still holds the fence and lease of an unexpired job commits, so a
+        ready job always names the object its own attempt uploaded.
+        """
+        key, size = stored or (None, None)
         final = (
             "ready"
-            if data is not None
+            if stored is not None
             else "failed"
             if error == "export_too_large" or job["attempts"] >= 5
             else "queued"
         )
         result = await self.execute(
-            """UPDATE reporting.export_jobs SET state=:state,content=:data,row_count=:count,
+            """UPDATE reporting.export_jobs SET state=:state,object_key=:key,size_bytes=:size,
+         row_count=:count,
          completed_at=CASE WHEN :state='ready' THEN clock_timestamp() ELSE NULL END,
          available_at=clock_timestamp()+interval '2 seconds',lease_until=NULL,error_code=:error
          WHERE id=:id AND state='running' AND fence=:fence AND expires_at>clock_timestamp()
          AND lease_until>clock_timestamp() RETURNING id""",
             state=final,
-            data=data,
+            key=key,
+            size=size,
             count=count,
             error=error,
             id=job["id"],
@@ -321,3 +336,40 @@ class ReportingRepository:
             await self.audit(
                 None, "export." + final, job["id"], job["organization_id"], {"kind": job["kind"]}
             )
+            return True
+        if stored is not None:
+            # The upload stays under the job's prefix and goes with it at expiry. If the job has
+            # expired and its objects were already deleted, delete them once more.
+            await self.execute(
+                "UPDATE reporting.export_jobs SET purge_at=clock_timestamp() "
+                "WHERE id=:id AND state='expired'",
+                id=job["id"],
+            )
+        return False
+
+    async def purge_due(self, limit, retry_seconds):
+        """Lease expired jobs whose objects are due for deletion.
+
+        The lease moves ``purge_at`` ahead by ``retry_seconds``: a deletion that fails or never
+        reports back is retried once it lapses, and other Workers skip the job meanwhile.
+        """
+        rows = await self.rows(
+            """WITH due AS (SELECT id FROM reporting.export_jobs
+                WHERE purge_at<=clock_timestamp() AND state='expired'
+                ORDER BY purge_at,id LIMIT :limit FOR UPDATE SKIP LOCKED)
+             UPDATE reporting.export_jobs j
+             SET purge_at=clock_timestamp()+make_interval(secs=>:retry)
+             FROM due WHERE j.id=due.id RETURNING j.id,j.organization_id,j.purge_at""",
+            limit=limit,
+            retry=retry_seconds,
+        )
+        return [dict(row) for row in rows]
+
+    async def purged(self, job):
+        # Unless an attempt that lost its fence rescheduled the deletion after this lease began.
+        await self.execute(
+            """UPDATE reporting.export_jobs SET purge_at=NULL,object_key=NULL
+             WHERE id=:id AND purge_at=:lease""",
+            id=job["id"],
+            lease=job["purge_at"],
+        )

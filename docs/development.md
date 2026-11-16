@@ -2,7 +2,7 @@
 
 ## 初始化本机环境
 
-在 Linux 或 macOS 上准备 uv、项目指定的 Python、PostgreSQL 16 或更新版本及 Redis。服务脚本使用本机的 `initdb`、`pg_ctl`、`postgres` 和 `redis-server`。备份恢复测试还需与 PostgreSQL 主版本匹配的 `pg_basebackup` 和 `pg_verifybackup`。[Python 版本](../.python-version) · [依赖锁文件](../uv.lock)
+在 Linux 或 macOS 上准备 uv、项目指定的 Python、PostgreSQL 16 或更新版本及 Redis。服务脚本使用本机的 `initdb`、`pg_ctl`、`postgres` 和 `redis-server`；S3 兼容的对象存储由开发依赖 moto 提供，`uv sync` 后即可使用，不需要容器或虚拟机。备份恢复测试还需与 PostgreSQL 主版本匹配的 `pg_basebackup` 和 `pg_verifybackup`。[Python 版本](../.python-version) · [依赖锁文件](../uv.lock)
 
 在仓库根目录执行：
 
@@ -13,13 +13,28 @@ uv run nexus --env-file .env.migrate migrate
 uv run nexus --env-file .env.api check
 ```
 
-`start` 在 `.local/native` 创建项目专用实例，选择可用端口并监听回环地址。首次启动生成随机密码、32 字节加密根密钥和三个权限为 0600 的配置文件。后续启动复用同一组数据和配置。
+`start` 在 `.local/native` 创建项目专用实例，选择可用端口并监听回环地址。首次启动生成随机密码、32 字节加密根密钥和三个权限为 0600 的配置文件。后续启动复用同一组数据和配置；已有的配置文件只补上缺少的变量，不改已有的值。
 
 | 配置 | 进程与数据库角色 |
 | --- | --- |
 | `.env.migrate` | Alembic 迁移使用 `nexus_migrator` |
 | `.env.api` | 管理 API、就绪检查和管理员引导使用 `nexus_api` |
 | `.env.worker` | 后台任务与心跳使用 `nexus_worker` |
+
+### 本地对象存储
+
+导出文件存放在 S3 兼容的对象存储中（生产环境是 Cloudflare R2，见[部署手册：对象存储](deployment.md#对象存储cloudflare-r2)）。`start` 用当前 Python 环境在回环地址上启动 moto server（`python -m moto.server`，进程号在 `.local/native/s3.pid`，日志在 `s3.log`），创建 bucket `nexus-app`，并把下面的变量写进 `.env.api` 和 `.env.worker`：
+
+| 变量 | 本地取值 |
+| --- | --- |
+| `NEXUS_OBJECT_STORAGE_ENDPOINT_URL` | `http://127.0.0.1:<随机端口>` |
+| `NEXUS_OBJECT_STORAGE_BUCKET` | `nexus-app` |
+| `NEXUS_OBJECT_STORAGE_REGION` | `us-east-1`（moto 只在这个 region 下无需 location constraint 建 bucket；R2 用 `auto`） |
+| `NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID`、`NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY` | 随机生成，保存在 `.local/native/services.json` |
+
+这五个变量 API 和 Worker 都必须配置，缺少任何一个进程都不会启动；没有退回数据库存储的选项。moto 把对象放在内存里，`stop` 或重启之后文件就没有了，但导出任务还在：这时下载链接打不开（moto 返回 403），重新导出即可。浏览器直接从这个端点下载文件，所以本机浏览器能访问回环地址即可。
+
+想用 MinIO 等其他 S3 兼容服务时，自己启动它、建好 bucket，再把上面五个变量改成它的地址和凭据；`stop` 只停止自己启动的 moto 进程。集成测试脚本另起一个 moto，见[开发检查](#开发检查)。
 
 用 `--env-file` 显式选择配置，进程环境变量优先。版本升级时先用迁移身份执行 `migrate`，默认升级到当前代码的 head，再启动匹配版本的 API 与 Worker。运行角色在事务内切换到所属模块的数据库角色。[配置示例](../.env.example)
 
@@ -71,8 +86,8 @@ k3s 上的镜像、Helm chart、三层配置和运维流程见[部署手册](dep
 
 | 层 | 放什么 | 何时生效 |
 | --- | --- | --- |
-| Secret | 含凭据的连接串和密钥：`NEXUS_DATABASE_URL`、`NEXUS_MIGRATION_DATABASE_URL`、`NEXUS_REDIS_URL`、`NEXUS_ENCRYPTION_KEY`、`NEXUS_PREVIOUS_ENCRYPTION_KEYS`、`NEXUS_AUTH_PROXY_SECRET`、`NEXUS_SMTP_PASSWORD`、`NEXUS_RESEND_API_KEY`、`NEXUS_CLOUDFLARE_EMAIL_API_TOKEN`、`NEXUS_TURNSTILE_SECRET_KEY`；Relay 的 `NEXUS_RELAY_DATABASE_URL`、`NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_PRIVATE_KEY` | 进程重启 |
-| ConfigMap（`envFrom` 注入） | 启动参数和单个进程或节点的资源上限：`NEXUS_ENVIRONMENT`、`NEXUS_PROCESS_ROLE`、`NEXUS_HOST`、`NEXUS_PORT`、`NEXUS_ENCRYPTION_KEY_VERSION`、连接池、`NEXUS_WORKER_ID`、`NEXUS_REDIS_NAMESPACE`、`NEXUS_LOG_LEVEL`、`NEXUS_DEPENDENCY_TIMEOUT`、`NEXUS_SHUTDOWN_TIMEOUT`、`NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL`、`NEXUS_AUTO_PUBLISH_POLL_SECONDS`、Argon2 并发、迁移超时、支付地址、发信服务商与 Turnstile 的非密钥参数、`NEXUS_AUTH_PROXY_PEERS`；Relay 的监听地址、命名空间、上游 CA 路径和单节点上限（见[Relay 运行配置](relay-development.md#运行配置)）；Web 的 5 个变量 | 进程重启 |
+| Secret | 含凭据的连接串和密钥：`NEXUS_DATABASE_URL`、`NEXUS_MIGRATION_DATABASE_URL`、`NEXUS_REDIS_URL`、`NEXUS_ENCRYPTION_KEY`、`NEXUS_PREVIOUS_ENCRYPTION_KEYS`、`NEXUS_AUTH_PROXY_SECRET`、`NEXUS_SMTP_PASSWORD`、`NEXUS_RESEND_API_KEY`、`NEXUS_CLOUDFLARE_EMAIL_API_TOKEN`、`NEXUS_TURNSTILE_SECRET_KEY`、`NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID`、`NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY`；Relay 的 `NEXUS_RELAY_DATABASE_URL`、`NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_PRIVATE_KEY` | 进程重启 |
+| ConfigMap（`envFrom` 注入） | 启动参数和单个进程或节点的资源上限：`NEXUS_ENVIRONMENT`、`NEXUS_PROCESS_ROLE`、`NEXUS_HOST`、`NEXUS_PORT`、`NEXUS_ENCRYPTION_KEY_VERSION`、连接池、`NEXUS_WORKER_ID`、`NEXUS_REDIS_NAMESPACE`、`NEXUS_LOG_LEVEL`、`NEXUS_DEPENDENCY_TIMEOUT`、`NEXUS_SHUTDOWN_TIMEOUT`、`NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL`、`NEXUS_AUTO_PUBLISH_POLL_SECONDS`、Argon2 并发、迁移超时、支付地址、发信服务商与 Turnstile 的非密钥参数、`NEXUS_AUTH_PROXY_PEERS`、对象存储的 `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION`；Relay 的监听地址、命名空间、上游 CA 路径和单节点上限（见[Relay 运行配置](relay-development.md#运行配置)）；Web 的 5 个变量 | 进程重启 |
 | 数据库策略表 | 运营方随时调整、要求全局一致或按企业区分的业务策略（下表） | API 与 Worker 约 2 秒；Relay 随集群的下一次发布 |
 
 ConfigMap 还可以挂载一个策略文件，在 Helm 安装或升级时由 `nexus settings import` 写入数据库：用它给新部署填初始值，或把一部分策略组交给 Git 管理（锁定后后台只读）。文件格式和 Job 示例见[运维：策略文件导入](operations.md#策略文件导入)。
@@ -105,4 +120,4 @@ uv run python scripts/run_integration.py -q
 uv build
 ```
 
-集成脚本使用临时 PostgreSQL、Redis 和随机端口，结束后清理；容量用例显式传入 `--capacity`。维护模块目录和依赖时参考[模块组织](architecture.md#python-工程组织)。
+集成脚本使用临时 PostgreSQL、Redis、moto（S3）和随机端口，结束后清理；容量用例显式传入 `--capacity`。PostgreSQL 的 Unix socket 放在临时目录下，路径不能超过 103 字节：在 macOS 上把 `TMPDIR` 设成短路径，例如仓库内已被 gitignore 的 `.local/t`（`mkdir -p .local/t && TMPDIR=$PWD/.local/t uv run python scripts/run_integration.py -q`）；仓库本身路径很深时（例如 worktree）改用更短的目录。单元测试用内存实现代替对象存储。维护模块目录和依赖时参考[模块组织](architecture.md#python-工程组织)。

@@ -63,6 +63,43 @@ class RuntimeSettings(BaseSettings):
     payment_public_base_url: str | None = None
     payment_return_url: str | None = None
     mock_payment_url: str | None = None
+    # S3-compatible application object storage (Cloudflare R2 in production) holds export files.
+    # Required by the API (it signs download URLs) and the Worker (it uploads and deletes them).
+    # Browsers download from this endpoint directly, so it must be reachable from them too.
+    object_storage_endpoint_url: str
+    object_storage_bucket: str = Field(pattern=r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
+    object_storage_region: str = Field(pattern=r"^[a-z0-9-]{1,32}$")
+    object_storage_access_key_id: SecretStr
+    object_storage_secret_access_key: SecretStr
+
+    @field_validator("object_storage_endpoint_url")
+    @classmethod
+    def object_storage_endpoint(cls, value):
+        try:
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                or parsed.path not in {"", "/"}
+            ):
+                raise ValueError
+            _ = parsed.port  # raises ValueError on an invalid port
+        except ValueError:
+            raise ValueError(
+                "object storage endpoint must be an HTTP(S) origin without credentials or path"
+            ) from None
+        return value.rstrip("/")
+
+    @field_validator("object_storage_access_key_id", "object_storage_secret_access_key")
+    @classmethod
+    def object_storage_credential(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("object storage credentials are required")
+        return value
 
     @field_validator("payment_public_base_url", "payment_return_url")
     @classmethod

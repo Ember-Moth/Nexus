@@ -23,6 +23,7 @@ fn snapshot(extra: Value, capabilities: &[&str]) -> Snapshot {
         digest: String::new(),
         required_capabilities: capabilities.iter().map(|c| c.to_string()).collect(),
         resources,
+        key_set: None,
     }
 }
 
@@ -33,7 +34,7 @@ fn nodes_announce_the_cluster_policy_capability() {
 
 #[test]
 fn a_snapshot_without_policy_keeps_the_previous_node_defaults() {
-    let index = Index::build(&mut snapshot(json!({}), &[])).unwrap();
+    let index = Index::build(&mut snapshot(json!({}), &[]), Default::default()).unwrap();
     assert_eq!(index.policy, ClusterPolicy::default());
     assert_eq!(index.policy.max_attempts(), 2);
     assert_eq!(
@@ -62,7 +63,7 @@ fn published_policy_and_organization_limits_take_effect() {
                 "vector_stores_per_organization": 1}],
         },
     });
-    let index = Index::build(&mut snapshot(extra, &[CAPABILITY])).unwrap();
+    let index = Index::build(&mut snapshot(extra, &[CAPABILITY]), Default::default()).unwrap();
     assert_eq!(
         index.policy.max_attempts(),
         1,
@@ -81,13 +82,13 @@ fn published_policy_and_organization_limits_take_effect() {
 fn policy_without_its_capability_or_out_of_bounds_is_rejected() {
     let policy = json!({"cluster_policy": {"max_attempts": 3, "failover_budget_ms": 1000,
         "purge_grace_seconds": 10, "stream_lifetime_seconds": 10}});
-    assert!(Index::build(&mut snapshot(policy.clone(), &[])).is_err());
-    assert!(Index::build(&mut snapshot(policy, &[CAPABILITY])).is_ok());
+    assert!(Index::build(&mut snapshot(policy.clone(), &[]), Default::default()).is_err());
+    assert!(Index::build(&mut snapshot(policy, &[CAPABILITY]), Default::default()).is_ok());
     let excessive = json!({"cluster_policy": {"max_attempts": 9, "failover_budget_ms": 1000,
         "purge_grace_seconds": 10, "stream_lifetime_seconds": 10}});
-    assert!(Index::build(&mut snapshot(excessive, &[CAPABILITY])).is_err());
+    assert!(Index::build(&mut snapshot(excessive, &[CAPABILITY]), Default::default()).is_err());
     let limits = json!({"resource_limits": {"default": {"resources_per_key": 1,
         "resources_per_organization": 1, "vector_stores_per_key": 1,
         "vector_stores_per_organization": 1}, "organizations": []}});
-    assert!(Index::build(&mut snapshot(limits, &[])).is_err());
+    assert!(Index::build(&mut snapshot(limits, &[]), Default::default()).is_err());
 }

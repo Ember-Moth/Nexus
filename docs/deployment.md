@@ -137,12 +137,21 @@ values 的 `policy.groups` 渲染成策略文件 `policy.yaml`（`{version: 1, g
 | `NEXUS_RELAY_DATABASE_URL` | 密钥 | 每个节点一份，init 容器从节点 Secret 生成文件，经 `NEXUS_RELAY_DATABASE_URL_FILE` 读取 |
 | `NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_PRIVATE_KEY` | 密钥 | 所有节点相同 |
 | `NEXUS_RELAY_CLUSTER_ID`、`NEXUS_RELAY_NAMESPACE`、`NEXUS_RELAY_LISTEN`、`NEXUS_RELAY_METRICS_LISTEN`、`NEXUS_RELAY_DRAIN_SECONDS`、`NEXUS_RELAY_UPSTREAM_CA` | 派生 | 来自 `relay.*` values |
-| `NEXUS_RELAY_LOG`、`NEXUS_RELAY_POOL_SIZE`、`NEXUS_RELAY_CONCURRENCY`、`NEXUS_RELAY_LEASE_MS`、`NEXUS_RELAY_REQUEST_BYTES`、`NEXUS_RELAY_RESPONSE_BYTES`、`NEXUS_RELAY_EVENT_BYTES`、`NEXUS_RELAY_STREAM_IDLE_MS`、`NEXUS_RELAY_WS_SESSIONS`、`NEXUS_RELAY_PURGE_INTERVAL_MS` | 启动参数 | 单节点资源上限，`config.relay` |
+| `NEXUS_RELAY_LOG`、`NEXUS_RELAY_POOL_SIZE`、`NEXUS_RELAY_CONCURRENCY`、`NEXUS_RELAY_LEASE_MS`、`NEXUS_RELAY_REQUEST_BYTES`、`NEXUS_RELAY_RESPONSE_BYTES`、`NEXUS_RELAY_EVENT_BYTES`、`NEXUS_RELAY_STREAM_IDLE_MS`、`NEXUS_RELAY_WS_SESSIONS`、`NEXUS_RELAY_PURGE_INTERVAL_MS` | 启动参数 | 单节点资源上限，`config.relay`。连接池按[连接预算](#连接预算)设置 |
+| `NEXUS_RELAY_TENANT_ADMISSIONS`、`NEXUS_RELAY_ADMISSION_WAIT_MS` | 启动参数 | 集群范围：同一企业同时处于数据库准入调用中的请求数上限（默认 32，0 关闭）和等待名额的时间（默认 5000 ms，超时返回 429）。企业的 platform 层 `admission_concurrency` 策略覆盖前者，见[企业准入并发](plane-protocol.md#企业准入并发) |
 | `NEXUS_RELAY_REQUESTS_PER_TENANT`、`NEXUS_RELAY_STREAMS_PER_TENANT`、`NEXUS_RELAY_WS_SESSIONS_PER_TENANT`、`NEXUS_RELAY_WS_TURNS_PER_TENANT` | 启动参数 | 单节点的租户公平性上限，每个节点独立计数，不是集群级配额 |
 | `SSL_CERT_FILE` | 派生 | Relay 的信任库：公共根证书加 Redis CA |
 | `NEXUS_GATEWAY_DSN`、`NEXUS_SIMULATION_API_KEY`、`RELAY_ACCEPTANCE_*` | — | 模拟器和验收测试，不部署 |
 
 Relay 的尝试次数、故障转移时间预算、清理宽限期、续读流时长和资源数量上限都是集群策略，随配置快照下发，见[Relay 运行配置](relay-development.md#集群策略)。
+
+### 连接预算
+
+- **Relay 连接池**：`节点数 × NEXUS_RELAY_POOL_SIZE` 不超过 PostgreSQL 可用核数的 2–4 倍。同一企业的预留在企业锁上串行，连接再多也只是多排队；压测中 64 个节点各 8 个连接时，热点企业的突发请求有三分之一返回 503，降到 2 个连接后全部成功（[容量验收](relay-acceptance.md#推荐的默认参数)）。16 个节点以内可以保留默认的 8，64 个节点设为 2。
+- **刷新连接**：每个节点另有 1 个配置刷新连接，不占请求连接池。请求的锁等待不会让刷新失败，节点也就不会因此被标为不健康。
+- **`/ready`**：连接池耗尽时 `/ready` 仍返回 200，节点不退出负载均衡。连接池耗尽通常是所有节点共有的数据库争用：把节点摘掉不会减轻数据库负载，只会让其余节点承担更多请求，甚至让整个集群同时“不可用”。新请求拿不到连接时等待 5 秒后返回 503，热点企业由准入名额（`NEXUS_RELAY_TENANT_ADMISSIONS`）限流。只有配置刷新失败（例如集群范围失效）或节点并发已满时，`/ready` 才返回 503。
+- **PostgreSQL `max_connections`**：不小于 `Relay 节点数 × (NEXUS_RELAY_POOL_SIZE + 1) + API 副本 × (NEXUS_DB_POOL_SIZE + NEXUS_DB_MAX_OVERFLOW) + Worker 副本 × NEXUS_DB_POOL_SIZE + 运维余量（约 30）`。chart 默认值：16 个节点槽 × 9 + 2 × 5 + 2 × 5 + 30 = 194（2 个 API、2 个 Worker），`nexus-data` 的 `postgresql.parameters.max_connections` 为 200。
+- **`statement_timeout`**：Relay 节点登录的 `statement_timeout`（8 秒）是角色设置，由 relay-node Job 的 `ensure_gateway_login` 写入，在 PgBouncer 的 transaction 模式下也生效。Relay 启动时发现它为 0 会拒绝启动。
 
 ## 单节点安装
 

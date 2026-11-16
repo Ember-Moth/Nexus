@@ -5,6 +5,7 @@ use http::StatusCode;
 use nexus_relay::{
     control::{
         database::Snapshot,
+        keys::KeyTable,
         snapshot::{Index, Selection},
     },
     protocol::{Endpoint, request::Generate, tokens::ReservationBounds},
@@ -114,10 +115,12 @@ fn build(candidates: &[(u32, u32, Value)]) -> Result<Fixture, nexus_relay::contr
         ]
         .map(String::from)
         .to_vec(),
+        key_set: None,
         resources,
     };
+    let keys = KeyTable::from_verifiers(1, snapshot.resources["key_verifiers"].take())?;
     Ok(Fixture {
-        index: Index::build(&mut snapshot)?,
+        index: Index::build(&mut snapshot, std::sync::Arc::new(keys))?,
         ids,
     })
 }

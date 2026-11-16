@@ -8,7 +8,7 @@ import json
 import os
 import random
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -29,6 +29,31 @@ class GatewayOutcomeUnknown(RuntimeError):
         self.retry_args = args
 
 
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def key_set_digest(keys):
+    """The digest a release names for its key set (docs/plane-protocol.md)."""
+    digest = hashlib.sha256()
+    for k in sorted(keys, key=lambda k: k["id"]):
+        expires = k["expires_at"]
+        micros = (
+            (datetime.fromisoformat(expires) - EPOCH) // timedelta(microseconds=1)
+            if expires
+            else "-"
+        )
+        fields = (
+            k["id"],
+            k["digest"],
+            k["organization_id"],
+            k["project_id"],
+            k["service_account_id"],
+            micros,
+        )
+        digest.update(("\t".join(map(str, fields)) + "\n").encode())
+    return digest.hexdigest()
+
+
 class GatewaySimulator:
     def __init__(self, connection, redis, namespace="nexus:v1", reconnect=None):
         if not connection.autocommit:
@@ -40,6 +65,10 @@ class GatewaySimulator:
         self.lock = asyncio.Lock()
         self.config_lock = asyncio.Lock()
         self.snapshot = None
+        self.snapshot_sha256 = None
+        # The cluster's keys by secret digest, at self.key_sequence.
+        self.keys = {}
+        self.key_sequence = None
         self.limits = GatewayLimits(redis, namespace)
 
     @classmethod
@@ -60,6 +89,8 @@ class GatewaySimulator:
 
     async def call(self, operation, *args):
         allowed = {
+            "config_head",
+            "config_keys",
             "get_config_snapshot",
             "get_credential_envelope",
             "ack_config",
@@ -98,9 +129,14 @@ class GatewaySimulator:
         # One function call is one implicit transaction. A normal (buffered)
         # autocommit execute waits for PostgreSQL to finish the transaction;
         # do not hold the wallet lock across a client-issued COMMIT round trip.
-        cursor = await self.connection.execute(
-            f"SELECT gateway_v1.{operation}(" + ",".join(["%s"] * len(args)) + ")", args
+        placeholders = ",".join(["%s"] * len(args))
+        query = (
+            f"SELECT coalesce(jsonb_agg(to_jsonb(k)),'[]') FROM gateway_v1.{operation}"
+            f"({placeholders}) k"
+            if operation == "config_keys"
+            else f"SELECT gateway_v1.{operation}({placeholders})"
         )
+        cursor = await self.connection.execute(query, args)
         return (await cursor.fetchone())[0]
 
     async def refresh(self):
@@ -108,11 +144,19 @@ class GatewaySimulator:
             return await self._refresh()
 
     async def _refresh(self):
-        snapshot = await self.call("get_config_snapshot")
-        metadata = snapshot["manifest"]
-        rev = metadata["revision"]
-        cluster = metadata["cluster_id"]
-        raw = base64.b64decode(snapshot["bytes"])
+        # Every poll reads the head only; the payload and key changes when they moved.
+        head = await self.call("config_head")
+        rev = head["revision"]
+        if (
+            self.snapshot
+            and self.snapshot["revision"] == rev
+            and self.snapshot_sha256 == head["sha256"]
+            and head["applied_revision"] == rev
+        ):
+            self.last_refresh = monotonic()
+            return self.snapshot
+        cluster = head["cluster_id"]
+        raw = None
         try:
             cached = await self.redis.get(f"{self.namespace}:cfg:{{{cluster}}}:snapshot:{rev}")
         except RedisError:
@@ -120,29 +164,68 @@ class GatewaySimulator:
         if cached:
             try:
                 candidate = base64.b64decode(json.loads(cached)["bytes"], validate=True)
-                if hashlib.sha256(candidate).hexdigest() == snapshot["sha256"]:
+                if hashlib.sha256(candidate).hexdigest() == head["sha256"]:
                     raw = candidate
             except ValueError, KeyError, TypeError:
                 pass
-        if hashlib.sha256(raw).hexdigest() != snapshot["sha256"]:
+        if raw is None:
+            raw = bytes(await self.call("get_config_snapshot", int(rev)))
+        if hashlib.sha256(raw).hexdigest() != head["sha256"]:
             raise ValueError("Invalid snapshot digest")
         data = json.loads(raw)
         if data["schema_version"] != 1 or set(data["required_capabilities"]) - {
             "reservation.v1",
             "usage-events.v1",
         }:
-            await self.call(
-                "ack_config", int(rev), snapshot["sha256"], False, "unsupported_capability"
-            )
+            await self.call("ack_config", int(rev), head["sha256"], False, "unsupported_capability")
             raise ValueError("Unsupported snapshot")
         if self.snapshot and int(rev) < int(self.snapshot["revision"]):
             raise ValueError("Configuration revision regressed")
-        if self.snapshot != data or snapshot["applied_revision"] != rev:
-            await self.call("ack_config", int(rev), snapshot["sha256"], True, "")
+        await self._keys(int(rev), data["key_set"])
+        if self.snapshot != data or head["applied_revision"] != rev:
+            await self.call("ack_config", int(rev), head["sha256"], True, "")
         self.last_refresh = monotonic()
-        self.node_id = snapshot["node_id"]
+        self.node_id = head["node_id"]
         self.snapshot = data
+        self.snapshot_sha256 = head["sha256"]
         return data
+
+    async def _keys(self, rev, key_set):
+        """Bring self.keys to the release's key sequence: net changes, else all keys."""
+        target = int(key_set["sequence"])
+        since = self.key_sequence
+        if since == target and len(self.keys) == key_set["count"]:
+            return
+        if since is None or since > target:
+            since = 0
+        for _ in range(2):
+            keys = {} if since == 0 else dict(self.keys)
+            by_id = {k["id"]: d for d, k in keys.items()}
+            after = (None, None, None)
+            while True:
+                rows = await self.call("config_keys", rev, since, *after, 5000)
+                for row in rows:
+                    if row["present"]:
+                        keys[row["digest"]] = {
+                            "id": row["change_key"],
+                            "digest": row["digest"],
+                            "organization_id": row["organization_id"],
+                            "project_id": row["project_id"],
+                            "service_account_id": row["service_account_id"],
+                            "expires_at": row["expires_at"],
+                        }
+                        by_id[row["change_key"]] = row["digest"]
+                    elif row["change_key"] in by_id:
+                        keys.pop(by_id.pop(row["change_key"]), None)
+                if len(rows) < 5000:
+                    break
+                last = rows[-1]
+                after = (last["change_sequence"], UUID(last["change_key"]), last["present"])
+            if len(keys) == key_set["count"] and key_set_digest(keys.values()) == key_set["sha256"]:
+                self.keys, self.key_sequence = keys, target
+                return
+            since = 0
+        raise ValueError("Key set does not match the release")
 
     async def watch(self, stop, refresh_interval=5):
         data = await self.refresh()
@@ -191,15 +274,15 @@ class GatewaySimulator:
             raise ValueError("Credential binding mismatch")
         return data["secret"]
 
-    async def reserve(self, secret, model, inputs, outputs, request_id=None):
+    async def reserve(
+        self, secret, model, inputs, outputs, request_id=None, deployment=None, attempt_id=None
+    ):
+        """Reserve; with a deployment the first attempt is registered in the same call."""
         snapshot = self.snapshot
         resources = snapshot["resources"]
         digest = hashlib.sha256(secret.encode()).hexdigest()
-        key = next(
-            (k for k in resources["key_verifiers"] if hmac.compare_digest(k["digest"], digest)),
-            None,
-        )
-        if key is None:
+        key = self.keys.get(digest)
+        if key is None or not hmac.compare_digest(key["digest"], digest):
             raise ValueError("Invalid API key")
         model_id = str(model)
         definition = next((m for m in resources["models"] if m["id"] == model_id), None)
@@ -245,6 +328,7 @@ class GatewaySimulator:
             resources["quota_policies"],
             binding=[self.node_id, str(model), inputs, outputs, snapshot["revision"]],
         )
+        first = () if deployment is None else (attempt_id or uuid4(), UUID(str(deployment)))
         try:
             result = await self.call(
                 "reserve_request",
@@ -254,6 +338,7 @@ class GatewaySimulator:
                 int(snapshot["revision"]),
                 inputs,
                 outputs,
+                *first,
             )
         except psycopg.errors.RaiseException:
             await self.limits.finish(lease, 0)
@@ -299,21 +384,26 @@ class GatewaySimulator:
 
     async def simulate(self, secret, model, inputs, outputs):
         await self.refresh()
-        result, lease = await self.reserve(secret, model, inputs, outputs)
-        if result["state"] != "reserved" or result["closed"] or result["attempts"]:
-            return result
-        rid = UUID(result["request_id"])
+        key = self.keys.get(hashlib.sha256(secret.encode()).hexdigest())
+        if key is None:
+            raise ValueError("Invalid API key")
         route = next(
             r
             for r in self.snapshot["resources"]["routes"]
-            if r["model_id"] == str(model) and r["organization_id"] == result["organization_id"]
+            if r["model_id"] == str(model) and r["organization_id"] == key["organization_id"]
         )
         candidates = route["candidates"]
         tier = min(item["priority"] for item in candidates)
         active = [item for item in candidates if item["priority"] == tier]
         deployment = random.choices(active, weights=[d["weight"] for d in active], k=1)[0]
         aid = uuid4()
-        await self.start_attempt(rid, aid, 1, deployment["deployment_id"], lease)
+        # The reservation and the first attempt commit together.
+        result, lease = await self.reserve(
+            secret, model, inputs, outputs, deployment=deployment["deployment_id"], attempt_id=aid
+        )
+        if result["state"] != "running" or result["closed"] or len(result["attempts"]) != 1:
+            return result
+        rid = UUID(result["request_id"])
         usage = {"input_total_tokens": inputs, "cached_input_tokens": 0, "output_tokens": outputs}
         model_config = next(
             m for m in self.snapshot["resources"]["models"] if m["id"] == str(model)

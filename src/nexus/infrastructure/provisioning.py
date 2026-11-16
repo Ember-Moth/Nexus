@@ -94,11 +94,17 @@ def provision(
         connection.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
 
 
+# Every statement of a Relay node, as a role setting: it then also applies behind a
+# transaction-mode connection pooler, which does not keep session-level SET commands.
+GATEWAY_STATEMENT_TIMEOUT = "8s"
+
+
 def ensure_gateway_login(connection: psycopg.Connection, role: str, password: str) -> bool:
     """Create or re-key one gateway node's login. Returns True when the role was created.
 
     A node login inherits ``nexus_gateway`` and nothing else; an existing role with other
-    memberships or attributes is refused rather than silently narrowed.
+    memberships or attributes is refused rather than silently narrowed. Its statement timeout
+    is a role setting; the Relay refuses to start without one.
     """
     if not role.startswith("nexus_") or not role.replace("_", "").isalnum():
         raise ProvisioningError("gateway node roles are lower-case identifiers prefixed nexus_")
@@ -110,12 +116,16 @@ def ensure_gateway_login(connection: psycopg.Connection, role: str, password: st
              FROM pg_roles r WHERE r.rolname=%s""",
         (role,),
     ).fetchone()
+    timeout = sql.SQL("ALTER ROLE {} SET statement_timeout = {}").format(
+        sql.Identifier(role), sql.Literal(GATEWAY_STATEMENT_TIMEOUT)
+    )
     if row is None:
         connection.execute(
             sql.SQL("CREATE ROLE {} LOGIN INHERIT PASSWORD {} IN ROLE nexus_gateway").format(
                 sql.Identifier(role), sql.Literal(password)
             )
         )
+        connection.execute(timeout)
         return True
     login, privileged, memberships = row
     if not login or privileged or memberships != ["nexus_gateway"]:
@@ -123,4 +133,5 @@ def ensure_gateway_login(connection: psycopg.Connection, role: str, password: st
     connection.execute(
         sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(role), sql.Literal(password))
     )
+    connection.execute(timeout)
     return False

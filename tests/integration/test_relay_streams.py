@@ -353,10 +353,7 @@ async def test_native_sse(http, admin, tls, relay_binary, family, monkeypatch): 
             5,
             0,
         )
-        assert (
-            dropped == ["reserve_request", "start_attempt", "append_usage_event"]
-            and len(received) == 1
-        )
+        assert dropped == ["reserve_request", "append_usage_event"] and len(received) == 1
         mode = "error"
         reply = await public.post(path, headers=hdr, json=body)
         assert "event: error" in reply.text
@@ -561,6 +558,7 @@ async def test_responses_ws(http, admin, tls, relay_binary):  # noqa: F811
                 90,
                 0,
             )
+            # The first WebSocket turn dials before it registers its attempt (start_attempt).
             assert dropped == ["reserve_request", "start_attempt", "append_usage_event"]
             async with connect(uri, additional_headers=hdr, proxy=None) as other:
                 await send(other, nxt)

@@ -138,11 +138,14 @@ impl Gateway {
 }
 
 impl Gateway {
+    /// Reserve `selection`; with `first` its first attempt is registered on the selected
+    /// deployment in the same transaction.
     pub(crate) async fn reserve_generation(
         &self,
         id: Uuid,
         rev: i64,
         selection: &super::snapshot::Selection<'_>,
+        first: Option<Uuid>,
     ) -> Result<Value, ControlError> {
         let (kid, model, dep, b) = (
             selection.key.id,
@@ -155,7 +158,7 @@ impl Gateway {
                 .call(
                     "reserve_guardrail_request",
                     sqlx::query_scalar(
-                        "SELECT gateway_v1.reserve_guardrail_request($1,$2,$3,$4,$5,$6,$7,$8)",
+                        "SELECT gateway_v1.reserve_guardrail_request($1,$2,$3,$4,$5,$6,$7,$8,$9)",
                     )
                     .bind(id)
                     .bind(kid)
@@ -165,6 +168,7 @@ impl Gateway {
                     .bind(i64::from(b.outputs))
                     .bind(dep)
                     .bind(b.guardrail_units as i32)
+                    .bind(first)
                     .fetch_one(&self.pool),
                 )
                 .await?;
@@ -178,6 +182,7 @@ impl Gateway {
                     model,
                     rev,
                     b,
+                    first.map(|aid| (aid, dep)),
                     selection.private_history.then_some(dep),
                 )
                 .await;
@@ -186,7 +191,7 @@ impl Gateway {
             .call(
                 "reserve_interpreter",
                 sqlx::query_scalar(
-                    "SELECT gateway_v1.reserve_interpreter($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+                    "SELECT gateway_v1.reserve_interpreter($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
                 )
                 .bind(id)
                 .bind(kid)
@@ -200,6 +205,7 @@ impl Gateway {
                 .bind(t.existing)
                 .bind(t.tier.name())
                 .bind(t.preloaded)
+                .bind(first)
                 .fetch_one(&self.pool),
             )
             .await?;

@@ -97,6 +97,7 @@ pub(super) async fn upgrade(
     State(node): State<Arc<Node>>,
     Extension(stop): Extension<tokio_util::sync::CancellationToken>,
     Extension(session_id): Extension<Uuid>,
+    Extension(wire): Extension<super::delivery::Delivery>,
     headers: HeaderMap,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Response {
@@ -152,11 +153,18 @@ pub(super) async fn upgrade(
     let limit = node.event_bytes;
     // Register before returning 101, so drain also owns upgrades which have not completed yet.
     let (tx, rx) = oneshot::channel();
+    let written = wire.count();
     node.tasks.clone().spawn(async move {
         let _slot = slot;
         if let Ok(Ok(socket)) = timeout(Duration::from_secs(10), rx).await {
             info!(session_id = %session_id, "websocket session opened");
-            session(node, socket, raw, stop, session_id, cache_key).await;
+            // Writes to the client time out after `idle` without write progress.
+            super::delivery::WEBSOCKET_WRITTEN
+                .scope(
+                    written,
+                    session(node, socket, raw, stop, session_id, cache_key),
+                )
+                .await;
         }
     });
     ws.max_message_size(limit)
@@ -179,9 +187,8 @@ struct Frame {
 type Output = mpsc::Sender<Frame>;
 
 async fn write(sink: &mut Writer, msg: Message, idle: Duration) -> Result<(), ()> {
-    timeout(idle, sink.send(msg))
-        .await
-        .map_err(|_| ())?
+    super::delivery::client_write(idle, sink.send(msg))
+        .await?
         .map_err(|_| ())
 }
 async fn emit(out: &Output, value: Value) -> Result<(), ()> {
@@ -468,14 +475,25 @@ async fn session(
             if let Some(lane) = stream_id.as_deref() {
                 frame["stream_id"] = lane.into();
             }
-            let (mut r, secret) =
-                match Reservation::reserve(request_id, node.clone(), &index, &selected, EP).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        channel.error(e.1).await;
-                        return false;
-                    }
-                };
+            // A turn on an open upstream socket registers its first attempt with the
+            // reservation; the first turn dials before its attempt is registered.
+            let connected = state.socket.is_some();
+            let (mut r, secret) = match Reservation::reserve(
+                request_id,
+                node.clone(),
+                &index,
+                &selected,
+                EP,
+                connected,
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    channel.error(e.1).await;
+                    return false;
+                }
+            };
             r.tally = tally;
             debug!(
                 session_id = %session_id,
@@ -932,9 +950,7 @@ async fn roundtrip(
         }
         crate::protocol::upstream_error::scrub_event(&mut event);
         crate::protocol::ownership::seal(&mut event, &ch.owner.0, ch.owner.1);
-        timeout(ch.idle, emit(&ch.out, event))
-            .await
-            .map_err(|_| ())??;
+        super::delivery::client_write(ch.idle, emit(&ch.out, event)).await??;
         if done.is_some() {
             return Ok(());
         }

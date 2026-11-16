@@ -10,7 +10,7 @@ use uuid::Uuid;
 use super::{
     ControlError,
     credential::{CredentialRef, Envelope},
-    pg_base64,
+    keys::{KeyChange, KeySet},
 };
 use crate::{
     metrics::{self, Dependency},
@@ -41,11 +41,24 @@ pub struct StoredResponse {
 }
 
 #[derive(Deserialize)]
-struct SnapshotReply {
-    applied_revision: String,
+struct HeadReply {
     node_id: Uuid,
+    cluster_id: Uuid,
+    revision: String,
+    applied_revision: String,
     sha256: String,
-    bytes: String,
+    key_sequence: String,
+}
+
+/// What a node polls: the desired revision and what the node has applied.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Head {
+    pub node_id: Uuid,
+    pub cluster_id: Uuid,
+    pub revision: i64,
+    pub applied_revision: i64,
+    pub digest: String,
+    pub key_sequence: i64,
 }
 
 pub struct Snapshot {
@@ -56,6 +69,23 @@ pub struct Snapshot {
     pub digest: String,
     pub resources: Value,
     pub required_capabilities: Vec<String>,
+    /// The key set the release names; keys are read with `Gateway::key_changes`.
+    pub key_set: Option<KeySet>,
+}
+
+/// Rows per `config_keys` page.
+pub const KEY_PAGE: i32 = 5000;
+
+#[derive(Deserialize)]
+struct KeyRow {
+    change_sequence: i64,
+    change_key: Uuid,
+    present: bool,
+    digest: Option<String>,
+    organization_id: Option<Uuid>,
+    project_id: Option<Uuid>,
+    service_account_id: Option<Uuid>,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Gateway {
@@ -69,17 +99,19 @@ impl Gateway {
         }
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
-            .after_connect(|conn, _| {
-                Box::pin(async move {
-                    sqlx::query("SET statement_timeout = '8s'")
-                        .execute(conn)
-                        .await?;
-                    Ok(())
-                })
-            })
             .acquire_timeout(timeout)
             .connect(url)
             .await?;
+        // statement_timeout is a setting of the node role (ALTER ROLE ... SET), so it also holds
+        // behind a transaction-mode pooler that does not keep session settings.
+        let configured: String = sqlx::query_scalar("SELECT current_setting('statement_timeout')")
+            .fetch_one(&pool)
+            .await?;
+        if configured == "0" {
+            return Err(ControlError::Invalid(
+                "statement_timeout: set it on the node role (ALTER ROLE ... SET statement_timeout)",
+            ));
+        }
         Ok(Self { pool })
     }
 
@@ -103,21 +135,40 @@ impl Gateway {
         result
     }
 
-    pub async fn snapshot(
-        &self,
-        cluster: Uuid,
-        revision: Option<i64>,
-    ) -> Result<Snapshot, ControlError> {
-        let Json(reply): Json<SnapshotReply> = self
+    /// The desired revision, its digest and key sequence, and this node's applied revision.
+    pub async fn head(&self, cluster: Uuid) -> Result<Head, ControlError> {
+        let Json(reply): Json<HeadReply> = self
+            .call(
+                "config_head",
+                sqlx::query_scalar("SELECT gateway_v1.config_head()").fetch_one(&self.pool),
+            )
+            .await?;
+        let number = |s: &str, what| s.parse::<i64>().map_err(|_| ControlError::Invalid(what));
+        let head = Head {
+            node_id: reply.node_id,
+            cluster_id: reply.cluster_id,
+            revision: number(&reply.revision, "revision")?,
+            applied_revision: number(&reply.applied_revision, "applied revision")?,
+            digest: reply.sha256,
+            key_sequence: number(&reply.key_sequence, "key sequence")?,
+        };
+        if head.cluster_id != cluster || head.revision < 1 || head.key_sequence < 0 {
+            return Err(ControlError::Invalid("snapshot binding"));
+        }
+        Ok(head)
+    }
+
+    /// The published bytes of `head`'s revision, checked against its digest.
+    pub async fn snapshot(&self, head: &Head) -> Result<Snapshot, ControlError> {
+        let bytes: Vec<u8> = self
             .call(
                 "get_config_snapshot",
                 sqlx::query_scalar("SELECT gateway_v1.get_config_snapshot($1)")
-                    .bind(revision)
+                    .bind(head.revision)
                     .fetch_one(&self.pool),
             )
             .await?;
-        let bytes = pg_base64(&reply.bytes)?;
-        if format!("{:x}", Sha256::digest(&bytes)) != reply.sha256 {
+        if format!("{:x}", Sha256::digest(&bytes)) != head.digest {
             return Err(ControlError::Invalid("snapshot digest"));
         }
         #[derive(Deserialize)]
@@ -127,6 +178,7 @@ impl Gateway {
             revision: String,
             resources: Value,
             required_capabilities: Vec<String>,
+            key_set: KeySet,
         }
         let manifest: Manifest =
             serde_json::from_slice(&bytes).map_err(|_| ControlError::Invalid("snapshot"))?;
@@ -135,25 +187,65 @@ impl Gateway {
             .parse()
             .map_err(|_| ControlError::Invalid("revision"))?;
         if manifest.schema_version != 1
-            || manifest.cluster_id != cluster
-            || rev < 1
-            || revision.is_some_and(|r| r != rev)
+            || manifest.cluster_id != head.cluster_id
+            || rev != head.revision
+            || manifest.key_set.sequence()? != head.key_sequence
             || !manifest.resources.is_object()
         {
             return Err(ControlError::Invalid("snapshot binding"));
         }
         Ok(Snapshot {
-            applied_revision: reply
-                .applied_revision
-                .parse()
-                .map_err(|_| ControlError::Invalid("applied revision"))?,
-            node_id: reply.node_id,
-            cluster_id: cluster,
+            applied_revision: head.applied_revision,
+            node_id: head.node_id,
+            cluster_id: head.cluster_id,
             revision: rev,
-            digest: reply.sha256,
+            digest: head.digest.clone(),
             resources: manifest.resources,
             required_capabilities: manifest.required_capabilities,
+            key_set: Some(manifest.key_set),
         })
+    }
+
+    /// The net key changes from key sequence `since` to the key sequence of `revision`.
+    pub async fn key_changes(
+        &self,
+        revision: i64,
+        since: i64,
+    ) -> Result<Vec<KeyChange>, ControlError> {
+        let mut changes: Vec<KeyChange> = Vec::new();
+        loop {
+            let after = changes.last().map(|c| (c.sequence, c.key, c.present));
+            let Json(rows): Json<Vec<KeyRow>> = self
+                .call(
+                    "config_keys",
+                    sqlx::query_scalar(
+                        "SELECT coalesce(jsonb_agg(to_jsonb(k)),'[]') \
+                         FROM gateway_v1.config_keys($1,$2,$3,$4,$5,$6) k",
+                    )
+                    .bind(revision)
+                    .bind(since)
+                    .bind(after.map(|a| a.0))
+                    .bind(after.map(|a| a.1))
+                    .bind(after.map(|a| a.2))
+                    .bind(KEY_PAGE)
+                    .fetch_one(&self.pool),
+                )
+                .await?;
+            let full = rows.len() == KEY_PAGE as usize;
+            changes.extend(rows.into_iter().map(|r| KeyChange {
+                sequence: r.change_sequence,
+                key: r.change_key,
+                present: r.present,
+                digest: r.digest,
+                organization_id: r.organization_id,
+                project_id: r.project_id,
+                service_account_id: r.service_account_id,
+                expires_at: r.expires_at,
+            }));
+            if !full {
+                return Ok(changes);
+            }
+        }
     }
 
     /// Call only after the consumer has validated and installed all required resources.
@@ -596,6 +688,8 @@ impl Gateway {
         Ok(result)
     }
 
+    /// Reserve a request; with `first` (attempt id, deployment) its first attempt is
+    /// registered in the same transaction.
     pub async fn reserve(
         &self,
         request: Uuid,
@@ -603,10 +697,15 @@ impl Gateway {
         model: Uuid,
         revision: i64,
         bounds: ReservationBounds,
+        first: Option<(Uuid, Uuid)>,
     ) -> Result<Value, ControlError> {
-        self.reserve_with_source(request, key, model, revision, bounds, None)
+        self.reserve_with_source(request, key, model, revision, bounds, first, None)
             .await
     }
+
+    /// Reserve a request; with `first` (attempt id, deployment) its first attempt is
+    /// registered in the same transaction.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn reserve_with_source(
         &self,
         request: Uuid,
@@ -614,44 +713,42 @@ impl Gateway {
         model: Uuid,
         revision: i64,
         bounds: ReservationBounds,
+        first: Option<(Uuid, Uuid)>,
         source: Option<Uuid>,
     ) -> Result<Value, ControlError> {
         let execution = bounds.execution_mode != crate::protocol::execution::ExecutionMode::None;
-        let (sql, next_parameter) = if execution {
-            (
-                "SELECT gateway_v1.reserve_execution_request($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-                10,
-            )
+        let (function, extra) = if execution {
+            ("reserve_execution_request", 3)
         } else if bounds.file_searches > 0 {
-            (
-                "SELECT gateway_v1.reserve_file_request($1,$2,$3,$4,$5,$6,$7,$8)",
-                9,
-            )
+            ("reserve_file_request", 2)
         } else if bounds.searches > 0 {
-            (
-                "SELECT gateway_v1.reserve_search_request($1,$2,$3,$4,$5,$6,$7)",
-                8,
-            )
+            ("reserve_search_request", 1)
         } else {
-            ("SELECT gateway_v1.reserve_request($1,$2,$3,$4,$5,$6)", 7)
+            ("reserve_request", 0)
         };
+        // Six bounds, the variant's extra bounds, then the first attempt (aid, dep).
+        let count = 6 + extra + 2;
+        let parameters = (1..=count)
+            .map(|i| format!("${i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut sql = format!("SELECT gateway_v1.{function}({parameters})");
         // Both security-definer calls share one transaction. An eligible
         // alternate route cannot authorize a hold for stale private history.
-        let pinned;
-        let sql = if source.is_some() {
-            pinned = format!("{sql} FROM gateway_v1.preflight($2,$4,$3,${next_parameter})");
-            &pinned
-        } else {
-            sql
-        };
-        let mut query = sqlx::query_scalar(sql)
+        if source.is_some() {
+            sql.push_str(&format!(
+                " FROM gateway_v1.preflight($2,$4,$3,${})",
+                count + 1
+            ));
+        }
+        let mut query = sqlx::query_scalar(&sql)
             .bind(request)
             .bind(key)
             .bind(model)
             .bind(revision)
             .bind(i64::from(bounds.inputs))
             .bind(i64::from(bounds.outputs));
-        if execution || bounds.searches > 0 || bounds.file_searches > 0 {
+        if extra > 0 {
             query = query.bind(bounds.searches as i32);
         }
         if execution {
@@ -661,6 +758,7 @@ impl Gateway {
         } else if bounds.file_searches > 0 {
             query = query.bind(bounds.file_searches as i32);
         }
+        query = query.bind(first.map(|f| f.0)).bind(first.map(|f| f.1));
         if let Some(dep) = source {
             query = query.bind(dep);
         }

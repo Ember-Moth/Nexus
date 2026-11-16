@@ -15,7 +15,8 @@
 | `NEXUS_RELAY_DATABASE_URL` | 节点专属 PostgreSQL 登录的连接 URL，使用已登记的 gateway principal |
 | `NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_NAMESPACE` | 与控制平面相同的 Redis 和命名空间，命名空间默认 `nexus:v1` |
 | `NEXUS_RELAY_CLUSTER_ID`、`NEXUS_RELAY_PRIVATE_KEY` | 已登记的集群 UUID 和对应的 base64 编码 32 字节 Curve25519 私钥 |
-| `NEXUS_RELAY_LISTEN`、`NEXUS_RELAY_POOL_SIZE` | 默认监听 `127.0.0.1:8081`，每个节点默认最多 8 个数据库连接 |
+| `NEXUS_RELAY_LISTEN`、`NEXUS_RELAY_POOL_SIZE` | 默认监听 `127.0.0.1:8081`，每个节点默认最多 8 个请求用数据库连接，另有 1 个配置刷新连接；按“节点数 × 连接池 ≤ PostgreSQL 核数的 2–4 倍”设置，见[连接预算](deployment.md#连接预算) |
+| `NEXUS_RELAY_TENANT_ADMISSIONS`、`NEXUS_RELAY_ADMISSION_WAIT_MS` | 同一企业在全集群同时处于数据库准入调用中的请求数上限（默认 32，0 关闭）和等待名额的时间（默认 5000 ms），见[企业准入并发](plane-protocol.md#企业准入并发) |
 | `NEXUS_RELAY_METRICS_LISTEN` | 指标监听，默认 `127.0.0.1:9464`，只提供 `GET /metrics` 和 `GET /live`，不承载企业流量也不鉴权。容器部署时绑定 Pod 内网地址，用网络策略只放行 Prometheus 和 kubelet，不要经由入口负载均衡暴露 |
 | `NEXUS_RELAY_LOG` | 日志级别过滤，默认 `info`。以逗号分隔，单独的级别作为默认值，`target=level` 单独设置模块，例如 `info,nexus_relay::server=debug,sqlx=warn`。取值无效时节点拒绝启动 |
 | `NEXUS_RELAY_REQUEST_BYTES`、`NEXUS_RELAY_RESPONSE_BYTES` | 默认请求上限 2 MiB，解压后非流式响应上限 8 MiB |

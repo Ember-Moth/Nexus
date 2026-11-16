@@ -136,9 +136,14 @@ def rounds():
 
 
 def selected(profiles, name=lambda p: p[0]):
-    """Profiles whose name contains one of the RELAY_LOAD_PROFILES substrings (default all)."""
+    """Profiles whose name contains one of the RELAY_LOAD_PROFILES substrings (default all);
+    a substring ending in ``$`` must match the whole name."""
     wanted = [w for w in os.environ.get("RELAY_LOAD_PROFILES", "").split(",") if w]
-    return [p for p in profiles if not wanted or any(w in name(p) for w in wanted)]
+
+    def match(w, n):
+        return n == w[:-1] if w.endswith("$") else w in n
+
+    return [p for p in profiles if not wanted or any(match(w, name(p)) for w in wanted)]
 
 
 @asynccontextmanager
@@ -287,6 +292,10 @@ async def register_node(client, root, admin, cid, auth):
     # Every statement of a node is logged with its server-side duration (see PgLog).
     admin.execute(
         sql.SQL("ALTER ROLE {} SET log_min_duration_statement = 0").format(sql.Identifier(name))
+    )
+    # The Relay requires a role-level statement timeout (ensure_gateway_login sets the same).
+    admin.execute(
+        sql.SQL("ALTER ROLE {} SET statement_timeout = '8s'").format(sql.Identifier(name))
     )
     nid = uuid4()
     response = await client.put(

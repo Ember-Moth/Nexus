@@ -54,9 +54,9 @@ class Gateway:
 
     async def connect(self):
         data = await relay_refresh(self.peer)
-        verifiers = {k["digest"]: k["id"] for k in data["resources"]["key_verifiers"]}
         self.keys = [
-            UUID(verifiers[hashlib.sha256(s.encode()).hexdigest()]) for _, s in self.members
+            UUID(self.peer.keys[hashlib.sha256(s.encode()).hexdigest()]["id"])
+            for _, s in self.members
         ]
         self.revision = int(data["revision"])
         return self

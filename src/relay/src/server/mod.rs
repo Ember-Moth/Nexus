@@ -2,7 +2,7 @@ pub(crate) mod background;
 mod batches;
 mod containers;
 mod conversations;
-mod delivery;
+pub(crate) mod delivery;
 mod files;
 mod history;
 mod observe;
@@ -16,6 +16,7 @@ use crate::{
     control::{
         ControlError,
         database::Gateway,
+        keys::KeyTable,
         limits::Limits,
         snapshot::{CAPABILITIES, Index},
     },
@@ -83,6 +84,9 @@ pub const DRAIN: std::ops::RangeInclusive<Duration> =
 
 pub struct Node {
     pub(crate) db: Gateway,
+    /// One connection of its own for configuration refresh, so requests queued on locks in
+    /// the main pool cannot fail the refresh and mark the node unhealthy.
+    control: Gateway,
     pub(crate) limits: Limits,
     pub(crate) private: SecretKey,
     pub(crate) history: Arc<crate::protocol::history::HistoryKey>,
@@ -109,6 +113,7 @@ pub struct Node {
 impl Node {
     pub fn new(
         db: Gateway,
+        control: Gateway,
         limits: Limits,
         private: SecretKey,
         upstream: Upstream,
@@ -147,6 +152,7 @@ impl Node {
         }
         Ok(Arc::new(Self {
             db,
+            control,
             limits,
             history: Arc::new(crate::protocol::history::HistoryKey::new(&private, cluster)),
             ownership: Arc::new(crate::protocol::ownership::OwnershipKey::new(
@@ -179,21 +185,24 @@ impl Node {
         }
         self.index.read().unwrap().clone()
     }
+    /// Poll the desired revision on the control connection. The snapshot and the key changes
+    /// are only read when the revision, its digest or the node's applied revision differ from
+    /// what the node serves; key revocations and scope expiry still surface on every poll,
+    /// because both change or fail `config_head`.
     async fn refresh(&self) -> Result<(), ControlError> {
-        let mut snapshot = self.db.snapshot(self.cluster, None).await?;
+        let head = self.control.head(self.cluster).await?;
         let current = self.index.read().unwrap().clone();
         if current.as_ref().is_some_and(|old| {
-            old.revision > snapshot.revision
-                || (old.revision == snapshot.revision && old.digest != snapshot.digest)
-                || old.node != snapshot.node_id
+            old.revision > head.revision
+                || (old.revision == head.revision && old.digest != head.digest)
+                || old.node != head.node_id
         }) {
             return Err(ControlError::Invalid("snapshot regression"));
         }
-        if current
-            .as_ref()
-            .is_none_or(|old| old.digest != snapshot.digest)
-            || snapshot.applied_revision != snapshot.revision
+        if current.as_ref().is_none_or(|old| old.digest != head.digest)
+            || head.applied_revision != head.revision
         {
+            let mut snapshot = self.control.snapshot(&head).await?;
             if snapshot
                 .required_capabilities
                 .iter()
@@ -201,15 +210,18 @@ impl Node {
             {
                 rejected(&snapshot, "unsupported_capability");
                 return self
-                    .db
+                    .control
                     .acknowledge(&snapshot, CAPABILITIES, Some("unsupported_capability"))
                     .await;
             }
-            let index = match Index::build(&mut snapshot) {
+            let keys = self
+                .keys(&snapshot, current.as_ref().map(|i| i.keys.clone()))
+                .await?;
+            let index = match Index::build(&mut snapshot, keys) {
                 Ok(i) => i,
                 Err(e) => {
                     rejected(&snapshot, "invalid_resources");
-                    self.db
+                    self.control
                         .acknowledge(&snapshot, CAPABILITIES, Some("invalid_resources"))
                         .await?;
                     return Err(e);
@@ -219,31 +231,75 @@ impl Node {
             // A live credential check also runs per request, after snapshot installation.
             for reference in index.credentials.values() {
                 let verified = self
-                    .db
+                    .control
                     .credential(index.revision, reference)
                     .await
                     .and_then(|env| env.open(index.cluster, reference, &self.private));
                 if let Err(error) = verified {
                     rejected(&snapshot, "credential_unavailable");
-                    self.db
+                    self.control
                         .acknowledge(&snapshot, CAPABILITIES, Some("credential_unavailable"))
                         .await?;
                     return Err(error);
                 }
             }
-            self.db.acknowledge(&snapshot, CAPABILITIES, None).await?;
+            self.control
+                .acknowledge(&snapshot, CAPABILITIES, None)
+                .await?;
             info!(
                 cluster_id = %self.cluster,
                 node_id = %snapshot.node_id,
                 revision = snapshot.revision,
+                keys = index.keys.len() as u64,
                 "configuration snapshot applied"
             );
             *self.index.write().unwrap() = Some(Arc::new(index));
         }
         self.limits
-            .heartbeat(snapshot.node_id, snapshot.revision)
+            .heartbeat(head.node_id, head.revision)
             .await
             .map_err(|_| ControlError::Invalid("heartbeat"))
+    }
+
+    /// The cluster's keys at the snapshot's key sequence: the previous table when the sequence
+    /// did not move, else the previous table plus the net changes since its sequence, else
+    /// (no previous table, or a delta that does not reproduce the release's key set) the full
+    /// set read from sequence 0.
+    async fn keys(
+        &self,
+        snapshot: &crate::control::database::Snapshot,
+        previous: Option<Arc<KeyTable>>,
+    ) -> Result<Arc<KeyTable>, ControlError> {
+        let set = snapshot
+            .key_set
+            .as_ref()
+            .ok_or(ControlError::Invalid("key set"))?;
+        let target = set.sequence()?;
+        if let Some(previous) = previous {
+            if previous.sequence() == target && previous.len() == set.count {
+                return Ok(previous);
+            }
+            if previous.sequence() < target {
+                let changes = self
+                    .control
+                    .key_changes(snapshot.revision, previous.sequence())
+                    .await?;
+                let mut table = (*previous).clone();
+                drop(previous);
+                if table.apply(&changes, target).is_ok() && table.verify(set).is_ok() {
+                    return Ok(Arc::new(table));
+                }
+                warn!(
+                    revision = snapshot.revision,
+                    "key changes do not reproduce the release's key set; reading all keys"
+                );
+            }
+        }
+        let changes = self.control.key_changes(snapshot.revision, 0).await?;
+        let mut table = KeyTable::default();
+        table.apply(&changes, target)?;
+        table.verify(set)?;
+        Ok(Arc::new(table))
     }
 }
 
@@ -502,9 +558,10 @@ async fn generate(
         request::Response::Stream {
             body,
             receipt,
+            written,
             applied,
         } => {
-            wire.track_stream(receipt);
+            wire.track_stream(receipt, written);
             let stream = futures_util::stream::unfold(body, move |mut rx| {
                 let owner = owner.clone();
                 async move {

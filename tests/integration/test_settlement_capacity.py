@@ -15,7 +15,6 @@ breakdown by phase. Run it with:
 """
 
 import asyncio
-import base64
 import cProfile
 import hashlib
 import json
@@ -198,12 +197,13 @@ async def seed_tenants(http, admin, first, first_key, model, deployment, cid, te
 
 async def relay_refresh(peer):
     """Accept the current snapshot the way a Relay does (the simulator refuses Relay profiles)."""
-    snapshot = await peer.call("get_config_snapshot")
-    data = json.loads(base64.b64decode(snapshot["bytes"]))
-    rev = snapshot["manifest"]["revision"]
-    if snapshot["applied_revision"] != rev:
-        await peer.call("ack_config", int(rev), snapshot["sha256"], True, "")
-    peer.node_id = snapshot["node_id"]
+    head = await peer.call("config_head")
+    rev = int(head["revision"])
+    data = json.loads(bytes(await peer.call("get_config_snapshot", rev)))
+    await peer._keys(rev, data["key_set"])
+    if head["applied_revision"] != head["revision"]:
+        await peer.call("ack_config", rev, head["sha256"], True, "")
+    peer.node_id = head["node_id"]
     peer.snapshot = data
     return data
 
@@ -211,8 +211,7 @@ async def relay_refresh(peer):
 async def seed_requests(peer, model_id, dep_id, owners, members, *, failed_first=False):
     """Relay-shaped facts for one request per owner; returns the request ids."""
     data = await relay_refresh(peer)
-    verifiers = {k["digest"]: k["id"] for k in data["resources"]["key_verifiers"]}
-    keys = [UUID(verifiers[hashlib.sha256(s.encode()).hexdigest()]) for _, s in members]
+    keys = [UUID(peer.keys[hashlib.sha256(s.encode()).hexdigest()]["id"]) for _, s in members]
     revision = int(data["revision"])
     ids = []
     for owner in owners:

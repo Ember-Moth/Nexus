@@ -30,7 +30,12 @@ struct Inputs {
 async fn isolated_gateway_contract() -> Result<(), Box<dyn std::error::Error>> {
     let input: Inputs = serde_json::from_str(&env::var("NEXUS_RELAY_TEST_INPUT")?)?;
     let gateway = Gateway::connect(&input.url, 2, Duration::from_secs(3)).await?;
-    let snapshot = gateway.snapshot(input.cluster, None).await?;
+    let head = gateway.head(input.cluster).await?;
+    let snapshot = gateway.snapshot(&head).await?;
+    assert_eq!(snapshot.revision, head.revision);
+    let keys = gateway.key_changes(snapshot.revision, 0).await?;
+    assert!(keys.iter().all(|k| k.present));
+    assert!(keys.iter().any(|k| k.key == input.key));
     let caps = [
         "reservation.v1",
         "usage-events.v1",
@@ -62,6 +67,7 @@ async fn isolated_gateway_contract() -> Result<(), Box<dyn std::error::Error>> {
 
     let bounds = ReservationBounds::for_deployment(4, 6, None)?;
     assert!(gateway.status(input.request).await?.is_none());
+    // A reservation alone can be cancelled before any attempt.
     gateway
         .reserve(
             input.unstarted,
@@ -69,6 +75,7 @@ async fn isolated_gateway_contract() -> Result<(), Box<dyn std::error::Error>> {
             input.model,
             snapshot.revision,
             bounds,
+            None,
         )
         .await?;
     assert_eq!(
@@ -77,6 +84,7 @@ async fn isolated_gateway_contract() -> Result<(), Box<dyn std::error::Error>> {
             .await?["state"],
         "canceled"
     );
+    // The reservation and its first attempt commit together; a replay returns both.
     for replay in [false, true] {
         let reply = gateway
             .reserve(
@@ -85,14 +93,17 @@ async fn isolated_gateway_contract() -> Result<(), Box<dyn std::error::Error>> {
                 input.model,
                 snapshot.revision,
                 bounds,
+                Some((input.attempt, input.deployment)),
             )
             .await?;
         assert_eq!(reply["replayed"], replay);
-        let reply = gateway
-            .start_attempt(input.request, input.attempt, 1, input.deployment)
-            .await?;
-        assert_eq!(reply["replayed"], replay);
+        assert_eq!(reply["attempt"]["replayed"], replay);
+        assert_eq!(reply["attempts"].as_array().unwrap().len(), 1);
     }
+    let reply = gateway
+        .start_attempt(input.request, input.attempt, 1, input.deployment)
+        .await?;
+    assert_eq!(reply["replayed"], true);
     for event in input.events {
         for _ in 0..2 {
             assert_eq!(gateway.append_event(&event).await?["status"], "accepted");
@@ -128,16 +139,24 @@ async fn cross_language_lease() -> Result<(), Box<dyn std::error::Error>> {
     };
     let input: LeaseInput = serde_json::from_str(&env::var("NEXUS_RELAY_TEST_INPUT")?)?;
     let gateway = Gateway::connect(&input.url, 2, Duration::from_secs(3)).await?;
-    let snapshot = gateway.snapshot(input.cluster, None).await?;
+    let snapshot = gateway
+        .snapshot(&gateway.head(input.cluster).await?)
+        .await?;
     assert_eq!(snapshot.digest, input.digest);
     assert_eq!(snapshot.revision, input.revision);
-    let raw = snapshot.resources["key_verifiers"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|k| k["id"] == input.key_id.to_string())
+    let row = gateway
+        .key_changes(snapshot.revision, 0)
+        .await?
+        .into_iter()
+        .find(|k| k.key == input.key_id)
         .unwrap();
-    let key: Key = serde_json::from_value(raw.clone())?;
+    let key = Key {
+        id: row.key,
+        organization_id: row.organization_id.unwrap(),
+        project_id: row.project_id.unwrap(),
+        service_account_id: row.service_account_id.unwrap(),
+        expires_at: row.expires_at,
+    };
     let quotas: Vec<Quota> = serde_json::from_value(snapshot.resources["quota_policies"].clone())?;
     let limits = Limits::connect(&input.redis, input.namespace).await?;
     let admission = |request| Admission {
@@ -180,10 +199,11 @@ async fn cross_language_lease() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn indexed_route_requires_the_scoped_key_and_selects_the_first_eligible_priority() {
     use nexus_relay::{
-        control::{database::Snapshot, snapshot::Index},
+        control::{database::Snapshot, keys::KeyTable, snapshot::Index},
         protocol::{Endpoint, request::Generate},
     };
     use serde_json::json;
+    use std::sync::Arc;
     let (org, key, project, model, credential, primary, backup, other, legacy) = (
         Uuid::new_v4(),
         Uuid::new_v4(),
@@ -228,8 +248,10 @@ fn indexed_route_requires_the_scoped_key_and_selects_the_first_eligible_priority
         digest: String::new(),
         required_capabilities: vec!["relay.native.v1".into()],
         resources: resources.clone(),
+        key_set: None,
     };
-    let index = Index::build(&mut snapshot).unwrap();
+    let keys = Arc::new(KeyTable::from_verifiers(1, resources["key_verifiers"].clone()).unwrap());
+    let index = Index::build(&mut snapshot, keys.clone()).unwrap();
     let generate = |body| Generate::parse(Endpoint::OpenaiResponses, body, false).unwrap();
     let request = generate(json!({"model":"public","input":"hello"}));
     assert!(index.select("unknown", &request).is_err());
@@ -251,7 +273,7 @@ fn indexed_route_requires_the_scoped_key_and_selects_the_first_eligible_priority
     snapshot.resources["access_policies"].as_array_mut().unwrap().push(json!({
         "organization_id":org,"scope_id":key,"scope_type":"key","layer":"customer","allowed_models":[]}));
     assert!(
-        Index::build(&mut snapshot)
+        Index::build(&mut snapshot, keys)
             .unwrap()
             .select("enterprise", &request)
             .is_err()

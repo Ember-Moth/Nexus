@@ -78,6 +78,8 @@ def test_gateway_logins_are_plain_members_of_nexus_gateway(admin):
         with login(first) as node:
             query = "SELECT pg_has_role(current_user, 'nexus_gateway', 'USAGE')"
             assert node.execute(query).fetchone()[0]
+            # A role setting, so a transaction-mode pooler cannot drop it.
+            assert node.execute("SHOW statement_timeout").fetchone()[0] == "8s"
         # The Secret is authoritative: a second run re-keys the login.
         assert ensure_gateway_login(admin, role, second) is False
         with pytest.raises(psycopg.OperationalError):

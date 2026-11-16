@@ -25,7 +25,7 @@ from cryptography.x509.oid import NameOID
 from pg_receipt import lose_gateway_receipts
 from test_billing import account_amounts, headers, make_budget
 from test_identity_api import auth
-from test_plane import plane, provision_plane  # noqa: F401 - pytest fixture
+from test_plane import list_keys_in_manifests, plane, provision_plane  # noqa: F401 - fixture
 
 pytestmark = pytest.mark.integration
 CRATE = Path(__file__).resolve().parents[2] / "src" / "relay"
@@ -120,7 +120,7 @@ async def relay_metrics(client):
 
 
 @asynccontextmanager
-async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
+async def running_relay(program, peer, private, cid, settings, ca, proxy_port, extra=None):
     port, metrics_port = free_port(), free_port()
     info = peer.connection.info
     login = f"{info.user}:{quote(info.password, safe='')}"
@@ -135,6 +135,7 @@ async def running_relay(program, peer, private, cid, settings, ca, proxy_port):
         "NEXUS_RELAY_LISTEN": f"127.0.0.1:{port}",
         "NEXUS_RELAY_METRICS_LISTEN": f"127.0.0.1:{metrics_port}",
         "NEXUS_RELAY_LEASE_MS": "600",
+        **(extra or {}),
     }
     secrets = [env["NEXUS_RELAY_PRIVATE_KEY"], info.password, urlsplit(redis_url).password]
     inherited = {k: v for k, v in os.environ.items() if not k.startswith("RELAY_ACCEPTANCE_")}
@@ -364,7 +365,7 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
                 assert outgoing["max_output_tokens"] == 6 and outgoing["store"] is False
             assert outgoing["model"] == dep["upstream_model"]
             await wait_events(admin, 2)
-            assert dropped == ["reserve_request", "start_attempt", "append_usage_event"]
+            assert dropped == ["reserve_request", "append_usage_event"]
             for (event,) in admin.execute("SELECT envelope FROM billing.usage_events"):
                 assert (await peer.call("append_usage_event", json.dumps(event)))[
                     "status"
@@ -680,16 +681,21 @@ async def test_upgrade_in_flight_legacy_attempt(plane, http, admin, migration_se
     peer, _, org, model, dep, a, raw, _ = plane
     config = Config(str(CRATE.parents[1] / "alembic.ini"))
     config.attributes["settings"] = migration_settings
+    await http[2].state.publication.distribute()
+    old = await peer.refresh()
+    assert "relay_profile" not in old["resources"]["deployments"][0]
     await asyncio.to_thread(command.downgrade, config, "0012_gateway_admission")
     try:
-        old = await peer.refresh()
-        assert "relay_profile" not in old["resources"]["deployments"][0]
-        await peer.reserve(raw, model["id"], 4, 6, a.request_id)
+        list_keys_in_manifests(admin, peer.keys.values())
+        # The simulator speaks the current protocol; under 0012 the contracts are called as
+        # they were then (reserve without its attempt, start_attempt separately).
+        await peer.call("reserve_request", a.request_id, a.api_key_id, a.model_id, 1, 4, 6)
         attempt = uuid4()
         await peer.call("start_attempt", a.request_id, attempt, 1, UUID(dep["id"]))
     finally:
         await asyncio.to_thread(command.upgrade, config, "head")
-    assert (await peer.refresh()) == old
+    # The stored revision is indexed by the upgrade, so its attempt can still be replayed.
+    assert (await peer.call("config_head"))["revision"] == old["revision"]
     assert (await peer.call("start_attempt", a.request_id, attempt, 1, UUID(dep["id"])))["replayed"]
     assert admin.execute(
         "SELECT expected_usage_format FROM billing.request_attempts WHERE id=%s", (attempt,)

@@ -180,7 +180,17 @@ config:
     NEXUS_COOKIE_SECURE: "true"
   relay:
     NEXUS_RELAY_LOG: info
+    # Database connections per node for requests. Keep relay.replicas x POOL_SIZE within 2-4x the
+    # PostgreSQL cores: requests of one hot organization serialize on its lock, so more sessions
+    # only queue (docs/relay-acceptance.md#推荐的默认参数). 8 suits up to ~16 nodes on an 8-16 core
+    # database; use 2 for 64 nodes. Each node also holds one refresh connection of its own, so it
+    # uses POOL_SIZE + 1 of the database's max_connections (nexus-data postgresql.parameters).
     NEXUS_RELAY_POOL_SIZE: "8"
+    # Cluster-wide: how many requests of one organization may be inside the database admission at
+    # once, across all nodes (0 disables). Others wait in the node for up to ADMISSION_WAIT_MS,
+    # then get 429. A platform admission_concurrency quota policy overrides it per organization.
+    NEXUS_RELAY_TENANT_ADMISSIONS: "32"
+    NEXUS_RELAY_ADMISSION_WAIT_MS: "5000"
     NEXUS_RELAY_CONCURRENCY: "128"
     NEXUS_RELAY_LEASE_MS: "15000"
     NEXUS_RELAY_REQUEST_BYTES: "2097152"

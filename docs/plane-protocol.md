@@ -27,9 +27,9 @@
 
    规则范围在每次发布时通过 identity 的公开门面 `create_organization_source` 解析，门面只返回 active 企业的 ID 和是否个人企业。企业新建、开通、停用、恢复和归档都会推进 identity 的源修订，自动发布据此感知范围变化。企业开通后在下一次发布时纳入；停用或归档后在下一次发布时移出，移出前其 Key 已被授权实时拒绝，因此移出不使旧快照失效。
 3. 用 `PUT /api/v1/gateway-clusters/{cluster_id}/principals/{node_id}` 登记 database_role、node_id、capabilities 与 active。节点身份由 PostgreSQL 登录角色确定。集群 PATCH 使用 If-Match，可暂停集群、修改范围、切换 organization_scope、开关 auto_publish 或轮换公钥。key_grace_seconds 指定旧密钥包读取窗口，0 表示立即截止。缩小组织或部署范围会使先前范围的快照失效：从 `all` 改为 `personal` 或 `listed`、从 `personal` 改为 `listed`，以及 `listed` 列表删掉企业，都会递增 scope_generation；改为 `all` 只扩大范围，不递增。新增范围随下一次发布生效。`GET /api/v1/gateway-clusters/{cluster_id}` 返回单个集群（含 auto_publish_status），ETag 为当前 version，可直接作为 PATCH 的 If-Match。`GET /api/v1/gateway-clusters/{cluster_id}/principals` 按 node_id 列出已登记节点，含 database_role、capabilities、active、applied_revision、applied_at 和最近一次确认 last_ack。
-4. 路由和限额按自然键用 PUT 写入。`PUT /api/v1/route-policies/{organization_id}/{model_id}` 为组织及模型设置部署候选 candidates，每个候选含 deployment_id、priority 和 weight。组织 owner 可通过 `PUT /api/v1/organizations/{organization_id}/quota-policies/{layer}/{scope_type}/{scope_id}/{metric}` 设置 customer 层限额，请求体为 `{"limit_value": …}`；platform 层由平台管理员维护。scope_type 为 organization 时 scope_id 即组织 ID。多个适用上限共同约束请求。metric 除 rpm、tpm、concurrency 外，还可以是资源数量 `resources_per_key`、`resources_per_organization`、`vector_stores_per_key`、`vector_stores_per_organization`：它们只能是 platform 层、organization 范围的策略，覆盖[资源数量默认值](#集群策略)，其他组合返回 422 `invalid_scope`。不带 If-Match 时只创建，成功返回 201；策略已存在则返回 428。更新时携带上一版本的 If-Match，成功返回 200；版本不是当前版本或策略不存在时返回 412。`GET /api/v1/route-policies`、`GET /api/v1/organizations/{organization_id}/quota-policies` 和 `GET /api/v1/gateway-clusters` 使用 limit 与 cursor 分页。原 `POST /api/v1/route-policies` 和 `POST /api/v1/organizations/{organization_id}/quota-policies` 仍按原语义工作，但已标记为废弃，新客户端应改用 PUT。
+4. 路由和限额按自然键用 PUT 写入。`PUT /api/v1/route-policies/{organization_id}/{model_id}` 为组织及模型设置部署候选 candidates，每个候选含 deployment_id、priority 和 weight。组织 owner 可通过 `PUT /api/v1/organizations/{organization_id}/quota-policies/{layer}/{scope_type}/{scope_id}/{metric}` 设置 customer 层限额，请求体为 `{"limit_value": …}`；platform 层由平台管理员维护。scope_type 为 organization 时 scope_id 即组织 ID。多个适用上限共同约束请求。metric 除 rpm、tpm、concurrency 外，还可以是资源数量 `resources_per_key`、`resources_per_organization`、`vector_stores_per_key`、`vector_stores_per_organization`，以及准入并发 `admission_concurrency`：它们只能是 platform 层、organization 范围的策略，资源数量覆盖[资源数量默认值](#集群策略)，准入并发覆盖节点的 `NEXUS_RELAY_TENANT_ADMISSIONS`（见[企业准入并发](#企业准入并发)），其他组合返回 422 `invalid_scope`。不带 If-Match 时只创建，成功返回 201；策略已存在则返回 428。更新时携带上一版本的 If-Match，成功返回 200；版本不是当前版本或策略不存在时返回 412。`GET /api/v1/route-policies`、`GET /api/v1/organizations/{organization_id}/quota-policies` 和 `GET /api/v1/gateway-clusters` 使用 limit 与 cursor 分页。原 `POST /api/v1/route-policies` 和 `POST /api/v1/organizations/{organization_id}/quota-policies` 仍按原语义工作，但已标记为废弃，新客户端应改用 PUT。
 5. auto_publish 为 true 时，Worker 在源变化后自动发布。也可以调用 `POST /api/v1/gateway-clusters/{cluster_id}/releases` 手动发布，附带 Idempotency-Key，正常发布使用空对象。rollback_revision 可选择历史资源集合；回滚会暂停该集群的自动发布。两种发布都重新核对源版本、当前价格和凭据资格，回滚生成更高修订。查询 `GET /api/v1/gateway-clusters/{cluster_id}/releases/{revision}` 获取期望修订、已分发修订、任务和各节点最近的确认。`GET /api/v1/gateway-clusters/{cluster_id}/releases` 按修订从新到旧列出发布历史，含 sha256、created_at、发起方 initiator（`operator` 为经发布接口的手动发布，`auto_publisher` 为 Worker 自动发布）、手动发布的 actor_id、回滚来源 rollback_revision 及分发任务的 attempts 与 delivered_at。节点和发布历史列表同样使用 limit 与 cursor 分页，仅限平台管理员。
-6. 节点调用 get_config_snapshot，校验原始字节的 SHA-256 后应用并确认。普通更新给已应用旧配置的节点保留最多 5 秒传播窗口。权限收缩、Key 失效、凭据撤销及集群范围变动由数据库实时检查。旧节点仍可提交其在途请求的结束证据。分发 Worker 每 30 秒核对并重写当前副本，Redis 清空期间节点可从 PostgreSQL 恢复。
+6. 节点每 2–3 秒（收到通知时立即）调用 `config_head`，只取期望修订、摘要、Key 序号和本节点已应用的修订。修订或摘要与本地不同、或本节点尚未确认当前修订时，才调用 `get_config_snapshot(revision)` 取原文、校验 SHA-256，再用 `config_keys` 取 Key 的净变化，应用后确认。普通更新给已应用旧配置的节点保留最多 5 秒传播窗口。权限收缩、Key 失效、凭据撤销及集群范围变动由数据库实时检查。旧节点仍可提交其在途请求的结束证据。分发 Worker 每 30 秒核对并重写当前副本，Redis 清空期间节点可从 PostgreSQL 恢复。
 
 ### 自动发布
 
@@ -47,31 +47,42 @@ auto_publish 为 true 且集群 active 时，Worker 的 auto_publish 任务负�
 
 ## 数据库身份与权限
 
-节点权限从 PostgreSQL 的 `session_user` 和 `publication.gateway_principals` 取得。部署角色负责建立节点登录，平台管理员登记集群绑定；连接代理需保留各节点的认证身份。`nexus_gateway` 获授 `gateway_v1` 函数的执行权限，业务表读写由函数所属角色完成。
+节点权限从 PostgreSQL 的 `session_user` 和 `publication.gateway_principals` 取得。每次调用对集群行和节点行取 `FOR KEY SHARE`（确认取节点行的 `FOR NO KEY UPDATE`），发布和集群变更对集群行取 `FOR NO KEY UPDATE`：排队等企业锁的准入不会挡住发布、分发、确认或停用，停用后开始的调用都会被拒绝。部署角色负责建立节点登录，平台管理员登记集群绑定；连接代理需保留各节点的认证身份。`nexus_gateway` 获授 `gateway_v1` 函数的执行权限，业务表读写由函数所属角色完成。
 
-`reserve_request`、`start_attempt`、`append_usage_event`、`cancel_unstarted_request` 写 billing，`ack_config` 写 publication。身份与目录校验可以在同一短事务中取得必要的读锁。各函数的授权和所有者见[网关迁移](../migrations/versions/0008_gateway_protocol.py)。
+`reserve_request`、`start_attempt`、`append_usage_event`、`cancel_unstarted_request` 写 billing，`ack_config` 写 publication。身份与目录校验可以在同一短事务中取得必要的读锁。各函数的授权和所有者见[网关迁移](../migrations/versions/0008_gateway_protocol.py)与[按索引准入](../migrations/versions/0045_indexed_admission.py)。
+
+节点登录的 `statement_timeout` 是角色设置（`ALTER ROLE … SET statement_timeout = '8s'`，部署脚本的 `ensure_gateway_login` 会写入），不由节点在连接后用 `SET` 设置：PgBouncer 等 transaction 模式的连接池不保留会话级设置，角色设置则在每条服务端连接上生效。Relay 启动时检查该值，为 0 时拒绝启动。
 
 ## PostgreSQL 桥接操作
 
 PostgreSQL 函数在调用方事务内运行，函数返回一行并不等于事务已经提交。网关适配层必须收到 COMMIT 成功后，才把授权或事件接收视为成功；网络断开视为结果未知，用原业务 ID 查询或重试。
 
-Python 模拟器在 autocommit 连接上以单条 SQL 调用一个函数，等待普通缓冲查询完整返回后再确认成功。网关调用要求独占一个事务边界，拒绝已有事务或 pipeline 中的调用。网关的新预留和开始尝试先按企业排队，再检查钱包状态。资金预留在持有账户写锁时一次写入所有命中的预算期间；开始尝试读取账户状态并持有共享锁至提交，以便冻结和尝试相互排序。
+Python 模拟器在 autocommit 连接上以单条 SQL 调用一个函数，等待普通缓冲查询完整返回后再确认成功。网关调用要求独占一个事务边界，拒绝已有事务或 pipeline 中的调用。网关的新预留和开始尝试先按企业排队，再检查钱包状态。资金预留在持有账户写锁时一次写入所有命中的预算期间；开始尝试读取账户状态并持有共享锁至提交，以便冻结和尝试相互排序。预留时带上第一次尝试（`aid`、`dep`），两者在同一事务中提交，企业的串行区只进入一次。
 
 所有函数由 `gateway_v1` 提供，返回 JSONB。请求、尝试、模型、部署、凭据与 Key 标识使用 UUID。SQL 中修订号使用 bigint，JSON 中使用十进制字符串。
 
 | 调用 | 含义 |
 | --- | --- |
-| `get_config_snapshot(revision DEFAULT NULL)` | 当前或历史完整包，含 Base64 原文、摘要与节点身份 |
+| `config_head()` | 期望修订 `revision`、其 `sha256` 与 `key_sequence`、本节点的 `applied_revision`、`node_id` 和 `cluster_id`。不读 manifest 和原文；快照的集群范围已失效时与读取快照一样报 `snapshot_scope_expired` |
+| `get_config_snapshot(revision)` | 该修订存储的原文（bytea），不做 Base64 编码；节点用 `config_head` 的摘要校验 |
+| `config_keys(revision, since, after_sequence, after_key, after_present, page)` | 从 Key 序号 `since` 到该修订的 Key 序号之间 Key 的净变化，按 (序号, key_id, present) 排序，从游标之后返回最多 `page`（≤ 10000）行：`change_sequence`、`change_key`、`present`，以及 present 为真时的 `digest`、`organization_id`、`project_id`、`service_account_id`、`expires_at`。`since` 为 0 时就是完整 Key 集合 |
 | `get_credential_envelope(revision, credential_id, credential_version)` | 所选集群的密文包 |
 | `ack_config(revision, hash, applied, reason DEFAULT '')` | 成功修订单调推进，reason 使用有界错误代码 |
-| `reserve_request(rid, kid, model, rev, inputs, outputs)` | 服务端确定组织、账户、价格和预算，重复返回 replayed 与原状态 |
+| `reserve_request(rid, kid, model, rev, inputs, outputs, aid DEFAULT NULL, dep DEFAULT NULL)` | 服务端确定组织、账户、价格和预算，重复返回 replayed 与原状态。带 `aid` 和 `dep` 时在同一事务中登记第一次尝试，应答的 `attempt` 为 `start_attempt` 的应答；`reserve_search_request`、`reserve_file_request`、`reserve_execution_request` 同样在末尾接受这两个参数，`reserve_guardrail_request`、`reserve_interpreter` 用已有的部署参数并在末尾接受 `aid` |
 | `get_request_status(request_id)` | 本节点请求、冻结的价格引用、尝试、关闭与处理状态 |
-| `start_attempt(rid, aid, seq, dep)` | 序号从 1 递增，候选来自授权时快照，重试使用原 attempt_id。序号大于 1 的尝试只能在上一次尝试被证明没有执行后开始，见[用量事件](#用量事件) |
+| `start_attempt(rid, aid, seq, dep)` | 故障转移的后续尝试，序号从 2 递增（未随预留登记的第一次尝试用 1），候选来自授权时快照，重试使用原 attempt_id。序号大于 1 的尝试只能在上一次尝试被证明没有执行后开始，见[用量事件](#用量事件) |
 | `append_usage_event(message)` | UTF-8 JSON 文本，最多 65536 字节，事务提交后读取 accepted 或 conflict |
 | `cancel_unstarted_request(rid, reason)` | 在同一事务释放无尝试且未关闭的请求与各预算占用 |
 | `resource_usage(kind, kid, rev, keys, key_limit, organization_limit)` | 本集群内该 Key 和所列同企业 Key 的存活资源数，分别数到快照下发的上限为止 |
 
 `reserve_request` 重试使用同一个 request_id 和相同语义参数。已有请求返回原授权及当前状态；不重新预留，也不重新选择售价或折扣。相同 ID 参数冲突则拒绝。已开始或已结清的请求不能因为拿到重复响应再次执行上游调用。
+
+带第一次尝试的预留：
+
+- **一个事务**。预留和尝试一起提交；任何一步失败（例如所选部署在数据库中已不可用）整个事务回滚，不留下预留，等价于旧流程“预留后立即取消”，只是不再有 canceled 记录。
+- **重放**。结果未知时用同一 rid、aid、dep 和语义参数重放：已有请求时不重新预留，并按 `start_attempt` 的规则重放第一次尝试（同一 aid 返回 `replayed`，不同参数返回 `attempt_conflict`）。仍然未知时，网关先调用 `cancel_unstarted_request`：只有预留、没有尝试时它会释放预留；已有尝试时它拒绝，网关再查状态，若列出了这个 aid，就以 `unknown` 关闭该尝试，请求进入核对，与旧流程中开始尝试结果未知时相同。
+- **登记后未发送**。第一次尝试已登记、但在发送上游前客户端断开或租约续期失败时，网关以 `cancelled`/`client_cancelled` 关闭该尝试：客户不扣费，该尝试因没有用量进入 `missing_usage` 成本核对，与旧流程中开始尝试后、发送前断开相同。网关在发起预留调用前先检查客户端是否已断开，断开时不预留。
+- **仍分两步的情况**。WebSocket 会话的第一轮要先拨通上游 WebSocket，失败时应当干净地取消预留，所以这一轮仍然先预留、拨号成功后再用 `start_attempt(rid, aid, 1, dep)` 登记第一次尝试；已有上游连接的后续轮次走合并调用。消息批处理在 `batch_prepare` 内部一个事务中完成预留和开始尝试，不受影响。
 
 请求默认由最初授权的节点负责，不自动迁移在途请求。其他节点不能拿同一个 request_id 继续执行。客户端重新发送到另一个节点属于新的调用，首期不承诺跨客户端重试的上游恰好一次执行。
 
@@ -88,13 +99,13 @@ Python 模拟器在 autocommit 连接上以单条 SQL 调用一个函数，等�
   "revision": "42",
   "created_at": "2026-11-08T09:00:00Z",
   "required_capabilities": ["reservation.v1", "usage-events.v1"],
+  "key_set": {"sequence": "7", "count": 2, "sha256": "…"},
   "resources": {
     "models": [],
     "deployments": [],
     "routes": [],
     "access_policies": [],
     "quota_policies": [],
-    "key_verifiers": [],
     "credential_refs": []
   }
 }
@@ -110,9 +121,21 @@ Python 模拟器在 autocommit 连接上以单条 SQL 调用一个函数，等�
 4. Worker 记录分发结果；节点拉取、校验并一次性切换本地快照，然后调用 `ack_config`。
 5. 管理 API 分别展示期望版本、已分发版本和节点应用状态，不把“已提交发布”显示为“所有节点已生效”。
 
-节点启动时读取完整快照，再周期检查版本；收到通知时提前刷新。通知丢失、重复、乱序或 Worker 重试都不会使节点回退。读取与订阅之间也必须通过版本复查消除竞态。
+节点启动时读取完整快照，再周期调用 `config_head` 检查版本；收到通知时提前刷新。通知丢失、重复、乱序或 Worker 重试都不会使节点回退。读取与订阅之间也必须通过版本复查消除竞态。
 
-回滚通过发布更高 revision、复用旧配置内容实现，保留新的来源记录；不能降低当前版本号。历史价格和已授权请求不随配置回滚被改写。
+回滚通过发布更高 revision、复用旧配置内容实现，保留新的来源记录；不能降低当前版本号。历史价格和已授权请求不随配置回滚被改写。Key 不属于发布内容：回滚恢复旧的模型、部署、路由和策略，Key 集合始终是当前的。
+
+### API Key 的下发
+
+Key 不在快照原文中。发布时 publication 把集群范围内有效的 Key 写入 `publication.cluster_keys`，每行是 (cluster_id, key_id, added_sequence)，Key 离开集群或属性变化时记录 removed_sequence，从不改写已有行。有变化的发布使集群的 Key 序号加一，快照的 `key_set` 写明这个序号、Key 数和 Key 集合摘要；没有变化的发布沿用原序号。摘要是按 key_id 排序后每个 Key 一行 `id、digest、organization_id、project_id、service_account_id、过期时间（Unix 微秒，或 -）` 以制表符连接、换行结尾，再取 SHA-256。
+
+节点保存上次应用的 Key 序号对应的 Key 表。新修订的序号不变时直接沿用；序号前进时调用 `config_keys(revision, 已有序号, …)` 取净变化并按顺序应用（同一序号内先删除后加入），再核对数量和摘要；不一致或没有本地表时从序号 0 读取全部 Key。Key 撤销、过期和企业或项目停用都会推进 identity 的源修订，自动发布生成新修订，节点在下一次 `config_head` 时看到新的摘要并取回删除，检测时限与原来的全量拉取相同；准入在数据库中按 Key 实时校验，不依赖节点的刷新。
+
+所有活动节点都已应用的序号之前删除的行，在下一次发布时清理。
+
+### 准入索引
+
+发布时 publication 还把每个修订的路由（企业, 模型）、部署、模型和企业的访问策略写入 `publication.snapshot_index`。`reserve_*`、`start_attempt`、`preflight` 通过 `publication.v1_admission` 按键读取这些行和请求的 Key，得到与快照同形、只含该企业相关资源的清单，再交给 catalog 的资格检查。每个请求的数据库开销与集群的 Key 数、企业数和部署数无关。被取代超过一天的修订的索引在发布时清理。其他 `gateway_v1` 函数仍通过 `publication.v1_snapshot` 读取 manifest，manifest 已不含 Key，也不再附带 Base64 原文。
 
 Key 撤销、组织冻结和权限收缩在请求授权时查数据库实时状态，不仅依赖配置刷新。撤销提交前已授权的在途请求按其状态处理，不宣称撤销会瞬间终止所有现有连接。普通路由与限速配置允许受刷新周期约束的传播延迟。
 
@@ -137,7 +160,19 @@ Key 撤销、组织冻结和权限收缩在请求授权时查数据库实时状�
 }
 ```
 
-两项资源只在生效值不等于节点内置值（即上表默认值）时出现，出现时 `required_capabilities` 含 `relay.cluster-policy.v1`，已登记的节点缺少该能力时发布返回 409 `unsupported_capability`。没有这两项的快照，节点按内置值运行。节点校验字段齐全且在范围内，否则以 `invalid_resources` 拒绝该修订。`quota_policies` 仍只含 rpm、tpm 和 concurrency，资源数量不进入 Redis 限流。
+两项资源只在生效值不等于节点内置值（即上表默认值）时出现，出现时 `required_capabilities` 含 `relay.cluster-policy.v1`，已登记的节点缺少该能力时发布返回 409 `unsupported_capability`。没有这两项的快照，节点按内置值运行。节点校验字段齐全且在范围内，否则以 `invalid_resources` 拒绝该修订。`quota_policies` 只含 rpm、tpm、concurrency 和 admission_concurrency，资源数量不进入 Redis 限流。
+
+### 企业准入并发
+
+`concurrency` 配额限制的是在途请求数，从预留一直持有到请求结束（包括等待上游和流式输出），超限立即返回 429。它能间接限制排队的数据库会话，但要压到“节点数的 2 倍”这样的量级，就同时把企业的长流并发压低了，所以不适合用来保护数据库。
+
+Relay 另有一道集群范围的准入闸门：同一企业同时处于数据库准入调用（带第一次尝试的预留，或故障转移的 `start_attempt`）中的请求，全集群最多 N 个。
+
+- **上限**。N 默认取节点的 `NEXUS_RELAY_TENANT_ADMISSIONS`（默认 32，0 关闭），企业的 platform 层 `admission_concurrency` 策略覆盖它，随快照的 `quota_policies` 下发。
+- **实现**。闸门是 Redis 有序集合 `nexus:v1:admission:{organization_id}`：取得名额后才从连接池取连接，调用返回后释放；节点失联时名额 20 秒后过期。
+- **等待**。没有名额的请求在节点内存中排队等待，同一节点同一企业只有队首轮询 Redis（1–8 ms 退避）。等待超过 `NEXUS_RELAY_ADMISSION_WAIT_MS`（默认 5000）返回 429 `rate_limited`，没有预留。
+
+这样热点企业最多 N 个会话在数据库里排同一把锁，其余请求等在 Relay，不再占满各节点的连接池、连带阻塞其他企业。
 
 集群策略的 `auto_publish` 分组（`quiet_seconds`、`max_delay_seconds`）只由 Worker 使用，不进入快照。修改默认值或覆盖都需要 `If-Match`，分别写入 publication 审计 `cluster_defaults.updated` 和 `cluster.policy_updated`；覆盖与默认值组合后静默时间超过最长延迟时返回 422 `invalid_cluster_policy`。默认值可以由策略文件的 `publication.cluster_defaults` 组锁定，锁定后接口返回 409 `policy_managed_externally`。auto_publish 为 true 的集群在生效的 Relay 策略、资源数量默认值或企业覆盖变化后自动发布；其他集群在下一次手动发布时生效。
 
@@ -231,6 +266,7 @@ Key 撤销、组织冻结和权限收缩在请求授权时查数据库实时状�
 | 配置通知频道 | `nexus:v1:cfg:cluster_id:changed` | 提示信息，不作为可靠记录 |
 | RPM 和 TPM | `nexus:v1:limit:{organization_id}:policy_id:metric:window` | 原子窗口计数，过期回收 |
 | 并发租约 | `nexus:v1:concurrency:{organization_id}:policy_id:concurrency` | 请求租约集合，续租及过期回收 |
+| 准入名额 | `nexus:v1:admission:{organization_id}` | 正在准入调用中的请求，调用返回即释放，20 秒过期 |
 | 节点心跳 | `nexus:v1:node:node_id` | TTL，重启可重建 |
 
 同一组织的多层限流键使用相同 hash tag，以便一个原子操作检查和占用适用的组织、项目、Key 限额。Redis Cluster 的多键操作要求相关键处于同一 hash slot，不能把跨 slot 的多层扣减描述为天然原子。[Redis Cluster 约束](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/)
@@ -251,7 +287,7 @@ fixture.tokens.v1 要求 input_total_tokens、cached_input_tokens 和 output_tok
 
 Redis 限额使用按组织 hash tag 的原子脚本。RPM 在限流通过时占用。TPM 按输入与输出总上界占用，已知用量仅在原 UTC 分钟窗口核销，资金授权被明确拒绝时按零用量释放 TPM。未知用量保留上界，事后财务退款仍沿用原运行计数。并发占用使用独立租约标识，可续租或幂等释放。节点在安全截止时间前续租，过期或连接中断时停止执行。发布器按组织初始化限额代次。已初始化的运行状态丢失或 Redis 实例更换后，受限流策略约束的新调用等待 60 秒恢复窗口，旧代次租约失效。计数库应配置为禁止逐出。PostgreSQL 保留资金预留与原始用量事实。
 
-配置 NEXUS_GATEWAY_DSN、NEXUS_REDIS_URL、NEXUS_SIMULATION_API_KEY，启动 API 和 Worker，发布并登记集群后执行以下命令。模拟器按最低 priority 选择候选，并在相同优先级内按 weight 抽取部署。输出包含结算与成本处理状态。
+配置 NEXUS_GATEWAY_DSN、NEXUS_REDIS_URL、NEXUS_SIMULATION_API_KEY，启动 API 和 Worker，发布并登记集群后执行以下命令。模拟器按 `config_head` 判断是否需要取快照，用 `config_keys` 维护 Key 表，按最低 priority 选择候选、在相同优先级内按 weight 抽取部署，再用带第一次尝试的 `reserve_request` 预留。输出包含结算与成本处理状态。
 
 ```sh
 uv run python -m nexus.gateway_simulator MODEL_UUID --input-tokens 2 --output-tokens 1

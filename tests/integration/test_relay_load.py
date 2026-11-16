@@ -68,7 +68,9 @@ STATEMENTS = [
     "start_attempt",
     "append_usage_event",
     "get_credential_envelope",
+    "config_head",
     "get_config_snapshot",
+    "config_keys",
     "ack_config",
 ]
 
@@ -566,6 +568,13 @@ async def test_pool_variants(http, admin, tls, binary, service_directory, tmp_pa
         ("pool-4", {"NEXUS_RELAY_POOL_SIZE": "4"}, None),
         ("pool-2", {"NEXUS_RELAY_POOL_SIZE": "2"}, None),
         ("pool-8-deadlock-10s", {}, "10s"),
+        # Without the cluster-wide admission slots (NEXUS_RELAY_TENANT_ADMISSIONS default 32).
+        ("pool-8-ungated", {"NEXUS_RELAY_TENANT_ADMISSIONS": "0"}, None),
+        (
+            "pool-2-ungated",
+            {"NEXUS_RELAY_POOL_SIZE": "2", "NEXUS_RELAY_TENANT_ADMISSIONS": "0"},
+            None,
+        ),
     ]
     variants = selected(variants)
     async with load_plane(
@@ -640,7 +649,27 @@ async def reconfigure(plane, env, deadlock):
     await plane.fleet.start(nodes, env)
 
 
+async def warm_pools(plane, per_node=8):
+    """Open each node's database pool before measuring, one node at a time.
+
+    Freshly started nodes open their pool connections on the first burst all at once. Beyond
+    kern.ipc.somaxconn (128 on macOS) simultaneous connects the kernel resets the excess before
+    PostgreSQL sees them, and those requests fail at their first SQL call with 503. A deployment
+    keeps warm pools; this keeps the measurement about admission, not connection setup.
+    """
+    import httpx
+
+    secret = plane.tenants[0]["secret"]
+    async with httpx.AsyncClient(timeout=30, trust_env=False) as c:
+        for relay in plane.fleet.relays:
+            url = f"http://127.0.0.1:{relay.port}/v1/models"
+            await asyncio.gather(
+                *(c.get(url, headers=plane.headers(secret)) for _ in range(per_node))
+            )
+
+
 async def control_profile(plane, round_no, active, hot, total, rate, variant=None):
+    await warm_pools(plane)
     name = f"{'steady' if rate else 'burst'}-{active}n-{'hot' if hot else 'uniform'}"
     scenario = "control"
     if variant:
@@ -1189,18 +1218,26 @@ async def snapshot_profile(plane, round_no, size, nodes):
         "WHERE cluster_id=%s AND revision=%s",
         (plane.cid, revision),
     ).fetchone()[0]
-    reply = len(json.dumps(await plane.peer.call("get_config_snapshot")))
+    head = await plane.peer.call("config_head")
+    reply = len(bytes(await plane.peer.call("get_config_snapshot", int(head["revision"]))))
+    head_bytes = len(json.dumps(head))
     name = f"keys-{size}"
-    # Idle: only the periodic snapshot polling of every node.
+    # Idle: only the periodic polling of every node (config_head; the snapshot and key
+    # changes are only read when the revision moves).
     async with measured(plane) as m:
         await asyncio.sleep(20)
-    polls = m.statements.get("get_config_snapshot", [])
+    polls = m.statements.get("config_head", [])
+    fetches = m.statements.get("get_config_snapshot", [])
     idle = {
         "seconds": round(m.elapsed, 1),
         "snapshot_polls": len(polls),
         "polls_per_s": round(len(polls) / m.elapsed, 2),
         "poll_ms": summary_ms(polls),
-        "reply_mb_per_s": round(len(polls) * reply / m.elapsed / 1e6, 1),
+        "snapshot_fetches": len(fetches),
+        "fetch_ms": summary_ms(fetches),
+        "reply_mb_per_s": round(
+            (len(fetches) * reply + len(polls) * head_bytes) / m.elapsed / 1e6, 3
+        ),
         "postgres": m.samples,
     }
     # Then 20 requests per second for 15 s with the same snapshot.
@@ -1214,7 +1251,7 @@ async def snapshot_profile(plane, round_no, size, nodes):
         "publish_s": round(publish_s, 3),
         "distribute_to_all_applied_s": round(applied_s, 3),
         "payload_mb": round(payload / 1e6, 2),
-        "snapshot_reply_mb": round(reply / 1e6, 2),
+        "snapshot_reply_mb": round(reply / 1e6, 4),
         "idle": idle,
         "client": client_summary(results, "responses", m),
         "schedule_lag_ms": summary_ms(lag),

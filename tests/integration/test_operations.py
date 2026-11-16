@@ -1,12 +1,15 @@
+import asyncio
 import csv
 import io
 from decimal import Decimal
+from time import monotonic
 from uuid import UUID, uuid4
 
 import pytest
 from policies import put_policy
 from test_api_contract import exact, pages
 from test_billing import (
+    account_amounts,
     adjustment,
     balance,
     finance_role,
@@ -17,9 +20,10 @@ from test_billing import (
     setup_wallet,
 )
 from test_identity_api import auth, create_org, create_user, login
-from test_plane import plane  # noqa: F401
+from test_plane import plane, provision_plane  # noqa: F401
 from test_project_credentials import developer, project
 
+from nexus.modules.billing.persistence.operations import OperationsRepository
 from nexus.modules.reporting.application.schemas import ExportJob
 
 pytestmark = pytest.mark.integration
@@ -389,6 +393,184 @@ async def test_integrity_case_requires_recheck_and_audit_is_redacted(http, admin
     )
     assert audit.status_code == 200 and len(audit.json()["items"]) == 1
     assert "secret-value" not in audit.text
+
+
+def grow_history(admin, org, template, count):
+    """Copy a settled request ``count`` times with its debit, as if the wallet had settled them."""
+    values = {"org": org["id"], "template": template, "count": count}
+    admin.execute(
+        """
+        WITH t AS (SELECT * FROM billing.request_runs WHERE id=%(template)s),
+        a AS (SELECT * FROM billing.accounts WHERE organization_id=%(org)s),
+        n AS (SELECT g,gen_random_uuid() AS id FROM generate_series(1,%(count)s) g),
+        r AS (INSERT INTO billing.request_runs SELECT (jsonb_populate_record(
+          NULL::billing.request_runs,to_jsonb(t)||jsonb_build_object('id',n.id))).* FROM t,n)
+        INSERT INTO billing.ledger_entries(id,organization_id,account_id,sequence,currency,
+          signed_amount,balance_after,kind,source_type,source_id)
+        SELECT gen_random_uuid(),a.organization_id,a.id,a.entry_sequence+n.g,a.currency,
+          -t.charged_amount,a.balance-n.g*t.charged_amount,'usage_debit','request',n.id
+        FROM a,t,n""",
+        values,
+    )
+    admin.execute(
+        """UPDATE billing.accounts a SET balance=a.balance-%(count)s*t.charged_amount,
+        entry_sequence=a.entry_sequence+%(count)s FROM billing.request_runs t
+        WHERE t.id=%(template)s AND a.organization_id=%(org)s""",
+        values,
+    )
+
+
+async def gateway_usage(peer, raw, model, dep):
+    """A node request that finished and reported its usage, waiting for settlement."""
+    result, lease = await peer.reserve(raw, model["id"], 4, 6)
+    rid, aid = UUID(result["request_id"]), uuid4()
+    await peer.start_attempt(rid, aid, 1, dep["id"], lease)
+    usage = {"input_total_tokens": 2, "cached_input_tokens": 0, "output_tokens": 3}
+    finished = {
+        "outcome": "succeeded",
+        "upstream_request_id": "upstream-" + aid.hex,
+        "usage_format": "fixture.tokens.v1",
+        "raw_usage": usage,
+        "elapsed_ms": 1,
+    }
+    closed = {"delivery_outcome": "succeeded", "attempt_ids": [str(aid)]}
+    closed["delivered_attempt_id"] = str(aid)
+    for kind, payload, attempt in (
+        ("attempt.finished", finished, aid),
+        ("request.closed", closed, None),
+    ):
+        reply = await peer.event(
+            rid, kind, payload, attempt_id=attempt, revision=result["config_revision"]
+        )
+        assert reply["status"] == "accepted", reply
+    await peer.limits.finish(lease, 5)
+    return rid
+
+
+def overdue(admin, org):
+    admin.execute(
+        "UPDATE billing.account_checks SET checked_at='-infinity' WHERE organization_id=%s",
+        (org["id"],),
+    )
+
+
+def check_row(admin, org):
+    return admin.execute(
+        "SELECT differences,ledger_sequence,claim FROM billing.account_checks "
+        "WHERE organization_id=%s",
+        (org["id"],),
+    ).fetchone()
+
+
+def account_case(admin, org):
+    return admin.execute(
+        "SELECT state,evidence FROM billing.review_cases "
+        "WHERE source_type='account' AND organization_id=%s",
+        (org["id"],),
+    ).fetchone()
+
+
+async def test_account_check_reads_a_snapshot_without_blocking_the_wallet(http, admin, monkeypatch):
+    client, root, app, _ = http
+    async with provision_plane(http, admin, balance="100000") as values:
+        peer, _, org, model, dep, a, raw, _ = values
+        await app.state.reservations.reserve(a)
+        await settle_success(app, a, dep)
+        grow_history(admin, org, a.request_id, 3000)
+        await app.state.publication.distribute()
+        await peer.refresh()
+        pending = await gateway_usage(peer, raw, model, dep)
+        # A deliberately broken projection, committed before the check takes its snapshot.
+        # Later writes adjust held_amount by their own amounts, so it stays exactly 1 off.
+        admin.execute(
+            "UPDATE billing.accounts SET held_amount=held_amount+1 WHERE organization_id=%s",
+            (org["id"],),
+        )
+        _, projected = account_amounts(admin, org)
+        sequence = admin.execute(
+            "SELECT entry_sequence FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+        ).fetchone()[0]
+        assert sequence > 3000
+        admin.execute(
+            "UPDATE billing.account_checks SET checked_at=clock_timestamp() "
+            "WHERE organization_id<>%s",
+            (org["id"],),
+        )
+        examine = OperationsRepository.examine
+        entered, release, verified = asyncio.Event(), asyncio.Event(), []
+
+        async def paused(self, account, since=0):
+            verified.append(since)
+            entered.set()
+            await release.wait()
+            return await examine(self, account, since)
+
+        monkeypatch.setattr(OperationsRepository, "examine", paused)
+        check = asyncio.create_task(app.state.operations.check_next())
+        await asyncio.wait_for(entered.wait(), 10)
+        # The check holds its snapshot of the large account. The same organization's node
+        # admission, a direct reservation and settlement neither wait for it nor skip the wallet.
+        started = monotonic()
+        result, lease = await asyncio.wait_for(peer.reserve(raw, model["id"], 4, 6), 2)
+        assert result["state"] == "reserved"
+        other = a.model_copy(update={"request_id": uuid4()})
+        await asyncio.wait_for(app.state.reservations.reserve(other), 2)
+        assert await asyncio.wait_for(app.state.usage.process(), 5) == 1
+        assert admin.execute(
+            "SELECT state FROM billing.usage_jobs WHERE request_id=%s", (pending,)
+        ).fetchone() == ("done",)
+        await asyncio.wait_for(settle_success(app, other, dep), 2)
+        # Another Worker finds the account claimed and checks nothing.
+        assert await asyncio.wait_for(app.state.operations.check_next(), 2) == 0
+        assert monotonic() - started < 2 and not check.done()
+        await peer.limits.finish(lease, 0)
+        release.set()
+        assert await asyncio.wait_for(check, 30) == 1
+        # Only the broken projection is reported. The reservations and settlements committed
+        # during the check are outside its snapshot, so they cause no differences.
+        assert account_case(admin, org) == (
+            "open",
+            [{"kind": "held_amount", "projection": str(projected), "facts": str(projected - 1)}],
+        )
+        assert check_row(admin, org) == (1, sequence, None)
+
+        # The next check starts after the verified ledger prefix and finds the account clean.
+        admin.execute(
+            "UPDATE billing.accounts SET held_amount=held_amount-1 WHERE organization_id=%s",
+            (org["id"],),
+        )
+        overdue(admin, org)
+        assert await app.state.operations.check_next() == 1
+        latest = admin.execute(
+            "SELECT entry_sequence FROM billing.accounts WHERE organization_id=%s", (org["id"],)
+        ).fetchone()[0]
+        assert verified == [0, sequence] and latest > sequence
+        assert check_row(admin, org) == (0, latest, None)
+
+        # An entry after the verified prefix is still checked, and reported like a full scan.
+        orphan = admin.execute(
+            """INSERT INTO billing.ledger_entries(id,organization_id,account_id,sequence,currency,
+            signed_amount,balance_after,kind,source_type,source_id)
+            SELECT gen_random_uuid(),organization_id,id,entry_sequence+1,currency,-1,balance-1,
+              'usage_debit','request',gen_random_uuid()
+            FROM billing.accounts WHERE organization_id=%s RETURNING id""",
+            (org["id"],),
+        ).fetchone()[0]
+        admin.execute(
+            "UPDATE billing.accounts SET balance=balance-1,entry_sequence=entry_sequence+1 "
+            "WHERE organization_id=%s",
+            (org["id"],),
+        )
+        overdue(admin, org)
+        assert await app.state.operations.check_next() == 1
+        issues = [{"kind": "orphan_ledger_entry", "entry_id": str(orphan)}]
+        assert verified[-1] == latest and check_row(admin, org) == (1, latest, None)
+        assert account_case(admin, org) == ("open", issues)
+        full = await client.post(
+            f"/api/v1/organizations/{org['id']}/account/reconcile", headers=auth(root)
+        )
+        assert full.status_code == 200, full.text
+        assert full.json()["issues"] == issues
 
 
 async def test_no_charge_does_not_absorb_a_late_attempt_cost(plane, http, admin):  # noqa: F811

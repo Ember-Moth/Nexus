@@ -156,4 +156,8 @@ def create_reports(database):
 
 def create_operations(database, access, reservations):
     database.require_module(ModuleName.BILLING)
-    return Operations(lambda: transaction(database, OperationsRepository), access, reservations)
+    return Operations(
+        lambda **options: transaction(database, OperationsRepository, **options),
+        access,
+        reservations,
+    )

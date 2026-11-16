@@ -7,6 +7,9 @@ from ..domain.money import GUARDRAIL_DIMENSIONS, operation_factor, usage_amount,
 from ..domain.usage import normalize
 from .common import digest, found, replay, versioned
 
+# Longer than any check takes; a claim left by a Worker that died expires after it.
+CHECK_LEASE_SECONDS = 600
+
 
 def conflict(message):
     raise ServiceError("case_conflict", message, 409)
@@ -503,5 +506,21 @@ class Operations:
             return {"account_id": str(account.id), "status": "active"}
 
     async def check_next(self):
+        """Check one due account; returns 1 when an account was checked, else 0.
+
+        Three transactions, none of which locks the wallet: claim the account's check row,
+        compare projections with facts in a read-only snapshot, then record the result.
+        Admissions and settlement of the account proceed meanwhile; the snapshot contains each
+        of their transactions either entirely or not at all.
+        """
         async with self.tx() as repo:
-            return await repo.check_account()
+            claim = await repo.claim_account_check(CHECK_LEASE_SECONDS)
+        if claim is None:
+            return 0
+        async with self.tx(snapshot=True) as repo:
+            account = await repo.account(claim["organization_id"], lock=False)
+            issues, through = await repo.examine(account, claim["ledger_sequence"])
+            case_version = await repo.account_case_version(account.id)
+        async with self.tx() as repo:
+            await repo.record_account_check(claim, account.id, issues, through, case_version)
+        return 1

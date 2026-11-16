@@ -46,11 +46,11 @@
 | `resources_per_key`、`resources_per_organization` | 平台默认值 `PUT /api/v1/settings/resource-quotas`；企业覆盖为平台层、整个企业范围的同名 quota policy | 每个 Key、每个企业在本集群可持有的文件、会话、容器、批处理的数量，分别计数，默认 10000 和 100000。创建超限返回 429 `resource_limit_exceeded` |
 | `vector_stores_per_key`、`vector_stores_per_organization` | 同上 | 向量库的同类上限，默认 100 和 1000 |
 
-快照里的 `resources.cluster_policy` 和 `resources.resource_limits` 只在生效值不等于上表默认值时出现，此时发布要求节点能力 `relay.cluster-policy.v1`。没有这两项的快照按节点内置的上表默认值运行。资源计数调用 `gateway_v1.resource_usage(kind, key, revision, keys, key_limit, organization_limit)`，数据库数到上限即停止。节点在应用新修订后立即使用新策略；已经开始的请求和续读流沿用开始时的修订。
+每个快照都在 `resources.cluster_policy` 和 `resources.resource_limits` 中带上生效值，缺少任一项的快照会被节点拒绝。资源计数调用 `gateway_v1.resource_usage(kind, key, revision, keys, key_limit, organization_limit)`，数据库数到上限即停止。节点在应用新修订后立即使用新策略；已经开始的请求和续读流沿用开始时的修订。
 
-在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 或 `websocket` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认使用 `store=false`，省略输出限制时使用部署上限。已存储 response、后台运行、会话、文件、向量库、批处理、代码执行、远程 MCP、Web Fetch 和 Web Search 默认关闭，须在 `provider_features` 中逐项启用。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。旧部署保留原配置，声明端点后才参与原生转发。
+在 catalog 中为候选部署配置 `relay_profile`，声明原生端点、`http` 或 `websocket` 传输、工具支持、计数规则、输入输出上界及验证依据。节点使用已验证的部署输入上界保守预留。Responses 默认使用 `store=false`，省略输出限制时使用部署上限。已存储 response、后台运行、会话、文件、向量库、批处理、代码执行、远程 MCP、Web Fetch 和 Web Search 默认关闭，须在 `provider_features` 中逐项启用。每个候选的路径在其基础地址后追加 `/v1/messages` 或 `/v1/responses`，已有 `/v1` 的地址只追加端点名。部署声明端点后才参与原生转发。
 
-流量按快照能力启用。基础节点登记 `reservation.v1`、`usage-events.v1`、`relay.native.v1`。HTTP 部署开启 `streaming` 时，新发布的快照另要求 `relay.sse.v1`，公开模型也需要开启流式能力。Responses 部署开启 `websocket` 时，还需 `relay.responses-ws.v1`。只有通过验证的部署才声明 `continuation` 和 `cancellation`。前者允许用本连接已完成的上一轮 ID 续接；后者允许转发原生取消事件。其余部署通过断开专属上游连接中止在途生成，保留未知结果供核对。
+节点登记全部基线能力（见[版本与兼容](plane-protocol.md#版本与兼容)），下文各项功能都不需要额外登记。HTTP 部署开启 `streaming` 时，公开模型也需要开启流式能力；`websocket` 只用于原生 Responses 部署。只有通过验证的部署才声明 `continuation` 和 `cancellation`。前者允许用本连接已完成的上一轮 ID 续接；后者允许转发原生取消事件。其余部署通过断开专属上游连接中止在途生成，保留未知结果供核对。
 
 WS 握手使用企业 Bearer Key，空闲和 ping/pong 不触发资金预留。每次 create 重查 Key、部署、凭据和模型，按覆盖完整上下文的部署上界预留，并使用独立尝试。每个连接最多一个在途轮次，同一会话复用固定上游连接。SSE 与 WS 通过有界队列传递事件并独立续租。节点以终态事件的真实写出结果判定交付。客户端已断开、结果未知或缺失用量时，Worker 依据已有事实核对。
 
@@ -72,7 +72,7 @@ WS 握手使用企业 Bearer Key，空闲和 ping/pong 不触发资金预留。�
 
 ### Responses 客户端使用 Chat Completions 上游
 
-对于只提供 `POST /v1/chat/completions` 的供应商，创建协议族为 `openai_compatible` 的上游，并在部署的 `relay_profile` 中设置 `endpoint: "openai_chat_completions"`、`transports: ["http"]`。沿用该部署已验证的输入、输出上界和计数规则。`convert_from` 可省略。流式和函数工具分别要求模型和部署均开启 `streaming`、`tools`。应用迁移 `0030_chat_upstream`，升级 Worker 和 Relay，为集群节点登记 `relay.responses-to-chat.v1`，然后发布修订。
+对于只提供 `POST /v1/chat/completions` 的供应商，创建协议族为 `openai_compatible` 的上游，并在部署的 `relay_profile` 中设置 `endpoint: "openai_chat_completions"`、`transports: ["http"]`。沿用该部署已验证的输入、输出上界和计数规则。`convert_from` 可省略。流式和函数工具分别要求模型和部署均开启 `streaming`、`tools`。配置完成后发布修订。
 
 客户端继续调用 `POST /v1/responses`。普通请求返回 Responses 对象，`stream: true` 返回带序号的 Responses SSE 事件。支持字符串输入、显式消息历史、instructions、函数调用和结果，以及文本或 JSON 结构化输出。工具参数增量按调用索引重组。仅支持 Chat 能表达的请求；存储与后台生成、托管工具、WebSocket 和独立压缩仍需要支持它们的原生部署。
 
@@ -92,7 +92,7 @@ Chat 流会请求 `stream_options.include_usage`，并在收到结束原因和 `
 
 ### Web Search
 
-在公开模型的 `tool_dimensions` 添加 `web_search_requests`，为模型和部署分别发布该维度的销售价、采购价。两者均支持按一次或每千次报价。部署须启用 `tools` 并设置 `relay_profile.web_search_ceiling`；节点须登记 `relay.web-search.v1`。原生 Responses 默认使用标准搜索。供应商对 preview 有独立计价时，使用定价对应的部署并将 `web_search_variant` 设为 `preview`。
+在公开模型的 `tool_dimensions` 添加 `web_search_requests`，为模型和部署分别发布该维度的销售价、采购价。两者均支持按一次或每千次报价。部署须启用 `tools` 并设置 `relay_profile.web_search_ceiling`。原生 Responses 默认使用标准搜索。供应商对 preview 有独立计价时，使用定价对应的部署并将 `web_search_variant` 设为 `preview`。
 
 Messages 使用工具定义中的 `max_uses`，Responses 使用请求级 `max_tool_calls`。省略时 Relay 写入部署上限；显式上限超过部署能力时会在预留前拒绝。上游返回后，Messages 按 `usage.server_tool_use.web_search_requests` 结算，Responses 按终态输出中已完成的 `web_search_call` 的 `search` 动作结算。同一动作可以包含多个查询。搜索内容的 token 按供应商回执和模型定价处理；涉及固定检索 token 费用的模型，配置采购价时须核对供应商账单与回执覆盖范围。[Anthropic Web Search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) · [OpenAI Web Search](https://developers.openai.com/api/docs/guides/tools-web-search) · [OpenAI 工具定价](https://developers.openai.com/api/docs/pricing)
 
@@ -100,7 +100,7 @@ Messages 使用工具定义中的 `max_uses`，Responses 使用请求级 `max_to
 
 ### File Search 和向量存储
 
-在模型的 `tool_dimensions` 添加 `file_search_calls` 与 `vector_storage_byte_seconds`，为模型和部署发布包含这两个维度的销售价和采购价。开启原生 Responses HTTP 部署的 `tools`，填写 `file_search_ceiling` 并登记节点能力 `relay.file-search.v1`。检索调用可按次或每千次报价。存储的 `unit_quantity` 为 `92771293593600`，对应 1 GiB 使用 1 日的字节秒数，`unit_price` 填每 GiB·日的价格。[供应商工具定价](https://developers.openai.com/api/docs/pricing)
+在模型的 `tool_dimensions` 添加 `file_search_calls` 与 `vector_storage_byte_seconds`，为模型和部署发布包含这两个维度的销售价和采购价。开启原生 Responses HTTP 部署的 `tools`，并填写 `file_search_ceiling`。检索调用可按次或每千次报价。存储的 `unit_quantity` 为 `92771293593600`，对应 1 GiB 使用 1 日的字节秒数，`unit_price` 填每 GiB·日的价格。[供应商工具定价](https://developers.openai.com/api/docs/pricing)
 
 1. 用企业 Bearer Key 上传文件到 `POST /v1/files`。在 `POST /v1/vector_stores` 的 `file_ids` 使用返回的文件句柄，保留返回的 `vs_nx_…`。创建空存储时可以通过 `X-Nexus-Model` 选择部署。
 2. 同一 Key 可以列举、读取、更新、删除自己的存储，也可在 `/v1/vector_stores/{id}/files` 管理文件、读取解析内容。在 `/file_batches` 批量添加文件后，用返回的批句柄查询、取消或列举该批文件。直接调用 `/v1/vector_stores/{id}/search` 可查询已索引内容。[OpenAI Retrieval](https://developers.openai.com/api/docs/guides/retrieval)
@@ -197,7 +197,7 @@ Messages 和 Responses 的 HTTP 请求通过 Bedrock `Converse` 转发，`stream
 
 运行 `uv run python scripts/run_integration.py -q tests/integration/test_bedrock_relay.py` 可验证两种入口、两种鉴权、普通及流式响应、异常流和 Worker 账本。该用例使用隔离 PostgreSQL、Redis 及本地 HTTPS 上游。
 
-配置 `relay_profile.bedrock_invoke=true` 并登记 `relay.bedrock-claude-invoke.v1` 可将 AWS Claude 部署切换到模型专用 `InvokeModel` / `InvokeModelWithResponseStream`，请求包含 AWS 的 `anthropic_version`，响应使用 `anthropic.messages.v1` 计量。Converse 和 Invoke 均保留现有区域 SigV4 或 Bedrock API Key 认证。通过 Converse 发送视频时，Responses 使用 `input_file.file_data`（例如 `data:video/mp4;base64,…`），Chat 使用 `file.file_data`，Messages 使用 Nexus 扩展块 `{"type":"video","source":{"type":"base64","media_type":"video/mp4","data":"…"}}`。节点的请求大小上限同样适用。PDF、CSV、Office、HTML、Markdown 和纯文本文件按 MIME 映射为 AWS 文档格式，文件名中的句点等字符转为空格。请按部署模型的能力选择媒体类型。[AWS VideoBlock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_VideoBlock.html) · [AWS DocumentBlock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html)
+配置 `relay_profile.bedrock_invoke=true` 可将 AWS Claude 部署切换到模型专用 `InvokeModel` / `InvokeModelWithResponseStream`，请求包含 AWS 的 `anthropic_version`，响应使用 `anthropic.messages.v1` 计量。Converse 和 Invoke 均保留现有区域 SigV4 或 Bedrock API Key 认证。通过 Converse 发送视频时，Responses 使用 `input_file.file_data`（例如 `data:video/mp4;base64,…`），Chat 使用 `file.file_data`，Messages 使用 Nexus 扩展块 `{"type":"video","source":{"type":"base64","media_type":"video/mp4","data":"…"}}`。节点的请求大小上限同样适用。PDF、CSV、Office、HTML、Markdown 和纯文本文件按 MIME 映射为 AWS 文档格式，文件名中的句点等字符转为空格。请按部署模型的能力选择媒体类型。[AWS VideoBlock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_VideoBlock.html) · [AWS DocumentBlock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html)
 
 在支持助手预填的 Claude 模型上，Messages 的末尾助手文本可原样用于 Converse 续写。Messages 指定 `stop_sequences` 时，Relay 请求 AWS 返回匹配的停止串。普通响应和 SSE 终态保留供应商提供的 `stop_sequence`；模型省略该字段时返回 `null`。Converse 内容过滤、Guardrail 拦截和 Claude 的拒答可转换为 Responses 的 `incomplete_details.reason=content_filter`。Responses 的拒答文本及过滤终态可转换回 Messages 的文本块与 `stop_reason=refusal`。
 
@@ -205,7 +205,7 @@ Messages 向 Converse 提交文档或 `search_result` 时可启用 `citations.en
 
 ### Guardrail 用量与费用
 
-在模型的 `tool_dimensions` 登记该 Guardrail 会收费的策略维度，为模型和部署分别发布销售、采购单价。每个单价支持按 1 单位或 1,000 单位报价。Converse 部署的 `bedrock_guardrail_unit_ceiling` 指定一次生成中每个收费维度可自动结算的最大数量。应用迁移 `0029_guardrail_units`，升级 Worker 和 Relay，为节点登记 `relay.bedrock-guardrail-usage.v1` 后发布快照。例如，模型登记 `guardrail_content_units` 和 `guardrail_image_units`，上界为 4，钱包及各层预算会在生成前同时预留最多 4 个文本过滤单位和 4 个图片过滤单位，再加 token 的原有预留。
+在模型的 `tool_dimensions` 登记该 Guardrail 会收费的策略维度，为模型和部署分别发布销售、采购单价。每个单价支持按 1 单位或 1,000 单位报价。Converse 部署的 `bedrock_guardrail_unit_ceiling` 指定一次生成中每个收费维度可自动结算的最大数量，配置完成后发布快照。例如，模型登记 `guardrail_content_units` 和 `guardrail_image_units`，上界为 4，钱包及各层预算会在生成前同时预留最多 4 个文本过滤单位和 4 个图片过滤单位，再加 token 的原有预留。
 
 | 计价维度 | AWS 回执来源 |
 | --- | --- |
@@ -223,9 +223,9 @@ AWS 没有返回完整评估、出现未知计数、实际使用未定价的策�
 
 ## 提高上游提示词缓存复用率
 
-同一个多轮工作流可在 HTTP POST 或 Responses WebSocket 握手中携带 `X-Nexus-Cache-Key`，例如 `support-session-73`。使用稳定的不透明值，最多 256 字节。重复或无效的头返回 400。Relay 对通过鉴权和能力筛选的同优先级候选使用带权 rendezvous 选路，并沿用原有故障转移和预留上限。该头仅用于 Relay 选路。Responses 请求也可使用 `prompt_cache_key`。已有部署在没有提示时继续按权重随机分流。
+同一个多轮工作流可在 HTTP POST 或 Responses WebSocket 握手中携带 `X-Nexus-Cache-Key`，例如 `support-session-73`。使用稳定的不透明值，最多 256 字节。重复或无效的头返回 400。Relay 对通过鉴权和能力筛选的同优先级候选使用带权 rendezvous 选路，并沿用原有故障转移和预留上限。该头仅用于 Relay 选路。Responses 请求也可使用 `prompt_cache_key`。没有提示时按权重随机分流。
 
-要在部署上自动优化，先为公开模型配置缓存读和目标上游的写入维度，并分别发布匹配的销售价和部署成本价。向节点注册能力加入 `relay.prompt-cache.v1`，在现有部署的 `relay_profile` 中加上 `"auto_prompt_cache": true` 后发布快照。开关默认关闭。按实际部署支持的模型、断点位置和 TTL 开启。自动添加缓存提示产生的写入费用由客户承担，按缓存写入维度的销售价计费，详见[计量与账务](billing.md)。对于新请求，路由若含已启用的候选，优先使用显式工作流键；无键时，对至少 1024 个序列化字节的系统指令及工具模板计算摘要，否则使用第一条用户消息。这里的字节门槛仅用于选择路由依据，模型自行判定可缓存 token 数。显式工作流键适合为高流量公共模板分摊负载。路由摘要按组织和模型隔离，进程不保存对话或缓存键，缓存读取以供应商回执为准。
+要在部署上自动优化，先为公开模型配置缓存读和目标上游的写入维度，并分别发布匹配的销售价和部署成本价。在部署的 `relay_profile` 中加上 `"auto_prompt_cache": true` 后发布快照。开关默认关闭。按实际部署支持的模型、断点位置和 TTL 开启。自动添加缓存提示产生的写入费用由客户承担，按缓存写入维度的销售价计费，详见[计量与账务](billing.md)。对于新请求，路由若含已启用的候选，优先使用显式工作流键；无键时，对至少 1024 个序列化字节的系统指令及工具模板计算摘要，否则使用第一条用户消息。这里的字节门槛仅用于选择路由依据，模型自行判定可缓存 token 数。显式工作流键适合为高流量公共模板分摊负载。路由摘要按组织和模型隔离，进程不保存对话或缓存键，缓存读取以供应商回执为准。
 
 | 启用后的实际部署 | 发送给上游的缓存提示 |
 | --- | --- |
@@ -239,12 +239,12 @@ AWS 没有返回完整评估、出现未知计数、实际使用未定价的策�
 
 ## 启用 HTTP 和 SSE 协议转换
 
-`relay_profile.endpoint` 始终是部署的真实上游协议。`convert_from` 可省略，省略时只接受原生请求。要让同一部署额外服务另一种客户端，在部署上设置下表对应的值，登记集群节点能力，然后发布新修订。移除 `convert_from` 并发布新修订即可关闭该方向。
+`relay_profile.endpoint` 始终是部署的真实上游协议。`convert_from` 可省略，省略时只接受原生请求。要让同一部署额外服务另一种客户端，在部署上设置下表对应的值，然后发布新修订。移除 `convert_from` 并发布新修订即可关闭该方向。
 
-| 客户端 → 上游 | `endpoint` | `convert_from` | 额外节点能力 |
-| --- | --- | --- | --- |
-| Messages → Responses | `openai_responses` | `anthropic_messages` | `relay.messages-to-responses.v1` |
-| Responses → Messages | `anthropic_messages` | `openai_responses` | `relay.responses-to-messages.v1` |
+| 客户端 → 上游 | `endpoint` | `convert_from` |
+| --- | --- | --- |
+| Messages → Responses | `openai_responses` | `anthropic_messages` |
+| Responses → Messages | `anthropic_messages` | `openai_responses` |
 
 两种转换均要求 `transports` 包含 `http`。流式和工具调用还需模型、部署分别开启对应能力。WebSocket 继续走原生 Responses 路径。转换可处理显式文本历史、系统指令、自定义函数声明、调用及文本结果。工具 ID 在历史中必须唯一，结果须匹配此前的调用。Responses 工具的 `strict` 建议显式填写；省略时，可将属性均为必填的受支持对象 schema 规范化为严格模式。含可选属性或复杂约束而无法安全规范化时沿用原 schema，并使用非严格函数调用。外部供应商签发的私有项须送回原供应商。显式指定的数值思考预算、供应商专用工具和缺少等价上游参数的请求按已授权路由选择可处理它们的部署。
 
@@ -280,7 +280,7 @@ X-Nexus-Allow-Approximation: cache-5m=30m, stop=local, prefill=prompt
 
 使用 Responses ↔ Messages 的 HTTP 或 SSE 生成时，客户端可以把上一轮输出随显式历史传回。Relay 把供应商签名、加密推理、压缩项和专有引用封装在客户端携带的 `nxctx1.` 凭据中。集群用独立派生的 XSalsa20-Poly1305 密钥和随机 nonce 认证加密；此机制不向数据库、Redis 或日志写入正文。相同集群私钥的其他节点或重启后的节点均可处理下一轮。
 
-Relay 在预留前验证企业 Key、公开模型 ID、原部署、供应商模型及凭据版本，并核对客户端带回的可见内容。该轮只能使用匹配的原部署。密文、签名、引文或可见摘要发生改动时，请求返回 `400 invalid_private_history`。集群私钥轮换或上游账户绑定改变后，旧凭据失效。接单节点均须升级到支持此格式的版本。
+Relay 在预留前验证企业 Key、公开模型 ID、原部署、供应商模型及凭据版本，并核对客户端带回的可见内容。该轮只能使用匹配的原部署。密文、签名、引文或可见摘要发生改动时，请求返回 `400 invalid_private_history`。集群私钥轮换或上游账户绑定改变后，旧凭据失效。
 
 | 客户端与实际来源 | 客户端如何续接 |
 | --- | --- |
@@ -305,7 +305,7 @@ Relay 在预留前验证企业 Key、公开模型 ID、原部署、供应商模�
 | 阶段 | 依赖 | 实施任务及归属 | 验收与退出条件 |
 | --- | --- | --- | --- |
 | **P0 协议核心与样本** | 已确定两种协议范围 | 在 `src/relay/` 建独立 Cargo 包。定义版本化样本目录、HTTP 输入、WS 握手与文本事件、终止状态、用量证据类型。按需选取 SSE 分帧代码并复用成熟文本编码器，参照 new-api 的转换和分词测试独立编制样本，记录实际复用片段的来源与许可。 | Rust 在干净环境可独立编译；文本、分块 UTF-8、CRLF、半帧、错误终态和超限帧有离线测试；验证两个生成路径上的方法：Messages POST、Responses POST 及 Responses GET Upgrade。 |
-| **P1 节点与控制契约** | P0 的字段和样本 | **catalog/publication** 实现部署端点、传输能力、计数规则版本和上界依据的发布、旧记录升级及能力协商。**billing** 实现期望格式绑定、两套归一化规则及重放测试。**Relay** 建节点池、快照索引、密文包解密、限额、租约、八个 SQL 调用和完成任务。 | 以隔离 PostgreSQL/Redis 和 Python 模拟器作对照，验证相同快照、旧节点拒绝未知能力、撤权、密钥轮换、提交丢响应、租约重放和失效。新 Worker 能同时处理历史 fixture 事件与新版协议样本；仅 HTTP 的部署、未确认新能力的节点不会获配 WS 轮次。 |
+| **P1 节点与控制契约** | P0 的字段和样本 | **catalog/publication** 实现部署端点、传输能力、计数规则版本和上界依据的发布及能力协商。**billing** 实现期望格式绑定、两套归一化规则及重放测试。**Relay** 建节点池、快照索引、密文包解密、限额、租约、八个 SQL 调用和完成任务。 | 以隔离 PostgreSQL/Redis 和 Python 模拟器作对照，验证相同快照、节点拒绝未知能力、撤权、密钥轮换、提交丢响应、租约重放和失效。Worker 能同时处理模拟器的 fixture 事件与原生协议样本；仅 HTTP 的部署不会获配 WS 轮次。 |
 | **P2 原生非流式闭环** | P1；每条链路有明确能力与证据规则 | **两份独立交付**：Messages → Messages、Responses → Responses。每份接真实 Relay HTTP 入站、本地上游替身、数据库收件箱和 Worker。实现候选选择、凭据注入、输入/输出上界、成本证据及客户交付归属。 | 两种入口分别验证成功、拒绝、重复上报、缺失用量。替身统计实际收到的请求数，数据库核对尝试、账本、余额和预算。真实部署的收费启用另以授权的商户 API 和计量样本验收。 |
 | **P3a 原生 SSE 与故障处理** | 对应方向 P2 通过 | 实现两种协议的 SSE 分帧、背压、超时、工具流、取消和排空。不同传输复用同一套按生成请求预留、按尝试上报和核对的逻辑。 | 验收主动断开、上游错误、未知提交、长流续租和资金一致性。 |
 | **P3b Responses 双端 WebSocket（首期必交）** | P1 的传输声明、P2 Responses 链路；与 P3a 共用事件与计量组件 | `server/` 实现客户端握手、会话与逐轮准入；`upstream/` 实现原生 WSS 拨号与专属连接复用；`request/` 接入同连接续接、取消和逐轮完成。参考 new-api 的握手、路由固定和每轮结算用例，用 Rust 独立实现。 | 真实 WS 客户端和可观测的上游 WS 替身双端返回 101。连续两轮生成只建立一个上游连接，收到两条独立 create；两轮各自有请求、用量和正确流水。以声明支持 WS 的获授权真实部署复核端到端行为。 |
@@ -330,7 +330,6 @@ P1 的控制平面变更和 Rust 协议客户端可在同一份样本契约上�
 | 计量语义 | 验证累计输出、缓存命中、两类缓存写入、推理子集、负数/溢出、缺失与真实零。缺失或冲突入核对，保留原始尝试与预留；可信零量按既有规则释放。价格版本切换不改变在途请求。 |
 | 依赖与崩溃 | 分别切断 PostgreSQL、Redis、Worker；在预留提交、尝试提交、收到用量和上报提交前后注入故障。按原 ID 查证或重放；有上游副作用但证据丢失的请求进入核对，不估造账单。 |
 | 快照与多节点 | 启动、错过通知、旧修订、跨集群读、冻结、密钥轮换、旧租约释放、节点替换与排空。检查快照确认版本、上游凭据归属与节点身份。 |
-| 版本兼容 | 现有部署升级后仍可查询，旧节点继续使用兼容快照，未知必需能力无法确认；先升级 Worker，再放行发送新格式的节点。回滚时旧记录和已确认流水可复核。 |
 
 **负载口径。** 先重复本机 8/64 活跃节点、8 家企业均摊与单家占 90%、50 请求/秒持续 30 秒，以及 64 节点突发 512 请求。记录实际输入速率、预留与用量提交 p99、最后证据到结算 p95/p99、输入结束积压、清空时间和错误/未完成数。按同一环境比较两轮并反转顺序。另外对冷/热编码缓存、超长文本和高并发计数记录 p99、RSS 及输入大小。另设 Responses WS 空闲连接、连续多轮、小量长轮与慢读负载，记录两端连接数、复用率、活跃轮数、逐轮首事件、RSS、断线后清理及账本结果。再对长流、慢客户端、配置更新、上游高延迟和跨地域网络单独测试，记录首字节、事件间隔、进程 RSS 和数据库池等待。沿用结算目标 p95 ≤ 2 秒、p99 ≤ 5 秒；现有 Python 数据用于对照。[负载与账本基线](control-plane-acceptance.md#准入与结算优化复测) · Rust Relay 的实测、瓶颈与建议见 [Relay 容量验收](relay-acceptance.md)，用 `scripts/relay_load.py` 复现。
 

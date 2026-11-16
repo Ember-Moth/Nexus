@@ -19,6 +19,7 @@ from test_billing import account_amounts, headers, setup_model, setup_wallet
 from test_identity_api import auth, create_user, login
 
 from nexus.gateway_simulator import GatewaySimulator
+from nexus.modules.publication import CAPABILITIES
 from nexus.modules.publication.application.schemas import (
     ClusterView,
     PrincipalView,
@@ -53,23 +54,6 @@ async def register_node(client, root, admin, cid):
         dbname=admin.info.dbname,
         user=name,
         password=password,
-    )
-
-
-def list_keys_in_manifests(admin, keys):
-    """Put the cluster's keys into the stored releases, as releases made before 0044 had them.
-
-    For tests that call the gateway contracts of an older schema after a downgrade.
-    """
-    admin.execute(
-        """UPDATE publication.config_snapshots s SET manifest=x.m,
-           payload_bytes=convert_to(x.m::text,'UTF8'),
-           sha256=encode(sha256(convert_to(x.m::text,'UTF8')),'hex')
-           FROM (SELECT cluster_id,revision,
-                 jsonb_set(manifest,'{resources,key_verifiers}',%s::jsonb) m
-                 FROM publication.config_snapshots) x
-           WHERE s.cluster_id=x.cluster_id AND s.revision=x.revision""",
-        (json.dumps(list(keys)),),
     )
 
 
@@ -333,7 +317,7 @@ async def test_cluster_read_principals_and_release_history(plane, http, admin):
     for node in views.values():
         assert (node.applied_revision, node.applied_at, node.last_ack) == ("0", None, None)
         assert node.active and node.database_role.startswith("nexus_node_")
-        assert node.capabilities == ["reservation.v1", "usage-events.v1"]
+        assert node.capabilities == list(CAPABILITIES)
 
     me = (await client.get("/api/v1/me", headers=auth(root))).json()["user"]["id"]
     rollback = await client.post(
@@ -805,25 +789,22 @@ async def test_native_profile_publication_attempt_binding_and_worker_replay(plan
     assert result.status_code == 200, result.text
     version = result.json()["version"]
     release = f"/api/v1/gateway-clusters/{cid}/releases"
-    blocked = await client.post(release, headers=headers(root, "native"), json={})
-    assert blocked.status_code == 409
     node_id, role = admin.execute(
         "SELECT node_id, database_role FROM publication.gateway_principals WHERE cluster_id=%s",
         (cid,),
     ).fetchone()
-    caps = ["reservation.v1", "usage-events.v1", "relay.native.v1", "relay.provider-features.v1"]
     node_path = f"/api/v1/gateway-clusters/{cid}/principals/{node_id}"
-    for extra, status in [([], 409), (["relay.responses-ws.v1"], 202)]:
+    # Every node must declare the whole baseline before the release is published.
+    partial = [c for c in CAPABILITIES if c != "relay.responses-ws.v1"]
+    for caps, status in [(partial, 409), (list(CAPABILITIES), 202)]:
         result = await client.put(
             node_path,
             headers=auth(root),
-            json={"node_id": str(node_id), "database_role": role, "capabilities": caps + extra},
+            json={"node_id": str(node_id), "database_role": role, "capabilities": caps},
         )
         assert result.status_code == 200, result.text
         result = await client.post(release, headers=headers(root, "native"), json={})
         assert result.status_code == status, result.text
-    with pytest.raises(ValueError, match="Unsupported snapshot"):
-        await peer.refresh()
     head = await peer.call("config_head")
     manifest = json.loads(bytes(await peer.call("get_config_snapshot", int(head["revision"]))))
     deployment = manifest["resources"]["deployments"][0]

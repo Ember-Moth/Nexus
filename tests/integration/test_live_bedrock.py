@@ -11,6 +11,7 @@ from test_plane import provision_plane
 from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F401
 
 from nexus.modules.billing.domain.money import GUARDRAIL_DIMENSIONS
+from nexus.modules.publication import CAPABILITIES
 
 pytestmark = pytest.mark.integration
 
@@ -88,18 +89,7 @@ async def test_authorized_bedrock_generation_and_settlement(http, admin, tls, re
             "SELECT node_id,database_role FROM publication.gateway_principals WHERE cluster_id=%s",
             (cluster,),
         ).fetchone()
-        caps = [
-            "reservation.v1",
-            "usage-events.v1",
-            "relay.native.v1",
-            "relay.provider-features.v1",
-            "relay.sse.v1",
-            "relay.bedrock-converse.v1",
-        ]
-        if guardrail:
-            caps += ["relay.bedrock-settings.v1", "relay.bedrock-guardrail-usage.v1"]
-        if mode == "claude_invoke":
-            caps.append("relay.bedrock-claude-invoke.v1")
+        caps = list(CAPABILITIES)
         principal = await api.put(
             f"/api/v1/gateway-clusters/{cluster}/principals/{node}",
             headers=auth(root),

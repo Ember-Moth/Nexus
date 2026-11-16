@@ -8,20 +8,39 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from nexus.shared.views import ManagedSource, Timestamp, View
 
-CAPABILITIES = ("reservation.v1", "usage-events.v1")
-# Node capability a release requires once any deployment enables the provider feature.
-FEATURE_CAPABILITIES = {
-    "stored_responses": "relay.stored-responses.v1",
-    "background": "relay.background-responses.v1",
-    "conversations": "relay.conversations.v1",
-    "files": "relay.files.v1",
-    "vector_stores": "relay.vector-stores.v1",
-    "batches": "relay.message-batches.v1",
-    "code_execution": "relay.code-execution.v1",
-    "remote_mcp": "relay.remote-mcp.v1",
-    "web_fetch": "relay.web-fetch.v1",
-    "web_search": "relay.web-search.v1",
-}
+# Node capabilities every snapshot requires: everything the Relay supported at launch. A
+# capability added later is required only by snapshots that use it (``required_capabilities``).
+CAPABILITIES = (
+    "reservation.v1",
+    "usage-events.v1",
+    "relay.native.v1",
+    "relay.provider-features.v1",
+    "relay.cluster-policy.v1",
+    "relay.sse.v1",
+    "relay.responses-ws.v1",
+    "relay.messages-to-responses.v1",
+    "relay.responses-to-messages.v1",
+    "relay.responses-to-chat.v1",
+    "relay.prompt-cache.v1",
+    "relay.web-search.v1",
+    "relay.file-search.v1",
+    "relay.claude-execution.v1",
+    "relay.openai-containers.v1",
+    "relay.bedrock-converse.v1",
+    "relay.bedrock-claude-invoke.v1",
+    "relay.bedrock-settings.v1",
+    "relay.bedrock-guardrail-usage.v1",
+    "relay.bedrock-request-options.v1",
+    "relay.stored-responses.v1",
+    "relay.background-responses.v1",
+    "relay.conversations.v1",
+    "relay.files.v1",
+    "relay.vector-stores.v1",
+    "relay.message-batches.v1",
+    "relay.code-execution.v1",
+    "relay.remote-mcp.v1",
+    "relay.web-fetch.v1",
+)
 # Revisions are bigint in SQL and decimal strings in JSON to survive any client's integers.
 Revision = Annotated[str, Field(pattern=r"^[0-9]+$")]
 # listed: organization_ids; all: every active organization; personal: every active personal one.
@@ -75,7 +94,7 @@ class Cluster(Command):
 class Principal(Command):
     database_role: str = Field(pattern=r"^[a-z_][a-z0-9_]{0,62}$")
     node_id: UUID
-    capabilities: list[str] = Field(default_factory=lambda: list(CAPABILITIES), max_length=32)
+    capabilities: list[str] = Field(default_factory=lambda: list(CAPABILITIES), max_length=64)
     active: bool = True
 
 
@@ -295,16 +314,14 @@ class PurgeRequestView(View):
     failed: int
 
 
-# The Relay's built-in cluster policy, used when a snapshot carries no cluster_policy. A snapshot
-# only carries it, and then requires relay.cluster-policy.v1, once a value differs.
-RELAY_POLICY_DEFAULTS = {
-    "max_attempts": 2,
-    "failover_budget_ms": 10000,
-    "purge_grace_seconds": 604800,
-    "stream_lifetime_seconds": 1800,
-}
+# Every snapshot carries the cluster's effective Relay policy as resources.cluster_policy.
+RELAY_POLICY_FIELDS = (
+    "max_attempts",
+    "failover_budget_ms",
+    "purge_grace_seconds",
+    "stream_lifetime_seconds",
+)
 AUTO_PUBLISH_DEFAULTS = {"quiet_seconds": 3.0, "max_delay_seconds": 30.0}
-CLUSTER_POLICY_CAPABILITY = "relay.cluster-policy.v1"
 
 
 class RelayPolicy(Command):

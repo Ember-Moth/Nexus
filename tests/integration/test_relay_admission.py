@@ -20,6 +20,8 @@ from test_plane import provision_plane
 from test_project_credentials import key as issue_key
 from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F401
 
+from nexus.modules.publication import CAPABILITIES
+
 pytestmark = pytest.mark.integration
 USAGE = {"input_tokens": 2, "output_tokens": 3, "input_tokens_details": {"cached_tokens": 0}}
 
@@ -117,14 +119,7 @@ async def relay_plane(http, admin, tls, binary, provider, *, log=False, env=None
             "SELECT node_id,database_role FROM publication.gateway_principals WHERE cluster_id=%s",
             (cid,),
         ).fetchone()
-        caps = [
-            "reservation.v1",
-            "usage-events.v1",
-            "relay.native.v1",
-            "relay.provider-features.v1",
-            "relay.sse.v1",
-            "relay.cluster-policy.v1",
-        ]
+        caps = list(CAPABILITIES)
         r = await client.put(
             f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
             headers=auth(root),

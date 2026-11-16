@@ -6,7 +6,7 @@ Nexus 为预付费账户提供两种资金入口：财务人工登记，以及�
 
 ## 运行与接口
 
-先执行 `uv run nexus --env-file .env.migrate migrate`，升级到当前迁移版本，再分别启动 API 与 Worker。降级涉及支付订单、跨币种报价或核对决定时，先检查目标迁移的历史保留条件。
+先执行 `uv run nexus --env-file .env.migrate migrate`，升级到当前迁移版本，再分别启动 API 与 Worker。
 
 API 与 Worker 使用相同的以下配置：
 

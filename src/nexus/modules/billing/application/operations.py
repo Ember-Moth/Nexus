@@ -491,7 +491,7 @@ class Operations:
             versioned(account, expected)
             if account.status != "frozen":
                 conflict("Account is already active")
-            await repo.release_cleared_restrictions(account.id, org)
+            await repo.release_cleared_restrictions(account.id)
             if await repo.unresolved(account) or await repo.reconcile(account):
                 conflict("Account still has unresolved restrictions or differences")
             await repo.edit(account, {"status": "active"})

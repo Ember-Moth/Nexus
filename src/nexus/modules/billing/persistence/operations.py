@@ -354,20 +354,11 @@ class OperationsRepository(PaymentRepository):
         )
         return [row["reason"] for row in rows]
 
-    async def release_cleared_restrictions(self, account_id, org):
+    async def release_cleared_restrictions(self, account_id):
         await self.execute(
             """UPDATE billing.account_restrictions f SET released_at=clock_timestamp()
           WHERE account_id=:acct AND released_at IS NULL AND source_type='request'
           AND EXISTS(SELECT FROM billing.request_runs r WHERE r.id=f.source_id
             AND r.account_id=f.account_id AND r.reservation_state<>'held')""",
             acct=account_id,
-        )
-        await self.execute(
-            """UPDATE billing.account_restrictions f SET released_at=clock_timestamp()
-          WHERE account_id=:acct AND source_type='legacy' AND released_at IS NULL AND NOT EXISTS
-          (SELECT FROM billing.review_cases WHERE organization_id=:org AND state='open') AND
-          NOT EXISTS
-          (SELECT FROM billing.payment_cases WHERE organization_id=:org AND status='open')""",
-            acct=account_id,
-            org=org,
         )

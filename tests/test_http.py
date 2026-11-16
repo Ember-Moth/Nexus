@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 import httpx
 
@@ -57,7 +58,8 @@ async def test_error_bodies_match_the_declared_envelopes(settings_factory, compl
     app = completed_setup(create_app(settings_factory()))
     app.state.routing = app.state.publication = object()  # rejected before any service call
     spec = app.openapi()
-    responses = spec["paths"]["/api/v1/route-policies"]["post"]["responses"]
+    route = "/api/v1/route-policies/{organization_id}/{model_id}"
+    responses = spec["paths"][route]["put"]["responses"]
     assert responses["401"]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/ErrorResponse"
     )
@@ -67,11 +69,12 @@ async def test_error_bodies_match_the_declared_envelopes(settings_factory, compl
     assert "HTTPValidationError" not in spec["components"]["schemas"]
     bearer = {"Authorization": "Bearer unverified"}
     cluster = "/api/v1/gateway-clusters/00000000-0000-0000-0000-000000000001"
+    policy = "/api/v1/route-policies/00000000-0000-0000-0000-000000000001/" + str(uuid4())
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        unauthorized = await client.post("/api/v1/route-policies", json={})
-        invalid = await client.post("/api/v1/route-policies", headers=bearer, json={"x": 1})
+        unauthorized = await client.put(policy, json={})
+        invalid = await client.put(policy, headers=bearer, json={"x": 1})
         missing_version = await client.patch(cluster, headers=bearer, json={})
         bad_version = await client.patch(cluster, headers=bearer | {"If-Match": "3"}, json={})
     assert unauthorized.status_code == 401

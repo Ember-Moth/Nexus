@@ -16,7 +16,7 @@ from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 from websockets.exceptions import InvalidStatus
 
-from nexus.modules.publication.application.schemas import FEATURE_CAPABILITIES
+from nexus.modules.publication import CAPABILITIES
 
 pytestmark = pytest.mark.integration
 
@@ -41,10 +41,6 @@ def unsealed(value):
     return out
 
 
-def feature_capabilities(features):
-    return [FEATURE_CAPABILITIES[f] for f in features]
-
-
 @asynccontextmanager
 async def stream_plane(
     http,
@@ -66,7 +62,7 @@ async def stream_plane(
     """Provision a relay plane. `features` lists the provider features the deployment enables.
 
     `cluster_policy` sets Relay policy values and `resource_quotas` overrides resource counts for
-    the organization; either one makes the release require relay.cluster-policy.v1.
+    the organization.
     """
     client, root, app, settings = http
     async with provision_plane(
@@ -122,60 +118,12 @@ async def stream_plane(
             "SELECT node_id,database_role FROM publication.gateway_principals WHERE cluster_id=%s",
             (cid,),
         ).fetchone()
-        caps = [
-            "reservation.v1",
-            "usage-events.v1",
-            "relay.native.v1",
-            "relay.provider-features.v1",
-            "relay.sse.v1",
-            *feature_capabilities(features),
-        ]
-        if ws:
-            caps.append("relay.responses-ws.v1")
-        if cluster_policy or resource_quotas:
-            caps.append("relay.cluster-policy.v1")
         r = await client.put(
             f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
             headers=auth(root),
-            json={"node_id": str(nid), "database_role": role, "capabilities": caps},
+            json={"node_id": str(nid), "database_role": role, "capabilities": list(CAPABILITIES)},
         )
         assert r.status_code == 200, r.text
-        if convert_from or chat_upstream:
-            blocked = await client.post(
-                f"/api/v1/gateway-clusters/{cid}/releases",
-                headers=headers(root, "old-node"),
-                json={},
-            )
-            assert blocked.status_code == 409, blocked.text
-            direction = (
-                "messages-to-responses"
-                if convert_from == "anthropic_messages"
-                else "responses-to-messages"
-            )
-            caps.append("relay.responses-to-chat.v1" if chat_upstream else f"relay.{direction}.v1")
-            r = await client.put(
-                f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
-                headers=auth(root),
-                json={"node_id": str(nid), "database_role": role, "capabilities": caps},
-            )
-            assert r.status_code == 200, r.text
-        if auto_cache:
-            blocked = await client.post(
-                f"/api/v1/gateway-clusters/{cid}/releases",
-                headers=headers(root, "node-without-prompt-cache"),
-                json={},
-            )
-            assert (
-                blocked.status_code == 409
-                and blocked.json()["error"]["code"] == "unsupported_capability"
-            )
-            caps.append("relay.prompt-cache.v1")
-            r = await client.put(
-                f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
-                headers=auth(root),
-                json={"node_id": str(nid), "database_role": role, "capabilities": caps},
-            )
-            assert r.status_code == 200, r.text
         r = await client.put(
             f"/api/v1/organizations/{org['id']}/quota-policies"
             f"/customer/organization/{org['id']}/concurrency",

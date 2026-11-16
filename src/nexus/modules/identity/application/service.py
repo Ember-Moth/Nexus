@@ -7,7 +7,7 @@ from nexus.shared.policy import CachedPolicy
 
 from ..domain.email import mailbox
 from ..domain.errors import IdentityError, forbidden, missing, unauthorized
-from ..domain.logins import login_candidates, new_login
+from ..domain.logins import canonical_login, new_login
 from ..domain.tokens import digest_token
 from .authorization import AccessControl
 from .email_auth import EmailAuthentication
@@ -264,15 +264,15 @@ class IdentityService(EmailAuthentication, SiteSetup):
     async def login(
         self, login: str, password: str, peer: str, turnstile_token=None
     ) -> SessionCreated:
-        candidates = login_candidates(login)
+        canonical = canonical_login(login)
         if not 1 <= len(password) <= 1024:
             raise unauthorized()
         # Every spelling of an account shares its canonical bucket.
-        await self._throttle("login:" + candidates[0], peer)
+        await self._throttle("login:" + canonical, peer)
         version = await self.guard("login", turnstile_token)
         address = email_spelling(login)
         async with self._transactions() as tx:
-            credentials = await tx.directory.credentials(*candidates)
+            credentials = await tx.directory.credentials(canonical)
             # A login name wins over an address with the same spelling.
             if credentials is None and address is not None:
                 credentials = await tx.directory.credentials_by_email(address)
@@ -517,12 +517,9 @@ class IdentityService(EmailAuthentication, SiteSetup):
             return result
 
     async def invite(self, token, org_id, body):
-        candidates = login_candidates(body.login)
+        login = canonical_login(body.login)
         async with self._access.authenticated(token) as (tx, actor):
             org = await self._access.organization(tx, actor, org_id, manage=True, lock=True)
-            # Invite an existing account under the spelling it is stored with.
-            existing = await tx.directory.credentials(*candidates)
-            login = existing[0].login if existing else candidates[0]
             if org.status not in {"active", "provisioning"}:
                 raise IdentityError(
                     "organization_inactive", "Organization cannot accept invitations", 409

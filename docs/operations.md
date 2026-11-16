@@ -4,7 +4,7 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 
 ## 凭请求 ID 排查
 
-- 管理 API 的 `X-Request-ID` 对应 `nexus.api` 的 `http.response` JSON 日志。日志记录方法、路由模板、状态、错误码与生成响应头所用的毫秒数。可以用 `GET /api/v1/audit-events?trace_id=<UUID>` 查该请求产生的审计事件，组织用户仍须提供组织 ID。迁移前的记录与独立后台操作允许 `trace_id` 为空。
+- 管理 API 的 `X-Request-ID` 对应 `nexus.api` 的 `http.response` JSON 日志。日志记录方法、路由模板、状态、错误码与生成响应头所用的毫秒数。可以用 `GET /api/v1/audit-events?trace_id=<UUID>` 查该请求产生的审计事件，组织用户仍须提供组织 ID。独立后台操作的 `trace_id` 为空。
 - 注册、邮箱绑定和密码找回请求实际入队后会写 `mail.queued`，`purpose` 为 `register`、`bind`、`reset`，或表示“登录名已被使用”提示的 `exists`。按原 `request_id` 或 `job_id` 查 Worker 的 `mail.attempt`、`mail.failed`、`mail.accepted` 和 `mail.expired`。失败事件给出尝试次数、渠道、可用的供应商状态码和 `outcome`：`retry_scheduled` 表示服务商不可用、稍后重试；`rejected` 表示服务商同步拒收（例如永久退信或 4xx），任务已删除且不影响 Worker 就绪。`mail.expired` 表示任务在 `NEXUS_MAIL_QUEUE_TTL_SECONDS` 内没有发出。供应商受理后仍可能退信。本地 SMTP 成功以 SMTP 事务完成为准，日志不保存地址、邮件令牌、正文或供应商返回的自由文本。
 - Turnstile 不可用时匿名调用方只收到 `turnstile_unavailable`。`nexus.auth` 日志的 `turnstile.unavailable` 事件以 `outcome` 给出原因：`not_configured`（策略开启但 API 缺少 Turnstile 配置）、`invalid_secret`（Siteverify 报告 secret 缺失或失效）、`transport` 或 `malformed_response`。
 - Relay 的两个生成接口在普通 HTTP、SSE 和早期拒绝响应中返回服务器生成的 `X-Request-ID`。请求成功预留时，该 UUID 就是计费请求 ID。WebSocket 握手的 ID 是会话 ID；会话内各轮拥有独立的计费请求 ID。HTTP 402 的 `insufficient_funds` 对应账户充值，`budget_exceeded` 对应调整预算。原先两个场景均返回 `insufficient_budget`。
@@ -106,7 +106,7 @@ Worker 的 Redis 心跳包含进程累计的数据库连接取得次数与耗时
 
 ### 预留覆盖与核对要点
 
-迁移 `0031_model_call_bounds`、`0032_container_coverage`、`0033_storage_prepayment` 须先于新版 Worker 与 Relay 部署。Worker 在每个账务事务里读取账务策略的 `vector_storage.prepaid_days`（默认 7，范围 1–31）和 `vector_storage.lapse_policy`（`delete` 或 `suspend`，默认 `delete`），由 `PUT /api/v1/settings/billing` 修改；消费者 `storage_prepayment` 负责续期与失效。
+Worker 在每个账务事务里读取账务策略的 `vector_storage.prepaid_days`（默认 7，范围 1–31）和 `vector_storage.lapse_policy`（`delete` 或 `suspend`，默认 `delete`），由 `PUT /api/v1/settings/billing` 修改；消费者 `storage_prepayment` 负责续期与失效。
 
 - **冻结范围收窄。** 只有费用超过已持有预留时账户冻结。工具或计量单位超出授权值但费用在预留内时，请求以 `authorized_bound_exceeded` 进入核对、不冻结；token 数超出预留依据时照常结算并写入 `request.token_bound_exceeded`，该事件持续出现说明某个部署的上界规则过窄。
 - **工具循环的预留更高。** 带服务端工具或压缩的请求按可能的模型调用次数预留输入，资金与 TPM 占用随之上升，规则见[多次模型调用](relay-design.md#首期协议与计量细则)。批任务中含代码执行等无次数参数工具的项目被拒绝。
@@ -148,7 +148,9 @@ ready 持续偏高而 Worker 的 CPU 不高，多数是热点钱包：一个钱�
 
 ## 网关配置自动发布
 
-集群的 auto_publish 为 true 时，Worker 会把源变化自动发布到该集群，协议细节见[自动发布](plane-protocol.md#自动发布)。迁移 0037 之前已存在的集群保持 false，仍需手动发布；此后新建的集群默认为 true。
+集群的 auto_publish 为 true 时，Worker 会把源变化自动发布到该集群，协议细节见[自动发布](plane-protocol.md#自动发布)。新建集群默认为 true；为 false 时只能手动发布。
+
+修订数会随自动发布增加。关注 Redis 内存和 PostgreSQL 中 `publication.config_snapshots` 的增长（见[配置快照规模](control-plane-acceptance.md#配置快照规模)），以及 `nexus_publication_auto_*` 指标。Redis 中被取代的快照副本 10 分钟后过期。`all` 和 `personal` 集群只负责下发企业，企业要能调用，仍需要平台访问策略、路由和可用余额。
 
 ### 生效时延
 
@@ -179,7 +181,7 @@ ready 持续偏高而 Worker 的 CPU 不高，多数是热点钱包：一个钱�
 | `last_failure` | 最近一次失败的错误码、说明和时间。恢复后仍保留，用于事后追查 |
 | `paused` | 回滚暂停的原因、修订和时间 |
 
-`failing` 时按 `last_failure.code` 处理：`invalid_snapshot` 的说明会指出缺少售价或成本价、部署缺少路由，或企业不是 active；`unsupported_capability` 表示有节点缺少所需能力，需要升级节点后重新登记。修正源数据或重新登记节点后，Worker 会自动重试，无需手动发布。如果状态长时间停留在 `pending`，检查 Worker 心跳中 `auto_publish` 是否为 ok，以及数据库通知是否可达。Worker 断开后会退回到每 30 秒轮询一次。
+`failing` 时按 `last_failure.code` 处理：`invalid_snapshot` 的说明会指出缺少售价或成本价、部署缺少路由，或企业不是 active；`unsupported_capability` 表示有节点没有登记全部所需能力（基线见[版本与兼容](plane-protocol.md#版本与兼容)），需要升级节点或补登记能力。修正源数据或重新登记节点后，Worker 会自动重试，无需手动发布。如果状态长时间停留在 `pending`，检查 Worker 心跳中 `auto_publish` 是否为 ok，以及数据库通知是否可达。Worker 断开后会退回到每 30 秒轮询一次。
 
 Worker 日志事件：`publication.auto_published`，outcome 为 published 或 unchanged，后者表示内容未变而未生成修订；`publication.auto_publish_failed` 表示校验失败；`publication.auto_publish_deferred` 表示发布与人工操作冲突或源仍在变化，会稍后重试；`publication.auto_publish_error` 表示意外错误或存储不可用。事件都带 cluster_id 和 error_code。`/internal/metrics` 增加以下指标：
 
@@ -315,23 +317,6 @@ Worker 日志事件：`publication.auto_published`，outcome 为 published 或 u
 
 生产环境保持依赖库在 `info` 或更高级别。临时开启 `debug` 排查时，依赖库的字段仍被替换，但事件数量会显著增加。
 
-## 升级到 0036（身份认证滥用防护）
-
-1. 执行迁移后尽快同时替换 API 和 Worker。0036 只改动 `identity.auth_policy` 和 `identity.email_challenges` 两张小表。替换完成前，旧 API 实例仍按旧逻辑接受注册；旧 Worker 不认识新的 `exists` 提示邮件，会把它当作失败重试，直到新 Worker 接手。
-2. **自助注册在迁移后关闭**，包括此前已开放注册的部署。需要开放时，先配置发信渠道，再由平台管理员 `PUT /settings/authentication` 提交 `{"registration":true,"email_verification":true,...}`。注册只能与邮箱验证同时开启。
-3. **配置 BFF 共享密钥**。凡设置了 `NEXUS_AUTH_PROXY_PEERS` 的 API，必须同时设置至少 32 个字符的 `NEXUS_AUTH_PROXY_SECRET`，否则拒绝启动；在 BFF 上设置同名同值的变量。BFF 没有密钥时不转发客户端 IP，API 回退到按 BFF 地址限流。生成方式见 [BFF 配置](../src/web/README.md)。
-4. 拥有平台角色的用户默认不能再用邮件找回密码，改由其他管理员签发 setup token。确需保留时打开身份策略的 `platform_email_recovery`。
-5. 按业务量检查发信额度（见[发信限额](identity-api.md#发信限额)）和保留登录名，两者都在身份策略里。默认全局每小时 1000 封。
-6. 已有账号不受新的登录名规则影响，可继续用原写法登录。
-
-## 升级到 0037（网关自动发布）
-
-1. 迁移 0037 修改 `publication.gateway_clusters`：加两列，并重建范围 CHECK 约束。这一步要取 ACCESS EXCLUSIVE 锁，表很小，但每次 Relay 调用都会读集群行，所以执行期间网关调用会短暂等待。迁移还会在 identity、catalog、billing 三张 `source_revision` 表上各建一个通知触发器。遇到长事务时，迁移会按 `NEXUS_MIGRATION_LOCK_TIMEOUT_MS` 超时，处理掉长事务后重新执行即可。
-2. 同时替换 API 和 Worker。只有新 Worker 才有 `auto_publish` 任务；旧 Worker 继续分发已有修订，不会自动发布。
-3. 存量集群的 auto_publish 为 false。逐个确认集群当前快照不是有意保留的回滚，也不是在等发布窗口的内容，然后再用 PATCH 打开。打开后如果内容和源一致，不会产生新修订。
-4. 修订数会随自动发布增加。关注 Redis 内存和 PostgreSQL 中 `publication.config_snapshots` 的增长（见[配置快照规模](control-plane-acceptance.md#配置快照规模)），以及 `nexus_publication_auto_*` 指标。Redis 中被取代的快照副本 10 分钟后过期。
-5. `all` 和 `personal` 集群只负责下发企业。企业要能调用，仍需要平台访问策略、路由和可用余额。自 0036 起自助注册默认关闭。
-
 ## 策略文件导入
 
 `nexus settings import --file PATH [--dry-run]` 把 YAML 或 JSON 策略文件写入各模块的策略表。命令使用 API 进程的配置（`nexus_api` 数据库角色，同一组 Secret/ConfigMap），只连 PostgreSQL，要求数据库已迁移到最新版本。
@@ -428,16 +413,6 @@ spec:
 
 `lock_timeout` 防止的是锁排队：`ALTER TABLE` 一旦在长事务后面等待 ACCESS EXCLUSIVE 锁，之后所有读写该表的请求都会排在它后面。升级时超时，当前修订回滚，之前的修订已经提交；排查长事务（`pg_stat_activity`）后重新执行 `nexus migrate` 即可从失败的修订继续。在业务流量下升级时，可以把 `NEXUS_MIGRATION_STATEMENT_TIMEOUT_MS` 设为能接受的最长阻塞时间，让意外的长时间重写失败，而不是长时间锁表。
 
-### 0017 需要维护窗口
-
-`0017_request_correlation` 已经发布，不再改写。它在同一个修订内对 5 张审计表执行 `ADD COLUMN` 和非 CONCURRENTLY 的 `CREATE INDEX`：建索引期间持有 SHARE 锁，阻塞对 `billing.audit_events` 等表的写入，Relay 的 `reserve_request` 和 `start_attempt` 会因此停住。尚未执行 0017 的部署：
-
-- 在维护窗口内升级，或先停止 Relay 流量（从负载均衡摘除节点，或发送 SIGTERM 让节点排空，见下文“存活与就绪”），等在途请求和完成上报结束后再执行迁移；
-- 审计表很大时，按行数估算建索引时间，并临时调高 `NEXUS_MIGRATION_LOCK_TIMEOUT_MS`，以免在长事务后面反复超时；
-- 执行完 0017 后恢复流量，其余修订可以照常执行。
-
-已经执行过 0017 的部署无需处理。
-
 ### 大表迁移规范
 
 - 一个修订只做一件可以整体回滚的事；数据回填与约束、索引分开成不同的修订。
@@ -445,4 +420,4 @@ spec:
 - 业务表上的索引在 `upgrade()` 中用 `nexus.infrastructure.migrations.create_index_concurrently` 建立，删除用 `drop_index_concurrently`；`downgrade()` 不使用它们，以保持降级的原子性。辅助函数会提交修订中之前的语句，在 autocommit 下执行 `CONCURRENTLY`，并在该语句上取消迁移级超时（并发建索引只取 SHARE UPDATE EXCLUSIVE 锁，不阻塞读写，但要等待库内所有更早的事务结束）。中断留下的 INVALID 索引在重跑时会被删除重建。`0036_identity_abuse_limits` 是参考用法。
 - 模块角色要对已有的表建外键时，在 `with nexus.infrastructure.migrations.references([...], role):` 块内建，不要直接写 `GRANT REFERENCES`（`tests/test_migration_sources.py` 会检查）。原因是 GRANT 会改写表在 `pg_class` 中的行；如果 autovacuum 的 ANALYZE 已持有该表的 SHARE UPDATE EXCLUSIVE 锁，它会等本事务结束才能写这一行，而随后的外键要等 ANALYZE 释放锁，两者死锁，修订失败。辅助函数先以外键本来就要取的 SHARE ROW EXCLUSIVE 锁住表，再授权，块结束后收回。
 - 大批量回填分批提交，每批按主键范围更新，避免长事务和长时间行锁。
-- 会被 Relay 访问的表（`billing.*` 的请求、尝试和审计表，`catalog.deployments` 等）上的锁表操作，按 0017 的方式安排维护窗口或先摘流。
+- 会被 Relay 访问的表（`billing.*` 的请求、尝试和审计表，`catalog.deployments` 等）上的锁表操作，安排在维护窗口内执行，或先摘流（从负载均衡摘除节点，或发送 SIGTERM 让节点排空，见“存活与就绪”），等在途请求和完成上报结束后再迁移。

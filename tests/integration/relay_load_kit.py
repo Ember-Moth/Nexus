@@ -27,15 +27,10 @@ import httpx
 import psycopg
 from psycopg import sql
 
+from nexus.modules.publication import CAPABILITIES
+
 ROOT = Path(__file__).resolve().parents[2]
-NODE_CAPABILITIES = [
-    "reservation.v1",
-    "usage-events.v1",
-    "relay.native.v1",
-    "relay.provider-features.v1",
-    "relay.sse.v1",
-    "relay.responses-ws.v1",
-]
+NODE_CAPABILITIES = list(CAPABILITIES)
 
 
 def free_port():

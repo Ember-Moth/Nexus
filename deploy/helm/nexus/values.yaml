@@ -299,16 +299,10 @@ relay:
   nodeSlots: 16
   # PostgreSQL login of node N is "<rolePrefix><N>"; unique per relay cluster sharing a database.
   rolePrefix: nexus_relay_node_
-  # Registered with each principal; must cover what the published snapshots require.
-  capabilities:
-    - reservation.v1
-    - usage-events.v1
-    - relay.native.v1
-    - relay.provider-features.v1
-    - relay.sse.v1
-    - relay.responses-ws.v1
-    # Required once a cluster policy or resource limit differs from the relay's built-in values.
-    - relay.cluster-policy.v1
+  # Capabilities registered with each principal. Empty registers the control plane's baseline:
+  # everything this release's Relay supports, which every snapshot requires. List them only to
+  # declare capabilities beyond the baseline (the list then replaces it, so include the baseline).
+  capabilities: []
   # Optional ConfigMap with an extra PEM CA for upstreams behind a private CA; mounted as a file
   # and passed as NEXUS_RELAY_UPSTREAM_CA. It is added to, not substituted for, public roots.
   upstreamCA:

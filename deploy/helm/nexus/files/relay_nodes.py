@@ -146,7 +146,8 @@ def register(api: httpx.Client, args, nodes: dict[int, dict[str, str]]) -> None:
                 json={
                     "node_id": data["node-id"],
                     "database_role": data["username"],
-                    "capabilities": args.capabilities,
+                    # Omitted, the control plane registers its baseline capabilities.
+                    **({"capabilities": args.capabilities} if args.capabilities else {}),
                     "active": True,
                 },
             )

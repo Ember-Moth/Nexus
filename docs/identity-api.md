@@ -9,11 +9,11 @@
 3. Owner 调用 `POST /organizations/{org}/invitations`，提交目标登录名和角色，例如 `{"login":"alice","role":"org_developer"}`。将响应中一次性展示的 `token` 私下交给对方。邀请有效期为 7 天，向同一组织内同一登录名重发邀请会使旧令牌失效。
 4. 受邀者可以先注册，再以自己的会话调用 `POST /invitations/accept`，提交 `{"token":"<邀请令牌>"}`。加入后保留自己的个人组织。Owner 可以列出成员，变更角色或停用成员。已接受的邀请不能用来恢复被停用的成员或重新取得旧角色。
 
-个人组织永久绑定用户 ID。数据库禁止删除、归档、转让该组织，绑定人在该组织中的成员关系必须保持为有效的 `org_owner`。内置管理员、管理员创建的账号以及升级前已有的账号同样拥有个人组织。加入其他组织时，按目标组织的成员角色授权。
+个人组织永久绑定用户 ID。数据库禁止删除、归档、转让该组织，绑定人在该组织中的成员关系必须保持为有效的 `org_owner`。内置管理员和管理员创建的账号同样拥有个人组织。加入其他组织时，按目标组织的成员角色授权。
 
 ## 邮箱验证、登录和密码找回
 
-客户端先调用 `GET /auth/options` 读取 `registration`、`email_verification`、`turnstile`、`turnstile_site_key` 和 `email_delivery_available`。`registration` 为 false 时隐藏注册入口。已有账号仍可使用原登录名和密码登录，再绑定找回密码用的邮箱。登录名恰好是邮件地址的老账号也需要完成绑定。
+客户端先调用 `GET /auth/options` 读取 `registration`、`email_verification`、`turnstile`、`turnstile_site_key` 和 `email_delivery_available`。`registration` 为 false 时隐藏注册入口。管理员创建的账号用登录名和密码登录，再绑定找回密码用的邮箱，登录名恰好是邮件地址时也一样。
 
 | 用途 | 接口 | 请求与结果 | Turnstile action |
 | --- | --- | --- | --- |
@@ -103,7 +103,7 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 
 新建登录名（自助注册、管理员创建）先做 NFKC 规范化，再去除首尾空格并转成小写，长度为 3–254 个字符，不能含空白、控制字符或不可见字符（零宽字符、双向控制符、变体选择符、Hangul 填充符等）。自助注册还不能使用保留名，默认包括 `admin`、`administrator`、`root`、`system`、`support`、`security`、`postmaster` 等，可通过身份策略的 `reserved_logins` 调整（整体替换列表）；保留名按规范化后的写法比较，管理员创建不受此限；内置管理员的登录名 `admin` 也在保留名里。
 
-登录、邀请时按规范化后的写法查找账号，并兼容升级前按原规则保存的登录名，存量用户不受影响；同一账号的各种写法共用一个登录限流桶。
+登录、邀请时按规范化后的写法查找账号，同一账号的各种写法共用一个登录限流桶。
 
 管理员调用 `POST /organizations` 创建企业，传 `owner_user_id` 可指定已激活的用户为首位 owner，省略时使用当前管理员。组织 owner 可通过 `POST /organizations/{org}/members` 直接添加已激活用户。
 

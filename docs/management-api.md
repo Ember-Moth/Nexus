@@ -30,13 +30,6 @@
 
 OpenAPI 为每个操作声明成功响应的结构，以及该操作可能返回的错误状态码。路径参数按资源命名，例如 `organization_id`、`cluster_id`、`funding_record_id`；请求头使用规范写法 `If-Match` 与 `Idempotency-Key`。
 
-标记为 `deprecated` 的操作保留原有行为，仅供已有客户端过渡，新集成应改用文档给出的替代接口：
-
-| 废弃操作 | 替代操作 |
-| --- | --- |
-| `POST /api/v1/route-policies` | `PUT /api/v1/route-policies/{organization_id}/{model_id}` |
-| `POST /api/v1/organizations/{organization_id}/quota-policies` | `PUT /api/v1/organizations/{organization_id}/quota-policies/{layer}/{scope_type}/{scope_id}/{metric}` |
-
 ## 错误处理
 
 业务错误以 `error.code`、`error.message` 和 `error.trace_id` 返回，`trace_id` 与响应头 `X-Request-ID` 一致。请求参数或请求体无法解析时返回 422，`error.code` 为 `validation_error`，`error.fields` 列出各项的 `location` 与 `code`，不回显提交的值；业务规则拒绝的 422 不带 `fields`。OpenAPI 中错误响应分别引用 `ErrorResponse` 与 `ValidationErrorResponse`。支付厂商通知的应答遵循渠道协议。[通知及查单](payments.md)
@@ -49,7 +42,7 @@ SDK 可读取 `GET /api/v1/error-codes`，按业务码和 HTTP 状态查 `action
 | `backoff_if_safe` | 等待后再试；429 提供 `Retry-After` 时按秒等待。只重放可安全重复的操作，带幂等键的写入沿用原键 |
 | `reconcile_first` | 查询已提交的业务状态；无法确定写入结果时凭请求 ID 核对 |
 
-例如，登录名冲突返回 `login_in_use`，验证邮箱被其他账号占用返回 `email_in_use`。Turnstile 缺少可用配置返回 `turnstile_not_configured`，Siteverify 暂时不可用返回 `turnstile_unavailable`。部署使用的上游凭据尚未就绪返回 `credential_not_ready`。这些业务码替代原先对应场景的通用码。
+例如，登录名冲突返回 `login_in_use`，验证邮箱被其他账号占用返回 `email_in_use`。Turnstile 缺少可用配置返回 `turnstile_not_configured`，Siteverify 暂时不可用返回 `turnstile_unavailable`。部署使用的上游凭据尚未就绪返回 `credential_not_ready`。
 
 | 状态码 | 客户端处理 |
 | --- | --- |

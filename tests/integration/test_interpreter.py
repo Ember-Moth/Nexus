@@ -61,21 +61,6 @@ async def configure(http, admin, plane, tariff):
         },
     )
     assert r.status_code == 200, r.text
-    node, role, caps = admin.execute(
-        "SELECT node_id,database_role,capabilities FROM publication.gateway_principals "
-        "WHERE cluster_id=%s",
-        (cluster,),
-    ).fetchone()
-    r = await api.put(
-        f"/api/v1/gateway-clusters/{cluster}/principals/{node}",
-        headers=auth(token),
-        json={
-            "node_id": str(node),
-            "database_role": role,
-            "capabilities": [*caps, "relay.openai-containers.v1"],
-        },
-    )
-    assert r.status_code == 200, r.text
     r = await api.post(
         f"/api/v1/gateway-clusters/{cluster}/releases",
         headers=headers(token, "openai-containers"),
@@ -86,7 +71,8 @@ async def configure(http, admin, plane, tariff):
         pass
     async with asyncio.timeout(10):
         while admin.execute(  # noqa: ASYNC110 - wait for the installed revision
-            "SELECT applied_revision FROM publication.gateway_principals WHERE node_id=%s", (node,)
+            "SELECT applied_revision FROM publication.gateway_principals WHERE cluster_id=%s",
+            (cluster,),
         ).fetchone()[0] != int(r.json()["revision"]):
             await asyncio.sleep(0.05)
 

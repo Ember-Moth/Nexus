@@ -337,7 +337,7 @@ helm upgrade nexus deploy/helm/nexus -n nexus -f my-values.yaml --set relay.repl
 3. post-upgrade 的 `relay-nodes-post` 再登记一遍。auto_publish 下 Worker 会发布新修订，新节点应用之后变为就绪。
 
 - 每个 Pod 都预先列出 `relay.nodeSlots`（默认 16）个可选的凭据位置。因此在这个上限以内改 `replicas`，不会改变 Pod 模板，已有节点不会滚动重启。
-- 节点能力在 `relay.capabilities` 中设置，必须覆盖快照要求的能力，例如 `relay.sse.v1`、`relay.responses-ws.v1` 和启用的 provider feature 对应的能力。
+- 节点能力在 `relay.capabilities` 中设置。默认为空，登记控制平面的基线能力，也就是本版本 Relay 支持、每个快照都要求的全部能力；只有节点支持基线之外的能力时才需要列出，列出后会替换基线，所以要包含基线。
 - 缩容时把 `replicas` 调小，最高序号的节点会排空后退出。确认它不再需要后，用 `PUT …/principals/{node_id}` 把 `active` 设为 false。登录和 Secret 会保留，以便以后重新扩回来。
 - 不经 Helm 时，`deploy/helm/nexus/files/relay_nodes.py --phase post` 就是同一套逻辑。它需要 `ADMIN_DATABASE_URL`、`API_URL`、`RELAY_*` 和 `DEPLOYER_*` 环境变量，以及读写 Secret 的权限。
 

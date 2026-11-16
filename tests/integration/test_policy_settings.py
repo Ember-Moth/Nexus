@@ -18,7 +18,7 @@ from test_plane import provision_plane
 
 from nexus.api import create_app
 from nexus.commands import import_policies
-from nexus.modules.publication import AutoPublisher
+from nexus.modules.publication import CAPABILITIES, AutoPublisher
 from nexus.shared.policy import POLICY_TTL_SECONDS, PolicyRejected
 
 pytestmark = pytest.mark.integration
@@ -236,24 +236,6 @@ async def test_resource_counts_are_platform_policies_of_a_whole_organization(htt
     assert written.status_code == 201, written.text
 
 
-async def declare_cluster_policy(client, root, admin, cid):
-    nid, role, caps = admin.execute(
-        "SELECT node_id,database_role,capabilities FROM publication.gateway_principals "
-        "WHERE cluster_id=%s",
-        (cid,),
-    ).fetchone()
-    upgraded = await client.put(
-        f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
-        headers=auth(root),
-        json={
-            "node_id": str(nid),
-            "database_role": role,
-            "capabilities": [*caps, "relay.cluster-policy.v1"],
-        },
-    )
-    assert upgraded.status_code == 200, upgraded.text
-
-
 def latest_manifest(admin, cid):
     return admin.execute(
         "SELECT manifest FROM publication.config_snapshots WHERE cluster_id=%s "
@@ -278,11 +260,19 @@ async def test_cluster_policy_defaults_and_overrides_reach_the_snapshot(http, ad
             "quiet_seconds": 3.0,
             "max_delay_seconds": 30.0,
         }
-        # At the built-in values a release carries no policy and needs no new capability.
+        # Every release carries the effective policy and requires the baseline capabilities.
         manifest = latest_manifest(admin, cid)
-        assert "cluster_policy" not in manifest["resources"]
-        assert "resource_limits" not in manifest["resources"]
-        assert "relay.cluster-policy.v1" not in manifest["required_capabilities"]
+        assert manifest["resources"]["cluster_policy"] == view["effective"]["relay"]
+        assert manifest["resources"]["resource_limits"] == {
+            "default": {
+                "resources_per_key": 10000,
+                "resources_per_organization": 100000,
+                "vector_stores_per_key": 100,
+                "vector_stores_per_organization": 1000,
+            },
+            "organizations": [],
+        }
+        assert manifest["required_capabilities"] == list(CAPABILITIES)
         await put_policy(client, root, DEFAULTS, {"relay": {"failover_budget_ms": 5000}})
         view = await put_overrides(client, root, cid, {"relay": {"max_attempts": 1}})
         assert view["effective"]["relay"] == {
@@ -307,13 +297,6 @@ async def test_cluster_policy_defaults_and_overrides_reach_the_snapshot(http, ad
             json={"limit_value": 4},
         )
         assert quota.status_code == 201, quota.text
-        # A node that cannot enforce the policy holds the release back.
-        blocked = await client.post(
-            f"/api/v1/gateway-clusters/{cid}/releases", headers=headers(root, "old"), json={}
-        )
-        assert blocked.status_code == 409
-        assert blocked.json()["error"]["code"] == "unsupported_capability"
-        await declare_cluster_policy(client, root, admin, cid)
         released = await client.post(
             f"/api/v1/gateway-clusters/{cid}/releases", headers=headers(root, "new"), json={}
         )
@@ -331,7 +314,6 @@ async def test_cluster_policy_defaults_and_overrides_reach_the_snapshot(http, ad
                 "vector_stores_per_organization": 1000,
             }
         ]
-        assert "relay.cluster-policy.v1" in snapshot["required_capabilities"]
         # Rate quotas keep their shape for the Redis limiter; counts never appear there.
         assert {q["metric"] for q in resources["quota_policies"]} <= {"rpm", "tpm", "concurrency"}
         unknown = await client.get(f"/api/v1/gateway-clusters/{uuid4()}/policy", headers=auth(root))
@@ -342,7 +324,6 @@ async def test_policy_changes_publish_automatically(http, admin):
     client, root, app, _ = http
     async with provision_plane(http, admin, auto_publish=True) as plane:
         cid = plane[-1]
-        await declare_cluster_policy(client, root, admin, cid)
         await put_policy(client, root, DEFAULTS, {"auto_publish": {"quiet_seconds": 0}})
         auto = AutoPublisher(app.state.publication, app.state.publication.tx, instant, poll=30)
         await auto.tick()

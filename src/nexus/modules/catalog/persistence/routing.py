@@ -85,14 +85,14 @@ class RoutingRepository:
                 },
             )
 
-    async def save_quota(self, org, body, version, scope, actor):
+    async def save_quota(self, org, body, version, actor):
         async with self._database.transaction() as session:
             params = {
                 "id": uuid4(),
                 "org": org,
                 "layer": body.layer,
                 "scope": body.scope_type,
-                "sid": scope,
+                "sid": body.scope_id,
                 "metric": body.metric,
                 "value": body.limit_value,
             }

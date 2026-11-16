@@ -26,27 +26,31 @@ import type { GatewayCluster } from "@/lib/api/types";
 
 type ReleaseAccepted = components["schemas"]["ReleaseAccepted"];
 
-/** Capabilities the control plane and relay know about; free-form entries stay possible. */
-export const KNOWN_CAPABILITIES = [
+/**
+ * The baseline: every release requires all of these, so a node must declare each one (control plane
+ * `CAPABILITIES`). Free-form entries stay possible for capabilities added later.
+ */
+export const BASELINE_CAPABILITIES = [
   "reservation.v1",
   "usage-events.v1",
   "relay.native.v1",
+  "relay.provider-features.v1",
+  "relay.cluster-policy.v1",
   "relay.sse.v1",
   "relay.responses-ws.v1",
   "relay.messages-to-responses.v1",
   "relay.responses-to-messages.v1",
   "relay.responses-to-chat.v1",
-  "relay.bedrock-converse.v1",
-  "relay.bedrock-claude-invoke.v1",
-  "relay.bedrock-guardrail-usage.v1",
-  "relay.bedrock-request-options.v1",
-  "relay.bedrock-settings.v1",
   "relay.prompt-cache.v1",
   "relay.web-search.v1",
   "relay.file-search.v1",
   "relay.claude-execution.v1",
   "relay.openai-containers.v1",
-  "relay.provider-features.v1",
+  "relay.bedrock-converse.v1",
+  "relay.bedrock-claude-invoke.v1",
+  "relay.bedrock-settings.v1",
+  "relay.bedrock-guardrail-usage.v1",
+  "relay.bedrock-request-options.v1",
   "relay.stored-responses.v1",
   "relay.background-responses.v1",
   "relay.conversations.v1",
@@ -393,13 +397,13 @@ export interface NodeDraft {
 export function NodeDialog({ clusterId, node, onClose }: { clusterId: string; node?: NodeDraft; onClose: () => void }) {
   const t = useT();
   const queryClient = useQueryClient();
-  const known = new Set(KNOWN_CAPABILITIES);
+  const known = new Set(BASELINE_CAPABILITIES);
   const form = useForm<NodeValues>({
     resolver: zodResolver(nodeSchema),
     defaultValues: {
       nodeId: node?.node_id ?? crypto.randomUUID(),
       databaseRole: node?.database_role ?? "",
-      capabilities: (node?.capabilities ?? ["reservation.v1", "usage-events.v1", "relay.native.v1", "relay.provider-features.v1"]).filter((c) => known.has(c)),
+      capabilities: (node?.capabilities ?? BASELINE_CAPABILITIES).filter((c) => known.has(c)),
       extra: (node?.capabilities ?? []).filter((c) => !known.has(c)).join(", "),
       active: node?.active ?? true,
     },
@@ -451,7 +455,7 @@ export function NodeDialog({ clusterId, node, onClose }: { clusterId: string; no
             render={({ field }) => (
               <MultiCheck
                 label={t("clusters.capabilities")}
-                items={KNOWN_CAPABILITIES.map((c) => ({ id: c, label: c }))}
+                items={BASELINE_CAPABILITIES.map((c) => ({ id: c, label: c }))}
                 value={field.value}
                 onChange={field.onChange}
               />

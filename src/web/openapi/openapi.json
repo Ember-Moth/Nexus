@@ -4555,7 +4555,7 @@
           "gateway publication"
         ],
         "summary": "Update Cluster Policy",
-        "description": "Replace the cluster's overrides; a null value follows the platform default.\n\nAutomatic publication delivers a Relay policy change like any other source change;\na cluster without auto_publish applies it at its next release. An effective Relay\npolicy other than the Relay's built-in one requires relay.cluster-policy.v1 on every node.",
+        "description": "Replace the cluster's overrides; a null value follows the platform default.\n\nAutomatic publication delivers a Relay policy change like any other source change;\na cluster without auto_publish applies it at its next release.",
         "operationId": "update_cluster_policy_api_v1_gateway_clusters__cluster_id__policy_put",
         "security": [
           {
@@ -6749,175 +6749,6 @@
       }
     },
     "/api/v1/route-policies": {
-      "post": {
-        "tags": [
-          "gateway routing"
-        ],
-        "summary": "Route",
-        "description": "Deprecated alias of `PUT /route-policies/{organization_id}/{model_id}`.",
-        "operationId": "route_api_v1_route_policies_post",
-        "deprecated": true,
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "If-Match",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Route"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RoutePolicyView"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Created; the policy did not exist",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RoutePolicyView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Session is missing, expired or revoked",
-            "x-error-codes": [
-              "unauthorized"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Caller may not perform this operation",
-            "x-error-codes": [
-              "forbidden"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
-            "x-error-codes": [
-              "setup_required"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "412": {
-            "description": "If-Match does not match the current resource version",
-            "x-error-codes": [
-              "version_conflict"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Request is malformed or violates a business rule",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorResponse"
-                }
-              }
-            },
-            "x-error-codes": [
-              "invalid_version",
-              "validation_error"
-            ]
-          },
-          "428": {
-            "description": "A required If-Match or Idempotency-Key header is missing",
-            "x-error-codes": [
-              "precondition_required"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "x-error-codes": [
-              "internal_error"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A storage or coordination dependency is unavailable",
-            "x-error-codes": [
-              "storage_unavailable"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "gateway routing"
@@ -7304,198 +7135,6 @@
       }
     },
     "/api/v1/organizations/{organization_id}/quota-policies": {
-      "post": {
-        "tags": [
-          "gateway routing"
-        ],
-        "summary": "Quota",
-        "description": "Deprecated alias of the quota policy PUT on its natural key.",
-        "operationId": "quota_api_v1_organizations__organization_id__quota_policies_post",
-        "deprecated": true,
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "organization_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Organization Id"
-            }
-          },
-          {
-            "name": "If-Match",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Quota"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QuotaPolicyResult"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Created; the policy did not exist",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QuotaPolicyResult"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Session is missing, expired or revoked",
-            "x-error-codes": [
-              "unauthorized"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Caller may not perform this operation",
-            "x-error-codes": [
-              "forbidden"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Resource does not exist or is not visible to the caller",
-            "x-error-codes": [
-              "not_found"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "x-error-codes": [
-              "setup_required"
-            ]
-          },
-          "412": {
-            "description": "If-Match does not match the current resource version",
-            "x-error-codes": [
-              "version_conflict"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Request is malformed or violates a business rule",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorResponse"
-                }
-              }
-            },
-            "x-error-codes": [
-              "invalid_version",
-              "validation_error"
-            ]
-          },
-          "428": {
-            "description": "A required If-Match or Idempotency-Key header is missing",
-            "x-error-codes": [
-              "precondition_required"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "x-error-codes": [
-              "internal_error"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A storage or coordination dependency is unavailable",
-            "x-error-codes": [
-              "storage_unavailable"
-            ],
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "gateway routing"
@@ -34063,7 +33702,7 @@
               "type": "string"
             },
             "type": "array",
-            "maxItems": 32,
+            "maxItems": 64,
             "title": "Capabilities"
           },
           "active": {
@@ -34466,68 +34105,6 @@
         },
         "type": "object"
       },
-      "Quota": {
-        "properties": {
-          "layer": {
-            "type": "string",
-            "enum": [
-              "platform",
-              "customer"
-            ],
-            "title": "Layer",
-            "default": "customer"
-          },
-          "scope_type": {
-            "type": "string",
-            "enum": [
-              "organization",
-              "project",
-              "key"
-            ],
-            "title": "Scope Type",
-            "default": "organization"
-          },
-          "scope_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scope Id"
-          },
-          "metric": {
-            "type": "string",
-            "enum": [
-              "rpm",
-              "tpm",
-              "concurrency",
-              "admission_concurrency",
-              "resources_per_key",
-              "resources_per_organization",
-              "vector_stores_per_key",
-              "vector_stores_per_organization"
-            ],
-            "title": "Metric"
-          },
-          "limit_value": {
-            "type": "integer",
-            "maximum": 2000000000,
-            "minimum": 1,
-            "title": "Limit Value"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "metric",
-          "limit_value"
-        ],
-        "title": "Quota"
-      },
       "QuotaLimit": {
         "properties": {
           "limit_value": {
@@ -34564,15 +34141,8 @@
             "title": "Scope Type"
           },
           "scope_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "format": "uuid",
             "title": "Scope Id"
           },
           "metric": {
@@ -34615,7 +34185,7 @@
           "version"
         ],
         "title": "QuotaPolicyResult",
-        "description": "The written policy. `scope_id` echoes the request, so the deprecated POST may leave it\nnull for organization scope."
+        "description": "The written policy."
       },
       "QuotaPolicyView": {
         "properties": {
@@ -36733,38 +36303,6 @@
           "decisions"
         ],
         "title": "ReviewCaseDetail"
-      },
-      "Route": {
-        "properties": {
-          "organization_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Organization Id"
-          },
-          "model_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Model Id"
-          },
-          "candidates": {
-            "items": {
-              "$ref": "#/components/schemas/Candidate"
-            },
-            "type": "array",
-            "maxItems": 256,
-            "minItems": 1,
-            "title": "Candidates"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "organization_id",
-          "model_id",
-          "candidates"
-        ],
-        "title": "Route",
-        "description": "A route policy is identified by (organization_id, model_id)."
       },
       "RouteCandidates": {
         "properties": {

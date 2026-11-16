@@ -74,11 +74,10 @@ def test_reserved_logins_cover_every_spelling(value):
     assert new_login("admin-team", reserved) == "admin-team"
 
 
-def test_sign_in_also_finds_logins_stored_before_normalization():
-    from nexus.modules.identity.domain.logins import login_candidates
+def test_sign_in_looks_up_the_canonical_login():
+    from nexus.modules.identity.domain.logins import canonical_login
 
-    assert login_candidates("ＪＯＨＮ") == ("john", "ｊｏｈｎ")
-    assert login_candidates(" John ") == ("john",)
+    assert canonical_login("ＪＯＨＮ") == canonical_login(" John ") == "john"
 
 
 def test_configured_reserved_logins_are_normalized():

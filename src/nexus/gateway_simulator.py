@@ -18,6 +18,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from .infrastructure.gateway_cache import GatewayLimits
+from .modules.publication import CAPABILITIES
 
 
 class GatewayOutcomeUnknown(RuntimeError):
@@ -173,10 +174,8 @@ class GatewaySimulator:
         if hashlib.sha256(raw).hexdigest() != head["sha256"]:
             raise ValueError("Invalid snapshot digest")
         data = json.loads(raw)
-        if data["schema_version"] != 1 or set(data["required_capabilities"]) - {
-            "reservation.v1",
-            "usage-events.v1",
-        }:
+        # The simulator declares the baseline; it never serves relay_profile traffic itself.
+        if data["schema_version"] != 1 or set(data["required_capabilities"]) - set(CAPABILITIES):
             await self.call("ack_config", int(rev), head["sha256"], False, "unsupported_capability")
             raise ValueError("Unsupported snapshot")
         if self.snapshot and int(rev) < int(self.snapshot["revision"]):

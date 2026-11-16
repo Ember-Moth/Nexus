@@ -51,7 +51,7 @@ fn build(candidates: &[(u32, u32, Value)]) -> Result<Fixture, nexus_relay::contr
                 _ => ("anthropic", "anthropic.messages.v1"),
             };
             json!({"id":id,"model_id":model,"upstream_model":format!("actual-{id}"),
-                "base_url":"https://upstream.example/v1","region":"us-east-1","credential_id":credential,
+                "base_url":"https://upstream.example/v1","region":"us-east-1","upstream_version":1,"credential_id":credential,
                 "credential_version":1,"protocol_family":family,"usage_format":format,
                 "relay_profile":profile})
         })
@@ -67,11 +67,13 @@ fn build(candidates: &[(u32, u32, Value)]) -> Result<Fixture, nexus_relay::contr
         "key_verifiers":[{"id":key,"project_id":project,"organization_id":org,
             "digest":format!("{:x}",Sha256::digest(b"enterprise")),"expires_at":null}],
         "models":[{"id":model,"public_name":"public","token_dimensions":["input_cache_read_tokens","input_cache_write_30m_tokens","input_cache_write_5m_tokens"],"max_input_tokens":100,
-            "max_output_tokens":20,"capabilities":{"tools":true,"streaming":true}}],
+            "max_output_tokens":20,"capabilities":{"tools":true,"streaming":true},"tool_dimensions":[]}],
         "routes":[{"organization_id":org,"model_id":model,"candidates":route}],
         "access_policies":[{"organization_id":org,"scope_id":org,"scope_type":"organization",
             "layer":"platform","allowed_models":[model]}],
         "quota_policies":[],
+        "cluster_policy":{"max_attempts":2,"failover_budget_ms":10000,"purge_grace_seconds":604800,"stream_lifetime_seconds":1800},
+        "resource_limits":{"default":{"resources_per_key":10000,"resources_per_organization":100000,"vector_stores_per_key":100,"vector_stores_per_organization":1000},"organizations":[]},
         "credential_refs":[{"credential_id":credential,"credential_version":1,"key_version":1,
             "algorithm":"libsodium-sealed-box"}],
         "deployments":deployments,
@@ -94,27 +96,7 @@ fn build(candidates: &[(u32, u32, Value)]) -> Result<Fixture, nexus_relay::contr
         cluster_id: Uuid::new_v4(),
         revision: 7,
         digest: String::new(),
-        required_capabilities: [
-            "relay.native.v1",
-            "relay.bedrock-converse.v1",
-            "relay.bedrock-settings.v1",
-            "relay.bedrock-guardrail-usage.v1",
-            "relay.bedrock-request-options.v1",
-            "relay.prompt-cache.v1",
-            "relay.web-search.v1",
-            "relay.sse.v1",
-            "relay.responses-ws.v1",
-            "relay.messages-to-responses.v1",
-            "relay.responses-to-messages.v1",
-            "relay.provider-features.v1",
-            "relay.stored-responses.v1",
-            "relay.background-responses.v1",
-            "relay.conversations.v1",
-            "relay.files.v1",
-            "relay.remote-mcp.v1",
-        ]
-        .map(String::from)
-        .to_vec(),
+        required_capabilities: Vec::new(),
         key_set: None,
         resources,
     };
@@ -847,11 +829,11 @@ fn provider_features_are_off_until_the_deployment_enables_them() {
             )
             .is_err()
     );
-    // Features must suit the endpoint, require their node capability and be listed once.
+    // Features must suit the endpoint, meet their prerequisites and be listed once.
+    assert!(build(&[(0, 1, responses(json!(["vector_stores"])))]).is_ok());
     for profile in [
         responses(json!(["background"])),
         responses(json!(["batches"])),
-        responses(json!(["vector_stores"])),
         responses(json!(["files", "files"])),
         json!({"endpoint":"anthropic_messages","provider_features":["stored_responses"]}),
         json!({"endpoint":"bedrock_converse","provider_features":["files"]}),

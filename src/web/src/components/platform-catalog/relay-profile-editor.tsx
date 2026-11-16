@@ -94,9 +94,6 @@ export function RelayProfileEditor({
                         <>
                           {option.hint ? t(option.hint) : null}
                           {!supported ? <span className="block text-amber-700">{t("pc.relay.featureUnsupported")}</span> : null}
-                          {option.capability ? (
-                            <span className="block font-mono text-[11px]">{t("pc.relay.featureCapability", { capability: option.capability })}</span>
-                          ) : null}
                         </>
                       }
                       checked={on}

@@ -24,6 +24,8 @@ from test_relay import (  # noqa: F401
 )
 from test_relay_streams import events
 
+from nexus.modules.publication import CAPABILITIES
+
 pytestmark = pytest.mark.integration
 BACKUP_SECRET = "backup-secret-do-not-echo"
 OVERLOADED = {"type": "error", "error": {"type": "overloaded_error", "message": "busy"}}
@@ -201,14 +203,7 @@ async def failover_plane(http, admin, ports, family="anthropic"):
             "SELECT node_id,database_role FROM publication.gateway_principals WHERE cluster_id=%s",
             (cid,),
         ).fetchone()
-        caps = [
-            "reservation.v1",
-            "usage-events.v1",
-            "relay.native.v1",
-            "relay.provider-features.v1",
-            "relay.sse.v1",
-            "relay.cluster-policy.v1",
-        ]
+        caps = list(CAPABILITIES)
         r = await client.put(
             f"/api/v1/gateway-clusters/{cid}/principals/{nid}",
             headers=auth(root),

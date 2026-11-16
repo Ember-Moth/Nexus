@@ -533,7 +533,7 @@ Python 模拟器的每个节点只有一个连接，同一时刻只处理一个�
 
 ### 迁移与协议变化
 
-- **迁移**：新增 `0045_indexed_admission`（down_revision `0044_settlement_throughput`；开发时编号为 0044，与结算分支合并时改号），提供完整的降级。降级时恢复此前的函数定义（0044 没有改动这些函数，与 0043 相同），已发布的修订需要重新发布。
+- **迁移**：新增 `0045_indexed_admission`（down_revision `0044_settlement_throughput`；开发时编号为 0044，与结算分支合并时改号）。
 - **新表和新列**：表 `publication.cluster_keys`、`publication.snapshot_index`；列 `gateway_clusters.key_sequence`、`config_snapshots.key_sequence`、`config_snapshots.required_capabilities`；`catalog.quota_policies` 的 metric 增加 `admission_concurrency`。
 - **`gateway_v1`**：
   - 新增 `config_head()`、`config_keys(revision, since, after_sequence, after_key, after_present, page)`。
@@ -565,7 +565,7 @@ Python 模拟器的每个节点只有一个连接，同一时刻只处理一个�
   - 这一段的中断写出逻辑本次没有改动。
 - **前一次完整运行**：除上述测试外，另有两个失败，都是测试本身没有跟上这次的改动，已经修正，并用相关测试文件复核通过（21 个）：
   - WebSocket 的第一轮仍会调用 `start_attempt`；
-  - 降级到旧 schema 后需要在 manifest 中列出 Key。
+  - 一个测试辅助函数没有跟上 manifest 不再包含 Key 的改动。
 - **Helm**：本机没有 helm，没有运行 `helm lint`，只改了 values 和注释。
 
 原始数据：`results.jsonl` 和各轮日志保存在会话共享目录的 `admission-perf-load-data/` 下。

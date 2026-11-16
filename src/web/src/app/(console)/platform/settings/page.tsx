@@ -338,7 +338,6 @@ export default function PlatformSettingsPage() {
               )
             }
             groups={QUOTAS}
-            footer={<Note>{t("st.quotas.capability")}</Note>}
           />
         </TabsContent>
         <TabsContent value="clusters">
@@ -397,7 +396,6 @@ function ClusterPolicies() {
           )
         }
         groups={CLUSTER}
-        footer={<Note>{t("st.clusters.capability")}</Note>}
       />
       {clusters.error && items.length === 0 ? (
         <ErrorAlert error={clusters.error} onRetry={() => void clusters.refetch()} />

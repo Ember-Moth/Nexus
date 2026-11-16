@@ -10,7 +10,6 @@ from policies import body_of, put_policy
 from test_identity_api import PASSWORD, auth, create_user, login
 
 from nexus.api import create_app
-from nexus.infrastructure.passwords import Argon2Passwords
 from nexus.worker import run_worker
 
 pytestmark = pytest.mark.integration
@@ -587,9 +586,7 @@ async def test_permanent_rejections_are_dropped_without_failing_the_worker(deliv
     mail.providers.transport = original
 
 
-async def test_new_logins_are_normalized_and_reserved_names_cannot_be_claimed(
-    delivery, admin, signup
-):
+async def test_new_logins_are_normalized_and_reserved_names_cannot_be_claimed(delivery, signup):
     client, root, _, _, _ = delivery
     for name in ["admin", "ＲＯＯＴ", "System", "ali​ce"]:
         refused = await client.post(
@@ -601,12 +598,6 @@ async def test_new_logins_are_normalized_and_reserved_names_cannot_be_claimed(
     me = (await client.get(API + "/me", headers=auth(created["access_token"]))).json()
     assert me["user"]["login"] == "wide-member"
     assert await login(client, "ｗｉｄｅ-member")
-    # An account stored before normalization keeps signing in with its original spelling.
-    admin.execute(
-        "INSERT INTO identity.users(id,login,password_hash) VALUES(%s,%s,%s)",
-        (uuid4(), "ｌｅｇａｃｙ-user", Argon2Passwords().hash(PASSWORD)),
-    )
-    assert await login(client, "ＬＥＧＡＣＹ-user")
     # Administrators may create operator logins, but not hidden characters.
     assert (
         await client.post(API + "/users", headers=auth(root), json={"login": "support"})

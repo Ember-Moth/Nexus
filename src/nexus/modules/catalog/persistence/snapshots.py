@@ -5,28 +5,18 @@ from sqlalchemy import text
 
 from .routing import COUNTS
 
-# The Relay's built-in resource counts, used when a snapshot carries no resource_limits. A
-# snapshot only carries them, and then requires relay.cluster-policy.v1, once they differ.
-RELAY_RESOURCE_DEFAULTS = {
-    "resources_per_key": 10000,
-    "resources_per_organization": 100000,
-    "vector_stores_per_key": 100,
-    "vector_stores_per_organization": 1000,
-}
 # Quotas the Relay enforces through Redis; they travel in the snapshot's quota_policies.
 RATES = "('rpm','tpm','concurrency','admission_concurrency')"
 
 
 async def resource_limits(rows):
-    """Resource counts of the scoped organizations, or None while all are built-in defaults."""
+    """Platform resource counts and the effective counts of every overridden organization."""
     defaults = (await rows(f"SELECT {','.join(COUNTS)} FROM catalog.resource_quota_defaults"))[0]
     overrides = await rows(
         "SELECT organization_id,metric,limit_value FROM catalog.quota_policies "
         f"WHERE organization_id=ANY(CAST(:orgs AS uuid[])) AND metric NOT IN {RATES} "
         "ORDER BY organization_id,metric"
     )
-    if defaults == RELAY_RESOURCE_DEFAULTS and not overrides:
-        return None
     organizations = {}
     for row in overrides:
         values = organizations.setdefault(row["organization_id"], dict(defaults))
@@ -78,11 +68,8 @@ def create_catalog_source(database, cipher):
             box = SealedBox(PublicKey(public_key))
             envelopes = {}
             for d in data:
-                profile = d.get("relay_profile")
-                if profile is None:
-                    # Preserve the resource shape of pre-relay manifests and rollback targets.
-                    del d["relay_profile"]
-                else:
+                profile = d["relay_profile"]
+                if profile is not None:
                     d["usage_format"] = {
                         "openai_responses": "openai.responses.v1",
                         "openai_chat_completions": "openai.chat.v1",
@@ -122,11 +109,10 @@ def create_catalog_source(database, cipher):
                 "limit_value FROM catalog.quota_policies WHERE "
                 f"organization_id=ANY(CAST(:orgs AS uuid[])) AND metric IN {RATES} ORDER BY id"
             )
-            limits = await resource_limits(rows)
             return (
                 revision,
                 {
-                    **({"resource_limits": limits} if limits else {}),
+                    "resource_limits": await resource_limits(rows),
                     "models": models,
                     "deployments": data,
                     "routes": [r for r in routes if r["candidates"]],

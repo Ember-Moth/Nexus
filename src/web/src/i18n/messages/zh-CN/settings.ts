@@ -116,7 +116,6 @@ const settings = {
     title: "资源数量默认值",
     description:
       "每个 Key 和每个企业在一个网关集群内最多持有的文件、会话、容器、批处理（各自计数）和向量库。企业的覆盖值在该企业的“限额”页设置（平台层）。",
-    capability: "不等于内置默认值时，发布要求节点声明能力 relay.cluster-policy.v1。",
     fields: {
       resources_per_key: "每个 Key 的资源数",
       resources_per_organization: "每个企业的资源数",
@@ -135,7 +134,6 @@ const settings = {
     empty: "还没有网关集群",
     relay: "Relay",
     autoPublish: "自动发布",
-    capability: "Relay 策略不等于内置默认值时，发布要求节点声明能力 relay.cluster-policy.v1。",
     fields: {
       relay: {
         max_attempts: "每个请求最多尝试次数",

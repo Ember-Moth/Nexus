@@ -13,6 +13,8 @@ from test_plane import provision_plane
 from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F401
 from websockets.asyncio.client import connect
 
+from nexus.modules.publication import CAPABILITIES
+
 pytestmark = pytest.mark.integration
 
 
@@ -133,13 +135,7 @@ async def test_authorized_two_turns(http, admin, tls, relay_binary):  # noqa: F8
             json={
                 "node_id": str(node),
                 "database_role": role,
-                "capabilities": [
-                    "reservation.v1",
-                    "usage-events.v1",
-                    "relay.native.v1",
-                    "relay.provider-features.v1",
-                    "relay.responses-ws.v1",
-                ],
+                "capabilities": list(CAPABILITIES),
             },
         )
         assert r.status_code == 200

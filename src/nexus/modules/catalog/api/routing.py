@@ -72,18 +72,6 @@ def create_router(get_service):
         )
         return written(response, await service.route(token, route, version))
 
-    @router.post(
-        "/route-policies",
-        response_model=RoutePolicyView,
-        responses=created(RoutePolicyView),
-        deprecated=True,
-    )
-    async def route(
-        body: Route, token: Token, service: Service, version: Version, response: Response
-    ):
-        """Deprecated alias of `PUT /route-policies/{organization_id}/{model_id}`."""
-        return written(response, await service.route(token, body, version))
-
     @router.get("/route-policies", response_model=Page[RoutePolicyView])
     async def routes(token: Token, service: Service, limit: Limit = 50, cursor: Cursor = None):
         """Route policies ordered by organization_id, then model_id."""
@@ -120,23 +108,6 @@ def create_router(get_service):
             limit_value=body.limit_value,
         )
         return written(response, await service.quota(token, organization_id, quota, version))
-
-    @router.post(
-        "/organizations/{organization_id}/quota-policies",
-        response_model=QuotaPolicyResult,
-        responses={**created(QuotaPolicyResult), **error_responses(409)},
-        deprecated=True,
-    )
-    async def quota(
-        organization_id: UUID,
-        body: Quota,
-        token: Token,
-        service: Service,
-        version: Version,
-        response: Response,
-    ):
-        """Deprecated alias of the quota policy PUT on its natural key."""
-        return written(response, await service.quota(token, organization_id, body, version))
 
     @router.get(
         "/organizations/{organization_id}/quota-policies", response_model=Page[QuotaPolicyView]

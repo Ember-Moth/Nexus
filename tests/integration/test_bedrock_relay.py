@@ -18,6 +18,8 @@ from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F4
 from test_relay_conversion import scenarios
 from websockets.asyncio.client import connect
 
+from nexus.modules.publication import CAPABILITIES
+
 pytestmark = pytest.mark.integration
 MODEL = "arn:aws:bedrock:us-east-1:123456789012:inference-profile/example"
 REGION = "us-east-1"
@@ -373,32 +375,14 @@ async def test_bedrock_converse_and_stream(http, admin, tls, relay_binary, sigv4
             (cid,),
         ).fetchone()
         principal = f"/api/v1/gateway-clusters/{cid}/principals/{nid}"
-        caps = [
-            "reservation.v1",
-            "usage-events.v1",
-            "relay.native.v1",
-            "relay.provider-features.v1",
-            "relay.sse.v1",
-        ]
-        for extra, expected in [
-            ([], 409),
-            (["relay.bedrock-converse.v1"], 409),
-            (["relay.bedrock-converse.v1", "relay.bedrock-settings.v1"], 409),
-            (
-                [
-                    "relay.bedrock-converse.v1",
-                    "relay.bedrock-settings.v1",
-                    "relay.bedrock-request-options.v1",
-                    "relay.bedrock-guardrail-usage.v1",
-                ],
-                202,
-            ),
-        ]:
+        # A node must declare the whole baseline before a release is published.
+        partial = [c for c in CAPABILITIES if c != "relay.bedrock-settings.v1"]
+        for caps, expected in [(partial, 409), (list(CAPABILITIES), 202)]:
             assert (
                 await client.put(
                     principal,
                     headers=auth(root),
-                    json={"node_id": str(nid), "database_role": role, "capabilities": caps + extra},
+                    json={"node_id": str(nid), "database_role": role, "capabilities": caps},
                 )
             ).status_code == 200
             published = await client.post(
@@ -766,19 +750,10 @@ async def test_claude_invoke_transport(http, admin, tls, relay_binary):  # noqa:
             "SELECT node_id,database_role FROM publication.gateway_principals WHERE cluster_id=%s",
             (cid,),
         ).fetchone()
-        caps = [
-            "reservation.v1",
-            "usage-events.v1",
-            "relay.native.v1",
-            "relay.provider-features.v1",
-            "relay.sse.v1",
-            "relay.bedrock-converse.v1",
-            "relay.bedrock-claude-invoke.v1",
-        ]
         ack = await client.put(
             f"/api/v1/gateway-clusters/{cid}/principals/{node}",
             headers=auth(root),
-            json={"node_id": str(node), "database_role": role, "capabilities": caps},
+            json={"node_id": str(node), "database_role": role, "capabilities": list(CAPABILITIES)},
         )
         assert ack.status_code == 200
         published = await client.post(

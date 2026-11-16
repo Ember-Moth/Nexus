@@ -1,7 +1,6 @@
 """Login names: one canonical spelling, no hidden characters, no squatting of operator names.
 
-New logins are stored in their canonical form (NFKC, trimmed, lower-case). Accounts created before
-that rule kept ``strip().lower()`` of whatever was typed, so sign-in also accepts that spelling;
+Logins are stored, found and rate-limited in their canonical form (NFKC, trimmed, lower-case);
 the strict checks apply only when a login is created.
 """
 
@@ -55,18 +54,6 @@ def canonical_login(value: str) -> str:
     folded = unicodedata.normalize("NFKC", value).strip().lower()
     # Lower-casing can leave a compatibility sequence behind, so normalize once more.
     return _shape(unicodedata.normalize("NFKC", folded))
-
-
-def login_candidates(value: str) -> tuple[str, ...]:
-    """Stored spellings that may belong to this input, canonical first."""
-    canonical = canonical_login(value)
-    legacy = value.strip().lower()
-    if legacy == canonical:
-        return (canonical,)
-    try:
-        return canonical, _shape(legacy)
-    except IdentityError:
-        return (canonical,)
 
 
 def new_login(value: str, reserved: frozenset[str] = frozenset()) -> str:

@@ -61,9 +61,9 @@ class RouteCandidates(Schema):
 
 
 class Quota(Schema):
-    layer: QuotaLayer = "customer"
-    scope_type: QuotaScope = "organization"
-    scope_id: UUID | None = None
+    layer: QuotaLayer
+    scope_type: QuotaScope
+    scope_id: UUID
     metric: QuotaMetric
     limit_value: QuotaValue
 
@@ -80,12 +80,11 @@ class RoutePolicyView(Schema):
 
 
 class QuotaPolicyResult(Schema):
-    """The written policy. `scope_id` echoes the request, so the deprecated POST may leave it
-    null for organization scope."""
+    """The written policy."""
 
     layer: QuotaLayer
     scope_type: QuotaScope
-    scope_id: UUID | None
+    scope_id: UUID
     metric: QuotaMetric
     limit_value: int
     id: UUID

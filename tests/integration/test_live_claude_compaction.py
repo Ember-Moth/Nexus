@@ -10,6 +10,8 @@ from test_identity_api import auth
 from test_plane import provision_plane
 from test_relay import relay_binary, running_relay, tls, wait_events  # noqa: F401
 
+from nexus.modules.publication import CAPABILITIES
+
 pytestmark = pytest.mark.integration
 PREFIX = "RELAY_ACCEPTANCE_CLAUDE_COMPACTION_"
 
@@ -72,13 +74,7 @@ async def test_signed_compaction_and_stateless_replay(http, admin, tls, relay_bi
             json={
                 "node_id": str(node),
                 "database_role": role,
-                "capabilities": [
-                    "reservation.v1",
-                    "usage-events.v1",
-                    "relay.native.v1",
-                    "relay.provider-features.v1",
-                    "relay.sse.v1",
-                ],
+                "capabilities": list(CAPABILITIES),
             },
         )
         assert principal.status_code == 200

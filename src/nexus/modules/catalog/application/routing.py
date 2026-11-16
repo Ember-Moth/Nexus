@@ -20,9 +20,7 @@ class RoutingPolicies:
 
     async def quota(self, token, org, body, version):
         if body.metric in ORGANIZATION_METRICS and (
-            body.layer != "platform"
-            or body.scope_type != "organization"
-            or body.scope_id not in (None, org)
+            body.layer != "platform" or body.scope_type != "organization" or body.scope_id != org
         ):
             raise ServiceError(
                 "invalid_scope",
@@ -38,11 +36,7 @@ class RoutingPolicies:
             scope_type=body.scope_type,
             scope_id=body.scope_id,
         )
-        if body.scope_type != "organization" and body.scope_id is None:
-            raise ServiceError("invalid_scope", "Scope identifier is required", 422)
-        policy_id = await self._repository.save_quota(
-            org, body, version, body.scope_id or org, actor
-        )
+        policy_id = await self._repository.save_quota(org, body, version, actor)
         return {**body.model_dump(), "id": policy_id, "version": (version or 0) + 1}
 
     async def list_routes(self, token, limit, cursor):

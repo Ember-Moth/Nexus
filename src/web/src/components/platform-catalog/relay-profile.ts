@@ -29,8 +29,6 @@ export interface Option {
   hint?: MessageKey;
   /** Endpoints that accept this option; others disable it. Omitted means every endpoint. */
   endpoints?: readonly RelayProfile["endpoint"][];
-  /** Node capability a release requires once the option is on (shown next to the label). */
-  capability?: string;
 }
 
 export type RelayField =
@@ -63,16 +61,16 @@ const BOTH = ["openai_responses", "anthropic_messages"] as const;
 
 /** RelayProfile.provider_features, with the endpoints the API accepts (catalog PROVIDER_FEATURES). */
 const PROVIDER_FEATURES: readonly Option[] = [
-  { value: "stored_responses", endpoints: RESPONSES, capability: "relay.stored-responses.v1" },
-  { value: "background", endpoints: RESPONSES, capability: "relay.background-responses.v1" },
-  { value: "conversations", endpoints: RESPONSES, capability: "relay.conversations.v1" },
-  { value: "files", endpoints: BOTH, capability: "relay.files.v1" },
-  { value: "vector_stores", endpoints: RESPONSES, capability: "relay.vector-stores.v1" },
-  { value: "batches", endpoints: MESSAGES, capability: "relay.message-batches.v1" },
-  { value: "code_execution", endpoints: BOTH, capability: "relay.code-execution.v1" },
-  { value: "remote_mcp", endpoints: BOTH, capability: "relay.remote-mcp.v1" },
-  { value: "web_fetch", endpoints: MESSAGES, capability: "relay.web-fetch.v1" },
-  { value: "web_search", endpoints: BOTH, capability: "relay.web-search.v1" },
+  { value: "stored_responses", endpoints: RESPONSES },
+  { value: "background", endpoints: RESPONSES },
+  { value: "conversations", endpoints: RESPONSES },
+  { value: "files", endpoints: BOTH },
+  { value: "vector_stores", endpoints: RESPONSES },
+  { value: "batches", endpoints: MESSAGES },
+  { value: "code_execution", endpoints: BOTH },
+  { value: "remote_mcp", endpoints: BOTH },
+  { value: "web_fetch", endpoints: MESSAGES },
+  { value: "web_search", endpoints: BOTH },
 ].map((option) => ({
   ...option,
   label: `pc.relay.features.${option.value}.label` as MessageKey,

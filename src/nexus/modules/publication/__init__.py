@@ -4,11 +4,13 @@ from nexus.shared.storage import ModuleName
 from .application.automation import AutoPublisher
 from .application.ports import KeyOwner, ResourceScope
 from .application.resources import UpstreamResourceService
+from .application.schemas import CAPABILITIES
 from .application.service import PublicationService
 from .persistence import resources
 from .persistence.repository import transaction
 
 __all__ = [
+    "CAPABILITIES",
     "SOURCE_CHANNEL",
     "create_audit_reader",
     "create_auto_publisher",

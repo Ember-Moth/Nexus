@@ -13,9 +13,7 @@ from .ports import OrganizationSource
 from .schemas import (
     AUTO_PUBLISH_DEFAULTS,
     CAPABILITIES,
-    CLUSTER_POLICY_CAPABILITY,
-    FEATURE_CAPABILITIES,
-    RELAY_POLICY_DEFAULTS,
+    RELAY_POLICY_FIELDS,
     ClusterPolicy,
 )
 
@@ -49,7 +47,7 @@ def scope_digest(cluster):
 
 def relay_policy(cluster):
     """The cluster's effective Relay policy, as read with the cluster."""
-    return {name: cluster[name] for name in RELAY_POLICY_DEFAULTS}
+    return {name: cluster[name] for name in RELAY_POLICY_FIELDS}
 
 
 def auto_publish_timing(cluster):
@@ -65,7 +63,7 @@ def auto_publish_timing(cluster):
 def grouped(row):
     """A policy row as {"relay": {...}, "auto_publish": {...}}."""
     return {
-        "relay": {name: row[name] for name in RELAY_POLICY_DEFAULTS},
+        "relay": {name: row[name] for name in RELAY_POLICY_FIELDS},
         "auto_publish": {name: row[f"auto_publish_{name}"] for name in AUTO_PUBLISH_DEFAULTS},
     }
 
@@ -182,75 +180,13 @@ def trigger(previous, current):
     }
 
 
-def required_capabilities(current):
-    required = list(CAPABILITIES)
-    profiles = [d["relay_profile"] for d in current["deployments"] if "relay_profile" in d]
-    if any(p["endpoint"] == "openai_chat_completions" for p in profiles):
-        required.append("relay.responses-to-chat.v1")
-    if any(p["endpoint"] == "bedrock_converse" for p in profiles):
-        required.append("relay.bedrock-converse.v1")
-    if any(p.get("bedrock_guardrail") or p.get("bedrock_model_fields") for p in profiles):
-        required.append("relay.bedrock-settings.v1")
-    if any(
-        p.get("bedrock_guardrail")
-        or any(o.get("guardrailConfig") for o in p.get("bedrock_request_options", []))
-        for p in profiles
-    ) or any(
-        any(k.startswith("guardrail_") for k in m.get("tool_dimensions", []))
-        for m in current["models"]
-    ):
-        required.append("relay.bedrock-guardrail-usage.v1")
-    if any(p.get("bedrock_request_options") for p in profiles):
-        required.append("relay.bedrock-request-options.v1")
-    if any(p.get("code_execution") for p in profiles) or any(
-        "code_execution_seconds" in m.get("tool_dimensions", []) for m in current["models"]
-    ):
-        required.append("relay.claude-execution.v1")
-    if any(p.get("container_reserve_minutes") for p in profiles) or any(
-        any(k.startswith("container_") for k in m.get("tool_dimensions", []))
-        for m in current["models"]
-    ):
-        required.append("relay.openai-containers.v1")
-    if any(p.get("bedrock_invoke") for p in profiles):
-        required.append("relay.bedrock-claude-invoke.v1")
-    if any("web_search_requests" in m.get("tool_dimensions", []) for m in current["models"]) or any(
-        "web_search" in p.get("provider_features", []) for p in profiles
-    ):
-        required.append("relay.web-search.v1")
-    if any(
-        set(m.get("tool_dimensions", [])) & {"file_search_calls", "vector_storage_byte_seconds"}
-        for m in current["models"]
-    ):
-        required.append("relay.file-search.v1")
-    if any(p.get("auto_prompt_cache") for p in profiles):
-        required.append("relay.prompt-cache.v1")
-    # Nodes without the capability would run with their built-in policy instead.
-    if "cluster_policy" in current or "resource_limits" in current:
-        required.append(CLUSTER_POLICY_CAPABILITY)
-    if profiles:
-        required.append("relay.native.v1")
-        # Nodes must enforce provider feature switches before serving any profile.
-        required.append("relay.provider-features.v1")
-    enabled = {f for p in profiles for f in p.get("provider_features", [])}
-    required.extend(
-        capability
-        for feature, capability in FEATURE_CAPABILITIES.items()
-        if feature in enabled and capability not in required
-    )
-    if any(p.get("streaming") and "http" in p["transports"] for p in profiles):
-        required.append("relay.sse.v1")
-    if any("websocket" in p["transports"] for p in profiles):
-        required.append("relay.responses-ws.v1")
-    for source, capability in [
-        ("anthropic_messages", "relay.messages-to-responses.v1"),
-        ("openai_responses", "relay.responses-to-messages.v1"),
-    ]:
-        if any(
-            p.get("convert_from") == source and p["endpoint"] != "openai_chat_completions"
-            for p in profiles
-        ):
-            required.append(capability)
-    return required
+def required_capabilities():
+    """The capabilities every node of a cluster must declare before a release is published.
+
+    Today this is the baseline. A capability introduced later is added here only when the
+    resources use it, so nodes without it keep loading the releases that do not.
+    """
+    return list(CAPABILITIES)
 
 
 def automation_state(cluster):
@@ -552,9 +488,7 @@ class PublicationService:
         pricing_rev, prices = await self.prices(models, deps)
         for model in catalog["models"]:
             price = prices.get(("sale", model["id"]))
-            if not price or price[1] != set(
-                model["token_dimensions"] + model.get("tool_dimensions", [])
-            ):
+            if not price or price[1] != set(model["token_dimensions"] + model["tool_dimensions"]):
                 raise ValueError("Missing complete sale price")
         for dep in catalog["deployments"]:
             cost = prices.get(("cost", dep["id"]))
@@ -566,13 +500,11 @@ class PublicationService:
             raise ValueError("Every scoped deployment needs an explicit route")
         for policy in identity["access_policies"]:
             policy["allowed_models"] = [m for m in policy["allowed_models"] if m in models]
-        policy = relay_policy(c)
-        extra = {"cluster_policy": policy} if policy != RELAY_POLICY_DEFAULTS else {}
         # Keys travel beside the manifest (publication.cluster_keys), never inside it.
         keys = key_rows(identity.pop("key_verifiers"))
         return Sources(
             source_vector(c, identity_rev, catalog_rev, pricing_rev, prices),
-            json.loads(serialize({**identity, **catalog, **extra})),
+            json.loads(serialize({**identity, **catalog, "cluster_policy": relay_policy(c)})),
             envelopes,
             orgs,
             models,
@@ -620,22 +552,12 @@ class PublicationService:
         sources.vector["rollback_revision"] = str(rollback_revision)
 
     @staticmethod
-    async def _published_digest(repo, locked):
+    def _published_digest(locked):
+        """The content digest recorded when the desired snapshot was published."""
         rev = locked["desired_revision"]
-        if not rev:
-            return None
-        if locked.get("content_revision") == rev and locked.get("content_digest"):
+        if rev and locked["content_revision"] == rev:
             return locked["content_digest"]
-        # Releases stored before the digest was recorded are digested from their bytes.
-        snapshot = await repo.snapshot(locked["id"], rev)
-        manifest = json.loads(bytes(snapshot["payload_bytes"]))
-        return content_digest(
-            snapshot["source_revision"]["scope_generation"],
-            snapshot["source_revision"]["key_version"],
-            manifest["required_capabilities"],
-            manifest["resources"],
-            manifest.get("key_set", {}).get("sha256"),
-        )
+        return None
 
     async def _commit(
         self, repo, cluster, locked, sources, *, actor, key, params, rollback, previous
@@ -654,7 +576,7 @@ class PublicationService:
             raise ServiceError("cluster_changed", "Cluster changed during publication", 409)
         current = sources.resources
         nodes = await repo.capabilities(cid)
-        required = required_capabilities(current)
+        required = required_capabilities()
         if any(not set(required) <= set(n["capabilities"]) for n in nodes):
             raise ServiceError("unsupported_capability", "A node lacks required capabilities", 409)
         keys = key_set_digest(sources.keys)
@@ -663,7 +585,7 @@ class PublicationService:
         )
         settled = None if rollback else sources.vector
         models = None if rollback else sources.models
-        if automatic and digest == await self._published_digest(repo, locked):
+        if automatic and digest == self._published_digest(locked):
             # Another organization's change moved a shared source revision only.
             await repo.settle(cid, locked["desired_revision"], settled, digest, models)
             return None

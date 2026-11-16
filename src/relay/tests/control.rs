@@ -3,7 +3,7 @@ use std::{env, time::Duration};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use crypto_box::SecretKey;
 use nexus_relay::{
-    control::{credential::CredentialRef, database::Gateway},
+    control::{credential::CredentialRef, database::Gateway, snapshot::CAPABILITIES},
     protocol::tokens::ReservationBounds,
 };
 use serde::Deserialize;
@@ -36,20 +36,14 @@ async fn isolated_gateway_contract() -> Result<(), Box<dyn std::error::Error>> {
     let keys = gateway.key_changes(snapshot.revision, 0).await?;
     assert!(keys.iter().all(|k| k.present));
     assert!(keys.iter().any(|k| k.key == input.key));
-    let caps = [
-        "reservation.v1",
-        "usage-events.v1",
-        "relay.native.v1",
-        "relay.responses-ws.v1",
-        "relay.provider-features.v1",
-    ];
+    // The snapshot requires the whole baseline; a node supporting only part of it refuses.
     assert!(
         gateway
-            .acknowledge(&snapshot, &caps[..2], None)
+            .acknowledge(&snapshot, &CAPABILITIES[..2], None)
             .await
             .is_err()
     );
-    gateway.acknowledge(&snapshot, &caps, None).await?;
+    gateway.acknowledge(&snapshot, CAPABILITIES, None).await?;
     let reference: CredentialRef =
         serde_json::from_value(snapshot.resources["credential_refs"][0].clone())?;
     let envelope = gateway.credential(snapshot.revision, &reference).await?;
@@ -204,7 +198,7 @@ fn indexed_route_requires_the_scoped_key_and_selects_the_first_eligible_priority
     };
     use serde_json::json;
     use std::sync::Arc;
-    let (org, key, project, model, credential, primary, backup, other, legacy) = (
+    let (org, key, project, model, credential, primary, backup, other, unprofiled) = (
         Uuid::new_v4(),
         Uuid::new_v4(),
         Uuid::new_v4(),
@@ -217,12 +211,13 @@ fn indexed_route_requires_the_scoped_key_and_selects_the_first_eligible_priority
     );
     let deploy = |id, endpoint, family, format| {
         json!({"id":id,"model_id":model,"upstream_model":"actual","base_url":"https://upstream.example/v1",
-            "credential_id":credential,"credential_version":2,"protocol_family":family,"usage_format":format,
+            "region":"global","upstream_version":1,"credential_id":credential,"credential_version":2,"protocol_family":family,"usage_format":format,
             "relay_profile":{"endpoint":endpoint,"input_ceiling":80,"output_ceiling":10,"tools":false,
             "transports":["http"],"count_rule":"deployment_ceiling.v1","bound_reference":"fixture"}})
     };
+    // Without a relay profile a deployment is never a forwarding candidate.
     let mut old = deploy(
-        legacy,
+        unprofiled,
         "openai_responses",
         "openai_compatible",
         "openai.responses.v1",
@@ -231,12 +226,14 @@ fn indexed_route_requires_the_scoped_key_and_selects_the_first_eligible_priority
     old.as_object_mut().unwrap().remove("usage_format");
     let resources = json!({
         "key_verifiers":[{"id":key,"project_id":project,"organization_id":org,"digest":format!("{:x}",Sha256::digest(b"enterprise")),"expires_at":null}],
-        "models":[{"id":model,"public_name":"public","max_input_tokens":80,"max_output_tokens":10,"capabilities":{"tools":true}}],
+        "models":[{"id":model,"public_name":"public","max_input_tokens":80,"max_output_tokens":10,"capabilities":{"streaming":false,"tools":true},"token_dimensions":["input_uncached_tokens","output_tokens"],"tool_dimensions":[]}],
         "routes":[{"organization_id":org,"model_id":model,"candidates":[
-            {"deployment_id":legacy,"priority":0,"weight":1},{"deployment_id":other,"priority":0,"weight":1},
+            {"deployment_id":unprofiled,"priority":0,"weight":1},{"deployment_id":other,"priority":0,"weight":1},
             {"deployment_id":backup,"priority":2,"weight":99},{"deployment_id":primary,"priority":1,"weight":1}]}],
         "access_policies":[{"organization_id":org,"scope_id":org,"scope_type":"organization","layer":"platform","allowed_models":[model]}],
         "quota_policies":[],"credential_refs":[{"credential_id":credential,"credential_version":2,"key_version":1,"algorithm":"libsodium-sealed-box"}],
+        "cluster_policy":{"max_attempts":2,"failover_budget_ms":10000,"purge_grace_seconds":604800,"stream_lifetime_seconds":1800},
+        "resource_limits":{"default":{"resources_per_key":10000,"resources_per_organization":100000,"vector_stores_per_key":100,"vector_stores_per_organization":1000},"organizations":[]},
         "deployments":[old,deploy(other,"anthropic_messages","anthropic","anthropic.messages.v1"),
             deploy(primary,"openai_responses","openai_compatible","openai.responses.v1"),deploy(backup,"openai_responses","openai_compatible","openai.responses.v1")]
     });
@@ -246,7 +243,7 @@ fn indexed_route_requires_the_scoped_key_and_selects_the_first_eligible_priority
         cluster_id: Uuid::new_v4(),
         revision: 1,
         digest: String::new(),
-        required_capabilities: vec!["relay.native.v1".into()],
+        required_capabilities: Vec::new(),
         resources: resources.clone(),
         key_set: None,
     };

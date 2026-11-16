@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-from uuid import uuid4
 
 import psycopg
 import pytest
@@ -228,41 +227,3 @@ async def test_direct_membership_changes_invalidate_pending_invites(http, signup
     )
     assert updated.status_code == 200
     assert (await accept(client, guest, renewed)).status_code == 404
-
-
-def test_personal_organization_migration_backfills_once_and_preserves_ids(
-    migration_settings, admin
-):
-    from pathlib import Path
-
-    from alembic import command
-    from alembic.config import Config
-
-    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
-    config.attributes["settings"] = migration_settings
-    user = uuid4()
-    command.downgrade(config, "0014_bedrock_converse")
-    try:
-        admin.execute(
-            "INSERT INTO identity.users(id, login, password_hash) "
-            "VALUES(%s,'legacy-account','hash')",
-            (user,),
-        )
-    finally:
-        command.upgrade(config, "head")
-    query = (
-        "SELECT o.id,m.id,e.id FROM identity.organizations o "
-        "JOIN identity.memberships m ON m.organization_id=o.id AND m.user_id=o.personal_owner_id "
-        "JOIN identity.outbox e ON e.aggregate_id=o.id WHERE o.personal_owner_id=%s"
-    )
-    original = admin.execute(query, (user,)).fetchall()
-    assert len(original) == 1
-    admin.execute("UPDATE identity.organizations SET name='Renamed' WHERE id=%s", (original[0][0],))
-    try:
-        command.downgrade(config, "0014_bedrock_converse")
-    finally:
-        command.upgrade(config, "head")
-    assert admin.execute(query, (user,)).fetchall() == original
-    assert admin.execute(
-        "SELECT name FROM identity.organizations WHERE personal_owner_id=%s", (user,)
-    ).fetchone() == ("Renamed",)

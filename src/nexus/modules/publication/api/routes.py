@@ -108,8 +108,7 @@ def create_router(get_service):
         """Replace the cluster's overrides; a null value follows the platform default.
 
         Automatic publication delivers a Relay policy change like any other source change;
-        a cluster without auto_publish applies it at its next release. An effective Relay
-        policy other than the Relay's built-in one requires relay.cluster-policy.v1 on every node.
+        a cluster without auto_publish applies it at its next release.
         """
         result = await service.update_policy(token, cluster_id, body, version)
         response.headers["ETag"] = f'"{result["version"]}"'

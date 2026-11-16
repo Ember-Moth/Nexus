@@ -2,10 +2,7 @@
 //!
 //! The control plane stores these values (cluster policy defaults and overrides in
 //! publication, resource count defaults and per-organization overrides in catalog) and puts
-//! them into a snapshot only once they differ from the built-in values below, together with
-//! the required capability `relay.cluster-policy.v1`. A snapshot without them runs with the
-//! built-in values. Keep them equal to the control plane's `RELAY_POLICY_DEFAULTS` and
-//! `RELAY_RESOURCE_DEFAULTS`.
+//! the effective ones into every snapshot; a snapshot without them is invalid.
 use std::{collections::HashMap, ops::RangeInclusive, time::Duration};
 
 use serde::Deserialize;
@@ -13,7 +10,6 @@ use uuid::Uuid;
 
 use super::ControlError;
 
-pub const CAPABILITY: &str = "relay.cluster-policy.v1";
 /// Bounds for `ClusterPolicy::max_attempts`.
 pub const MAX_ATTEMPTS: RangeInclusive<u32> = 1..=4;
 const FAILOVER_BUDGET_MS: RangeInclusive<u64> = 100..=60_000;
@@ -31,17 +27,6 @@ pub struct ClusterPolicy {
     pub purge_grace_seconds: u32,
     /// Longest time a resumed response stream may stay open.
     pub stream_lifetime_seconds: u64,
-}
-
-impl Default for ClusterPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: 2,
-            failover_budget_ms: 10_000,
-            purge_grace_seconds: 7 * 24 * 3600,
-            stream_lifetime_seconds: 1800,
-        }
-    }
 }
 
 impl ClusterPolicy {
@@ -73,17 +58,6 @@ pub struct ResourceLimits {
     pub resources_per_organization: u64,
     pub vector_stores_per_key: u64,
     pub vector_stores_per_organization: u64,
-}
-
-impl Default for ResourceLimits {
-    fn default() -> Self {
-        Self {
-            resources_per_key: 10_000,
-            resources_per_organization: 100_000,
-            vector_stores_per_key: 100,
-            vector_stores_per_organization: 1000,
-        }
-    }
 }
 
 impl ResourceLimits {
@@ -127,7 +101,6 @@ pub(super) struct ResourceSection {
 }
 
 /// The resource limits of every organization in a snapshot.
-#[derive(Default)]
 pub struct ResourceTable {
     default: ResourceLimits,
     organizations: HashMap<Uuid, ResourceLimits>,
@@ -142,34 +115,29 @@ impl ResourceTable {
     }
 }
 
-/// Validate the optional policy sections of a snapshot against its required capabilities.
+/// Validate the policy sections of a snapshot.
 pub(super) fn install(
-    policy: Option<ClusterPolicy>,
-    resources: Option<ResourceSection>,
-    required: &[String],
+    policy: ClusterPolicy,
+    resources: ResourceSection,
 ) -> Result<(ClusterPolicy, ResourceTable), ControlError> {
-    if (policy.is_some() || resources.is_some()) && !required.iter().any(|c| c == CAPABILITY) {
-        return Err(ControlError::Invalid("cluster policy capability"));
-    }
-    let policy = policy.unwrap_or_default();
     if !policy.valid() {
         return Err(ControlError::Invalid("cluster policy"));
     }
-    let mut table = ResourceTable::default();
-    if let Some(section) = resources {
-        if !section.default.valid() {
+    if !resources.default.valid() {
+        return Err(ControlError::Invalid("resource limits"));
+    }
+    let mut table = ResourceTable {
+        default: resources.default,
+        organizations: HashMap::new(),
+    };
+    for org in resources.organizations {
+        if !org.limits.valid()
+            || table
+                .organizations
+                .insert(org.organization_id, org.limits)
+                .is_some()
+        {
             return Err(ControlError::Invalid("resource limits"));
-        }
-        table.default = section.default;
-        for org in section.organizations {
-            if !org.limits.valid()
-                || table
-                    .organizations
-                    .insert(org.organization_id, org.limits)
-                    .is_some()
-            {
-                return Err(ControlError::Invalid("resource limits"));
-            }
         }
     }
     Ok((policy, table))
@@ -180,44 +148,48 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn required() -> Vec<String> {
-        vec![CAPABILITY.to_string()]
+    const POLICY: ClusterPolicy = ClusterPolicy {
+        max_attempts: 2,
+        failover_budget_ms: 10_000,
+        purge_grace_seconds: 604_800,
+        stream_lifetime_seconds: 1800,
+    };
+
+    fn limits(value: u64) -> serde_json::Value {
+        json!({"resources_per_key": value, "resources_per_organization": value,
+            "vector_stores_per_key": value, "vector_stores_per_organization": value})
     }
 
-    #[test]
-    fn snapshots_without_policy_run_with_the_built_in_defaults() {
-        let (policy, table) = install(None, None, &[]).unwrap();
-        assert_eq!(policy, ClusterPolicy::default());
-        assert_eq!(policy.max_attempts(), 2);
-        assert_eq!(policy.failover_budget(), Duration::from_secs(10));
-        assert_eq!(table.get(Uuid::new_v4()), ResourceLimits::default());
+    fn section(value: serde_json::Value) -> ResourceSection {
+        serde_json::from_value(value).unwrap()
     }
 
     #[test]
     fn organizations_override_the_platform_defaults() {
         let org = Uuid::new_v4();
-        let section: ResourceSection = serde_json::from_value(json!({
+        let section = section(json!({
             "default": {"resources_per_key": 5, "resources_per_organization": 50,
                 "vector_stores_per_key": 1, "vector_stores_per_organization": 2},
             "organizations": [{"organization_id": org, "resources_per_key": 1,
                 "resources_per_organization": 3, "vector_stores_per_key": 1,
                 "vector_stores_per_organization": 2}],
-        }))
-        .unwrap();
-        let (_, table) = install(None, Some(section), &required()).unwrap();
+        }));
+        let (policy, table) = install(POLICY, section).unwrap();
+        assert_eq!(policy.max_attempts(), 2);
+        assert_eq!(policy.failover_budget(), Duration::from_secs(10));
         assert_eq!(table.get(org).of("file"), (1, 3));
         assert_eq!(table.get(Uuid::new_v4()).of("file"), (5, 50));
         assert_eq!(table.get(Uuid::new_v4()).of("vector_store"), (1, 2));
     }
 
     #[test]
-    fn policy_needs_its_capability_and_valid_values() {
+    fn policy_values_must_be_in_bounds() {
+        let defaults = || section(json!({"default": limits(1), "organizations": []}));
         let policy = ClusterPolicy {
             max_attempts: 1,
-            ..ClusterPolicy::default()
+            ..POLICY
         };
-        assert!(install(Some(policy), None, &[]).is_err());
-        assert_eq!(install(Some(policy), None, &required()).unwrap().0, policy);
+        assert_eq!(install(policy, defaults()).unwrap().0, policy);
         for invalid in [
             json!({"max_attempts": 5, "failover_budget_ms": 10000,
                 "purge_grace_seconds": 0, "stream_lifetime_seconds": 1}),
@@ -227,7 +199,7 @@ mod tests {
                 "purge_grace_seconds": 0, "stream_lifetime_seconds": 0}),
         ] {
             let policy: ClusterPolicy = serde_json::from_value(invalid).unwrap();
-            assert!(install(Some(policy), None, &required()).is_err());
+            assert!(install(policy, defaults()).is_err());
         }
         assert!(
             serde_json::from_value::<ClusterPolicy>(json!({"max_attempts": 2})).is_err(),
@@ -238,19 +210,19 @@ mod tests {
     #[test]
     fn duplicate_or_zero_resource_limits_are_rejected() {
         let org = Uuid::new_v4();
-        let limits = json!({"resources_per_key": 1, "resources_per_organization": 1,
-            "vector_stores_per_key": 1, "vector_stores_per_organization": 1});
-        let mut entry = limits.clone();
+        let mut entry = limits(1);
         entry["organization_id"] = json!(org);
-        let duplicate: ResourceSection = serde_json::from_value(
-            json!({"default": limits, "organizations": [entry.clone(), entry]}),
-        )
-        .unwrap();
-        assert!(install(None, Some(duplicate), &required()).is_err());
-        let mut zero = limits.clone();
+        let duplicate =
+            section(json!({"default": limits(1), "organizations": [entry.clone(), entry]}));
+        assert!(install(POLICY, duplicate).is_err());
+        let mut zero = limits(1);
         zero["vector_stores_per_key"] = json!(0);
-        let section: ResourceSection =
-            serde_json::from_value(json!({"default": zero, "organizations": []})).unwrap();
-        assert!(install(None, Some(section), &required()).is_err());
+        assert!(
+            install(
+                POLICY,
+                section(json!({"default": zero, "organizations": []}))
+            )
+            .is_err()
+        );
     }
 }

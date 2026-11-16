@@ -30,21 +30,6 @@ impl Feature {
         Self::WebFetch,
         Self::WebSearch,
     ];
-    /// The node capability a snapshot must require before it enables the feature.
-    pub fn capability(self) -> &'static str {
-        match self {
-            Self::StoredResponses => "relay.stored-responses.v1",
-            Self::Background => "relay.background-responses.v1",
-            Self::Conversations => "relay.conversations.v1",
-            Self::Files => "relay.files.v1",
-            Self::VectorStores => "relay.vector-stores.v1",
-            Self::Batches => "relay.message-batches.v1",
-            Self::CodeExecution => "relay.code-execution.v1",
-            Self::RemoteMcp => "relay.remote-mcp.v1",
-            Self::WebFetch => "relay.web-fetch.v1",
-            Self::WebSearch => "relay.web-search.v1",
-        }
-    }
     fn bit(self) -> u16 {
         1 << self as u16
     }
@@ -99,13 +84,5 @@ mod tests {
         assert!(enabled.covers(Features::default().with(Feature::Files)));
         assert!(!enabled.covers(Features::default().with(Feature::Background)));
         assert_eq!(enabled.iter().count(), 2);
-        assert_eq!(
-            Feature::ALL
-                .iter()
-                .map(|f| f.capability())
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            Feature::ALL.len()
-        );
     }
 }

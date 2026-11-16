@@ -25,7 +25,9 @@ from cryptography.x509.oid import NameOID
 from pg_receipt import lose_gateway_receipts
 from test_billing import account_amounts, headers, make_budget
 from test_identity_api import auth
-from test_plane import list_keys_in_manifests, plane, provision_plane  # noqa: F401 - fixture
+from test_plane import plane, provision_plane  # noqa: F401 - fixture
+
+from nexus.modules.publication import CAPABILITIES
 
 pytestmark = pytest.mark.integration
 CRATE = Path(__file__).resolve().parents[2] / "src" / "relay"
@@ -284,12 +286,7 @@ async def test_native_http_to_ledger(http, admin, tls, relay_binary, family, pat
             json={
                 "node_id": str(node_id),
                 "database_role": role,
-                "capabilities": [
-                    "reservation.v1",
-                    "usage-events.v1",
-                    "relay.native.v1",
-                    "relay.provider-features.v1",
-                ],
+                "capabilities": list(CAPABILITIES),
             },
         )
         assert resp.status_code == 200, resp.text
@@ -670,56 +667,3 @@ async def test_node_validates_cluster_key_before_ack(plane, http, admin, tls, re
             "SELECT applied_revision FROM publication.gateway_principals WHERE cluster_id=%s",
             (cid,),
         ).fetchone() == (new_revision,)
-
-
-async def test_upgrade_in_flight_legacy_attempt(plane, http, admin, migration_settings):  # noqa: F811
-    from uuid import UUID, uuid4
-
-    from alembic import command
-    from alembic.config import Config
-
-    peer, _, org, model, dep, a, raw, _ = plane
-    config = Config(str(CRATE.parents[1] / "alembic.ini"))
-    config.attributes["settings"] = migration_settings
-    await http[2].state.publication.distribute()
-    old = await peer.refresh()
-    assert "relay_profile" not in old["resources"]["deployments"][0]
-    await asyncio.to_thread(command.downgrade, config, "0012_gateway_admission")
-    try:
-        list_keys_in_manifests(admin, peer.keys.values())
-        # The simulator speaks the current protocol; under 0012 the contracts are called as
-        # they were then (reserve without its attempt, start_attempt separately).
-        await peer.call("reserve_request", a.request_id, a.api_key_id, a.model_id, 1, 4, 6)
-        attempt = uuid4()
-        await peer.call("start_attempt", a.request_id, attempt, 1, UUID(dep["id"]))
-    finally:
-        await asyncio.to_thread(command.upgrade, config, "head")
-    # The stored revision is indexed by the upgrade, so its attempt can still be replayed.
-    assert (await peer.call("config_head"))["revision"] == old["revision"]
-    assert (await peer.call("start_attempt", a.request_id, attempt, 1, UUID(dep["id"])))["replayed"]
-    assert admin.execute(
-        "SELECT expected_usage_format FROM billing.request_attempts WHERE id=%s", (attempt,)
-    ).fetchone() == (None,)
-    await peer.event(
-        a.request_id,
-        "attempt.finished",
-        {
-            "outcome": "succeeded",
-            "upstream_request_id": None,
-            "elapsed_ms": 1,
-            "usage_format": "fixture.tokens.v1",
-            "raw_usage": {"input_total_tokens": 2, "cached_input_tokens": 0, "output_tokens": 3},
-        },
-        attempt_id=attempt,
-    )
-    await peer.event(
-        a.request_id,
-        "request.closed",
-        {
-            "delivery_outcome": "succeeded",
-            "attempt_ids": [str(attempt)],
-            "delivered_attempt_id": str(attempt),
-        },
-    )
-    assert await http[2].state.usage.process() == 1
-    assert account_amounts(admin, org) == (95, 0)

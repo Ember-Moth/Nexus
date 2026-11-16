@@ -6,7 +6,6 @@ import os
 import signal
 import sys
 from contextlib import AsyncExitStack, asynccontextmanager
-from pathlib import Path
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -15,13 +14,12 @@ import pytest
 from test_billing import account_amounts, funding, headers, post_funding
 from test_catalog import make_policy
 from test_identity_api import auth, create_org
-from test_plane import list_keys_in_manifests, plane, register_node  # noqa: F401
+from test_plane import plane, register_node  # noqa: F401
 from test_project_credentials import account, key, project
 
 from nexus.gateway_simulator import GatewaySimulator
 
 pytestmark = pytest.mark.integration
-ROOT = Path(__file__).resolve().parents[2]
 
 
 @asynccontextmanager
@@ -315,35 +313,6 @@ async def test_backlog_replay_and_worker_takeover(plane, http, admin, service_di
             66,
             0,
         )
-
-
-async def test_inflight_gateway_across_migrations(plane, http, admin, migration_settings):  # noqa: F811
-    from alembic import command
-    from alembic.config import Config
-
-    peer, _, org, model, dep, admission, raw, _ = plane
-    config = Config(str(ROOT / "alembic.ini"))
-    config.attributes["settings"] = migration_settings
-    await peer.refresh()
-    rid, aid = admission.request_id, uuid4()
-    # The same connected gateway and its cached revision straddle both upgrades.
-    await asyncio.to_thread(command.downgrade, config, "0008_gateway_protocol")
-    try:
-        # Under 0008 the reservation reads the release's keys from its manifest.
-        list_keys_in_manifests(admin, peer.keys.values())
-        _, lease = await peer.reserve(raw, model["id"], 1, 1, rid)
-        await peer.start_attempt(rid, aid, 1, dep["id"], lease)
-    finally:
-        await asyncio.to_thread(command.upgrade, config, "head")
-    assert admin.execute(
-        "SELECT generation>copied_generation FROM billing.report_changes WHERE request_id=%s",
-        (rid,),
-    ).fetchone() == (True,)
-    await send_usage(peer, rid, aid, lease)
-    await http[2].state.usage.process()
-    assert await http[2].state.reports.project() == 1
-    assert (await peer.call("get_request_status", rid))["charged_amount"] == "2.000000000000"
-    assert account_amounts(admin, org) == (98, 0)
 
 
 async def test_native_dependency_outages(plane, http, admin, service_directory):  # noqa: F811

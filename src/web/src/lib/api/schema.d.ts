@@ -323,8 +323,7 @@ export type paths = {
          * @description Replace the cluster's overrides; a null value follows the platform default.
          *
          *     Automatic publication delivers a Relay policy change like any other source change;
-         *     a cluster without auto_publish applies it at its next release. An effective Relay
-         *     policy other than the Relay's built-in one requires relay.cluster-policy.v1 on every node.
+         *     a cluster without auto_publish applies it at its next release.
          */
         put: operations["update_cluster_policy_api_v1_gateway_clusters__cluster_id__policy_put"];
         post?: never;
@@ -1355,12 +1354,7 @@ export type paths = {
          */
         get: operations["quotas_api_v1_organizations__organization_id__quota_policies_get"];
         put?: never;
-        /**
-         * Quota
-         * @deprecated
-         * @description Deprecated alias of the quota policy PUT on its natural key.
-         */
-        post: operations["quota_api_v1_organizations__organization_id__quota_policies_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1775,12 +1769,7 @@ export type paths = {
          */
         get: operations["routes_api_v1_route_policies_get"];
         put?: never;
-        /**
-         * Route
-         * @deprecated
-         * @description Deprecated alias of `PUT /route-policies/{organization_id}/{model_id}`.
-         */
-        post: operations["route_api_v1_route_policies_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4995,30 +4984,6 @@ export type components = {
         Quantities: {
             [key: string]: number | string;
         };
-        /** Quota */
-        Quota: {
-            /**
-             * Layer
-             * @default customer
-             * @enum {string}
-             */
-            layer: "platform" | "customer";
-            /** Limit Value */
-            limit_value: number;
-            /**
-             * Metric
-             * @enum {string}
-             */
-            metric: "rpm" | "tpm" | "concurrency" | "admission_concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
-            /** Scope Id */
-            scope_id?: string | null;
-            /**
-             * Scope Type
-             * @default organization
-             * @enum {string}
-             */
-            scope_type: "organization" | "project" | "key";
-        };
         /** QuotaLimit */
         QuotaLimit: {
             /** Limit Value */
@@ -5026,8 +4991,7 @@ export type components = {
         };
         /**
          * QuotaPolicyResult
-         * @description The written policy. `scope_id` echoes the request, so the deprecated POST may leave it
-         *     null for organization scope.
+         * @description The written policy.
          */
         QuotaPolicyResult: {
             /**
@@ -5047,8 +5011,11 @@ export type components = {
              * @enum {string}
              */
             metric: "rpm" | "tpm" | "concurrency" | "admission_concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
-            /** Scope Id */
-            scope_id: string | null;
+            /**
+             * Scope Id
+             * Format: uuid
+             */
+            scope_id: string;
             /**
              * Scope Type
              * @enum {string}
@@ -5843,24 +5810,6 @@ export type components = {
             usage_evidence?: components["schemas"]["UsageEvidence"][] | null;
             /** Version */
             version: number;
-        };
-        /**
-         * Route
-         * @description A route policy is identified by (organization_id, model_id).
-         */
-        Route: {
-            /** Candidates */
-            candidates: components["schemas"]["Candidate"][];
-            /**
-             * Model Id
-             * Format: uuid
-             */
-            model_id: string;
-            /**
-             * Organization Id
-             * Format: uuid
-             */
-            organization_id: string;
         };
         /** RouteCandidates */
         RouteCandidates: {
@@ -16168,124 +16117,6 @@ export interface operations {
             };
         };
     };
-    quota_api_v1_organizations__organization_id__quota_policies_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "If-Match"?: string | null;
-            };
-            path: {
-                organization_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["Quota"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QuotaPolicyResult"];
-                };
-            };
-            /** @description Created; the policy did not exist */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QuotaPolicyResult"];
-                };
-            };
-            /** @description Session is missing, expired or revoked */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Caller may not perform this operation */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource does not exist or is not visible to the caller */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description If-Match does not match the current resource version */
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request is malformed or violates a business rule */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorResponse"];
-                };
-            };
-            /** @description A required If-Match or Idempotency-Key header is missing */
-            428: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal server error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description A storage or coordination dependency is unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     put_quota_api_v1_organizations__organization_id__quota_policies__layer___scope_type___scope_id___metric__put: {
         parameters: {
             query?: never;
@@ -18835,113 +18666,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ValidationErrorResponse"];
-                };
-            };
-            /** @description Internal server error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description A storage or coordination dependency is unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    route_api_v1_route_policies_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "If-Match"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["Route"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RoutePolicyView"];
-                };
-            };
-            /** @description Created; the policy did not exist */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RoutePolicyView"];
-                };
-            };
-            /** @description Session is missing, expired or revoked */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Caller may not perform this operation */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description If-Match does not match the current resource version */
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request is malformed or violates a business rule */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorResponse"];
-                };
-            };
-            /** @description A required If-Match or Idempotency-Key header is missing */
-            428: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Internal server error */

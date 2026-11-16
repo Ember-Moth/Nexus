@@ -97,7 +97,7 @@ new-api 的控制器在 Upgrade 后为每轮创建独立请求上下文，Relay 
 
 ## 上游供应商功能开关
 
-以下功能会把客户内容保存在上游供应商账户中，或经由该账户发往第三方。部署在 `relay_profile.provider_features` 中逐项列出才启用，存量部署和新部署默认都不启用。
+以下功能会把客户内容保存在上游供应商账户中，或经由该账户发往第三方。部署在 `relay_profile.provider_features` 中逐项列出才启用，默认都不启用。
 
 | 功能 | 端点 | 涉及的请求 |
 | --- | --- | --- |
@@ -112,7 +112,7 @@ new-api 的控制器在 Upgrade 后为每轮创建独立请求上下文，Relay 
 | `web_fetch` | Messages | `web_fetch` 工具 |
 | `web_search` | Responses、Messages | 搜索工具；仍须配置 `web_search_ceiling` 和计价维度 |
 
-catalog 按端点校验这些声明，publication 随快照发布。只要快照含 relay_profile，就要求节点确认 `relay.provider-features.v1`；每启用一项功能，再要求对应能力（`relay.stored-responses.v1`、`relay.background-responses.v1`、`relay.conversations.v1`、`relay.files.v1`、`relay.vector-stores.v1`、`relay.message-batches.v1`、`relay.code-execution.v1`、`relay.remote-mcp.v1`、`relay.web-fetch.v1`、`relay.web-search.v1`）。节点在选择部署时逐个候选检查，所有候选都因未启用而落选时，在预留前返回 HTTP 400 和 `feature_disabled`。资源接口的创建、写入和搜索同样需要该功能。对已有资源的读取、列举、删除和取消不受开关限制，便于企业在功能关闭后清理。
+catalog 按端点校验这些声明，publication 随快照发布；这些功能对应的节点能力都属于基线（见[版本与兼容](plane-protocol.md#版本与兼容)）。节点在选择部署时逐个候选检查，所有候选都因未启用而落选时，在预留前返回 HTTP 400 和 `feature_disabled`。资源接口的创建、写入和搜索同样需要该功能。对已有资源的读取、列举、删除和取消不受开关限制，便于企业在功能关闭后清理。
 
 启用后，客户内容按供应商的保留策略存放在该部署的上游账户中；使用同一部署的企业共用这个账户。Nexus 只在 PostgreSQL 保存定位用的句柄、上游 ID 和归属，不保存内容。企业可随时通过对应的删除接口删除。Key 撤销、企业停用或归档后，Relay 在宽限期后删除这些资源的上游副本，见[上游资源清理](#上游资源清理)。远程 MCP 和 Web Fetch 只接受公网 https 主机，拒绝回环、私网、链路本地、CGNAT 等 IP 字面量及 `localhost`、`.internal`、`.local` 等主机名。
 
@@ -120,7 +120,7 @@ catalog 按端点校验这些声明，publication 随快照发布。只要快照
 
 共享上游账户会按 ID 解析任何租户的已存储项，也会解密任何租户的 reasoning 或 compaction 密文。Relay 因此在出口统一给 Responses 输出中的每个输出项 `id`、`item_id`、`approval_request_id` 和 `encrypted_content` 加上 Key 绑定的标签：ID 写成 `nxo_<标签>_<供应商 ID>`，密文写成 `nxo1.<标签>.<密文>`。标签是集群私钥派生密钥对“Key ID + 原值”计算的 HMAC，同一值在 SSE 各事件中保持一致，各节点都能校验。HTTP 与 SSE 生成、WebSocket 事件、已存储 response 的读取与续读、`input_items` 和会话条目都经过同一出口处理；`response.id` 和 Nexus 资源句柄不受影响。
 
-入口在预留前校验并剥离标签，再把供应商原值发往上游。标签不属于当前 Key、未加标签的 `encrypted_content`、`item_reference`、只有 `id` 的项、带供应商 ID 的 reasoning 或 compaction 项，以及未加标签的 `approval_request_id`，都以 HTTP 400 `item_not_owned` 拒绝。其他完整内容项上未加标签的 `id` 只起命名作用，转发前删除。Nexus 转换路径自带的 `nxctx1.` 私有历史仍由原有密封校验。选择出口改写而不是逐项向上游查证，是因为无状态续接（`store=false` 回传带密文的 reasoning 项）没有可查证的父响应。升级前客户端保存的带供应商 ID 的 reasoning 项会被拒绝，需要重新开始会话。
+入口在预留前校验并剥离标签，再把供应商原值发往上游。标签不属于当前 Key、未加标签的 `encrypted_content`、`item_reference`、只有 `id` 的项、带供应商 ID 的 reasoning 或 compaction 项，以及未加标签的 `approval_request_id`，都以 HTTP 400 `item_not_owned` 拒绝。其他完整内容项上未加标签的 `id` 只起命名作用，转发前删除。Nexus 转换路径自带的 `nxctx1.` 私有历史仍由原有密封校验。选择出口改写而不是逐项向上游查证，是因为无状态续接（`store=false` 回传带密文的 reasoning 项）没有可查证的父响应。
 
 ### 租户隔离与限额
 
@@ -233,18 +233,18 @@ Responses 的 503 `server_error` 与 502 一样有意保持不重试：它可能
 
 ## 控制平面改动与上线顺序
 
-以下是 P1 的控制平面与节点契约。现有 `gateway_v1` 八个函数保持调用签名；真实厂商规则随控制平面先行发布。
+以下是 P1 的控制平面与节点契约。真实厂商规则随控制平面先行发布。
 
 | 属主 | 当前能力 | P1 交付内容 |
 | --- | --- | --- |
-| catalog | 上游有 `protocol_family`、地址和加密凭据；公开模型有流式/工具标志和 Token 上限。 | 在部署上声明经过验证的上游端点、传输、支持的功能及上界规则的版本；Responses 单独标记原生 WebSocket 能力。端点取值限定 Messages 或 Responses。既有部署升级后保留原配置；端点未经声明的部署不进入真实转发候选。 |
-| publication | 按集群发布不可变快照、凭据引用和 required_capabilities。 | 发布上述部署能力，并按集群检查节点是否理解新字段。现有模拟集群仍能使用 v1 资源，将双端 WS 流量仅发给确认相应能力的节点。旧节点不得确认带未知必需能力的发布。回滚使用更高修订号，重新校验实时权限与凭据。 |
-| billing | v1 收件箱接受两个事件类型；Worker 兼容两种历史 fixture 格式与已绑定的原生格式。 | 新增上表两种版本化格式及样本。依据尝试的 deployment_id、原请求的集群和修订核验允许的格式；在开始尝试的 SQL 事务中，从已授权修订的部署描述取得期望格式，由 billing 持久化到尝试。Worker 仅查询本模块事实。旧尝试沿用其原始规则。 |
+| catalog | 上游有 `protocol_family`、地址和加密凭据；公开模型有流式/工具标志和 Token 上限。 | 在部署上声明经过验证的上游端点、传输、支持的功能及上界规则的版本；Responses 单独标记原生 WebSocket 能力。端点取值限定 Messages 或 Responses。端点未经声明的部署不进入真实转发候选。 |
+| publication | 按集群发布不可变快照、凭据引用和 required_capabilities。 | 发布上述部署能力，并按集群检查节点是否具备快照要求的能力。没有 relay_profile 的部署只供协议模拟器使用，不进入转发候选。节点不得确认带未知必需能力的发布。回滚使用更高修订号，重新校验实时权限与凭据。 |
+| billing | v1 收件箱接受两个事件类型；Worker 接受协议模拟器的两种 fixture 格式与已绑定的原生格式。 | 新增上表两种版本化格式及样本。依据尝试的 deployment_id、原请求的集群和修订核验允许的格式；在开始尝试的 SQL 事务中，从已授权修订的部署描述取得期望格式，由 billing 持久化到尝试。Worker 仅查询本模块事实。每个尝试按开始时持久化的期望格式结算。 |
 | Rust Relay | Python 模拟器已验证 SQL 与 Redis 契约。 | 在 Rust 实现受限 SQL 调用、sealed box 和 Redis 原子租约。跨语言测试覆盖键布局、策略排序、指纹字节编码、租约 owner、Redis TIME 与恢复窗口；过期租约不能释放接替者的占用。 |
 
-**发布次序。** 先部署兼容旧记录的迁移、管理 API 和支持新格式的 Worker；再登记具备相应能力的 Relay，在单一测试集群启用新快照；最后按部署逐项启用收费组合。回滚时先停止新准入，限时排空在途请求和待提交事件，再发布更高修订号切回已验收配置。未核清的预留继续由原尝试的证据和冻结价格处理。[配置发布](../src/nexus/modules/publication/application/service.py) · [结算消费者](../src/nexus/modules/billing/application/usage.py)
+**发布次序。** 先部署迁移、管理 API 和支持新格式的 Worker；再登记具备相应能力的 Relay，在单一测试集群启用新快照；最后按部署逐项启用收费组合。回滚时先停止新准入，限时排空在途请求和待提交事件，再发布更高修订号切回已验收配置。未核清的预留继续由原尝试的证据和冻结价格处理。[配置发布](../src/nexus/modules/publication/application/service.py) · [结算消费者](../src/nexus/modules/billing/application/usage.py)
 
-**配置规模。** 节点启动或重连获取权威快照；日常监听 Redis 变更并错峰检查版本。定期从 PostgreSQL 复核授权版本，低成本的“当前修订和摘要”读操作如有需要单独版本化，当前 v1 返回完整快照。记录每节点连接数、配置读取次数与字节数；同步授权和异步用量沿用现有 SQL 与持久队列。[网关协议](plane-protocol.md) · [容量基线](control-plane-acceptance.md)
+**配置规模。** 节点启动或重连获取权威快照；日常监听 Redis 变更并错峰检查版本。定期从 PostgreSQL 复核授权版本，低成本的 `config_head` 只返回当前修订和摘要，变化时才取完整快照。记录每节点连接数、配置读取次数与字节数；同步授权和异步用量沿用现有 SQL 与持久队列。[网关协议](plane-protocol.md) · [容量基线](control-plane-acceptance.md)
 
 ## 实施顺序与完成标准
 

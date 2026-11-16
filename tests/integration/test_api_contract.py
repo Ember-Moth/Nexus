@@ -126,45 +126,6 @@ async def test_quota_policy_put_addresses_the_natural_key(http):
     assert malformed.json()["error"]["code"] == "invalid_cursor"
 
 
-async def test_deprecated_post_aliases_keep_their_upsert_behavior(http):
-    client, root, _, _ = http
-    org, _, _ = await setup_wallet(http)
-    model, dep, _, _, _ = await setup_model(http, org)
-    route = {
-        "organization_id": org["id"],
-        "model_id": model["id"],
-        "candidates": [{"deployment_id": dep["id"]}],
-    }
-    created = await client.post("/api/v1/route-policies", headers=auth(root), json=route)
-    assert created.status_code == 201, created.text
-    assert exact(RoutePolicyView, created.json()).version == 1
-    assert (
-        await client.post("/api/v1/route-policies", headers=auth(root), json=route)
-    ).status_code == 428
-    updated = await client.post("/api/v1/route-policies", headers=auth(root, 1), json=route)
-    assert updated.status_code == 200, updated.text
-    put = f"/api/v1/route-policies/{org['id']}/{model['id']}"
-    assert (
-        await client.put(put, headers=auth(root, 2), json={"candidates": route["candidates"]})
-    ).json()["version"] == 3
-
-    quotas = f"/api/v1/organizations/{org['id']}/quota-policies"
-    quota = {"layer": "platform", "metric": "tpm", "limit_value": 3}
-    created = await client.post(quotas, headers=auth(root), json=quota)
-    assert created.status_code == 201, created.text
-    assert exact(QuotaPolicyResult, created.json()).scope_id is None
-    assert (await client.post(quotas, headers=auth(root), json=quota)).status_code == 428
-    updated = await client.post(quotas, headers=auth(root, 1), json=quota | {"limit_value": 4})
-    assert updated.status_code == 200 and updated.json()["version"] == 2
-    same = f"{quotas}/platform/organization/{org['id']}/tpm"
-    put = await client.put(same, headers=auth(root, 2), json={"limit_value": 5})
-    assert put.status_code == 200 and put.json()["id"] == created.json()["id"]
-
-    spec = (await client.get("/openapi.json")).json()["paths"]
-    assert spec["/api/v1/route-policies"]["post"]["deprecated"] is True
-    assert spec["/api/v1/organizations/{organization_id}/quota-policies"]["post"]["deprecated"]
-
-
 async def test_gateway_clusters_paginate_with_the_created_shape(http):
     client, root, _, _ = http
     org, _, _ = await setup_wallet(http)

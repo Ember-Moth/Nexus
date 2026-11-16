@@ -53,11 +53,11 @@ Claude 独立代码执行使用 `code_execution_seconds` 维度和部署的 `exe
 
 部署凭据的 `secret` 支持 Bedrock API Key，也支持紧凑 JSON 字符串形式的 AWS 签名凭据，字段为 `access_key_id`、`secret_access_key`，以及临时凭据的 `session_token`。这两种凭据均由 catalog 加密并随集群密文包发给节点；签名凭据使用官方 SigV4 签名器、部署的区域和服务名 `bedrock`。临时凭据到期前按现有凭据轮换流程更换。[AWS 的 Bedrock API Key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)
 
-`relay_profile.endpoint` 设为 `bedrock_converse`，`transports` 设为 `["http"]`，`count_rule` 使用 `deployment_ceiling.v1`。按已验证模型填写 `input_ceiling`、`output_ceiling` 和 `bound_reference`。该上游直接服务两个客户端协议，省略 `convert_from`。需要工具或流式输出时，同时开启模型和部署的相应能力。集群节点须登记 `relay.bedrock-converse.v1` 及 `relay.native.v1`；启用流式时另需 `relay.sse.v1`。先升级控制平面到 `0014_bedrock_converse` 和相应 Worker，再发布快照。
+`relay_profile.endpoint` 设为 `bedrock_converse`，`transports` 设为 `["http"]`，`count_rule` 使用 `deployment_ceiling.v1`。按已验证模型填写 `input_ceiling`、`output_ceiling` 和 `bound_reference`。该上游直接服务两个客户端协议，省略 `convert_from`。需要工具或流式输出时，同时开启模型和部署的相应能力。
 
-Converse 部署可在 `relay_profile.bedrock_guardrail` 中配置 AWS 的 `guardrailIdentifier`、`guardrailVersion` 和 `trace`，并在 `bedrock_model_fields` 配置模型支持的 `additionalModelRequestFields`。使用这两项时节点需声明 `relay.bedrock-settings.v1`。模型专有参数在出站时与客户端显式参数核对；冲突或覆盖模型、消息、输出上限时拒绝。计数端点只转发 AWS CountTokens 支持的字段。 配置 Guardrail 时节点还需登记 `relay.bedrock-guardrail-usage.v1`，按策略计费的维度、上界和回执要求见[Guardrail 用量与费用](relay-development.md#guardrail-用量与费用)。
+Converse 部署可在 `relay_profile.bedrock_guardrail` 中配置 AWS 的 `guardrailIdentifier`、`guardrailVersion` 和 `trace`，并在 `bedrock_model_fields` 配置模型支持的 `additionalModelRequestFields`。模型专有参数在出站时与客户端显式参数核对；冲突或覆盖模型、消息、输出上限时拒绝。计数端点只转发 AWS CountTokens 支持的字段。配置 Guardrail 时，按策略计费的维度、上界和回执要求见[Guardrail 用量与费用](relay-development.md#guardrail-用量与费用)。
 
-需要让租户逐请求选择配置时，在部署的 `bedrock_request_options` 列出允许的组合，并为节点登记 `relay.bedrock-request-options.v1`。例如，以下配置允许在这次生成上切换到 Guardrail 版本 2，同时把 `top_k` 改为 7。未覆盖的字段沿用部署默认值。
+需要让租户逐请求选择配置时，在部署的 `bedrock_request_options` 列出允许的组合。例如，以下配置允许在这次生成上切换到 Guardrail 版本 2，同时把 `top_k` 改为 7。未覆盖的字段沿用部署默认值。
 
 ```json
 {

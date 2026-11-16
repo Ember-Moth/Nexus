@@ -9,6 +9,8 @@ import pytest
 from test_relay import relay_binary, tls, wait_events  # noqa: F401
 from test_relay_streams import stream_plane
 
+from nexus.modules.publication import CAPABILITIES
+
 pytestmark = pytest.mark.integration
 ALLOW = "x-nexus-allow-approximation"
 APPLIED = "x-nexus-applied-approximation"
@@ -488,13 +490,7 @@ async def test_exact_first_then_consented_failover(http, admin, tls, relay_binar
             json={
                 "node_id": str(node),
                 "database_role": role,
-                "capabilities": [
-                    "reservation.v1",
-                    "usage-events.v1",
-                    "relay.native.v1",
-                    "relay.provider-features.v1",
-                    "relay.messages-to-responses.v1",
-                ],
+                "capabilities": list(CAPABILITIES),
             },
         )
         assert reg.status_code == 200

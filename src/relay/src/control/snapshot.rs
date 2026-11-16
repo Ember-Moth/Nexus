@@ -23,6 +23,8 @@ use crate::protocol::{
     tokens::{CallLoop, ReservationBounds},
 };
 
+/// Capabilities this node acknowledges. The control plane requires all of them (the baseline)
+/// from every snapshot; a snapshot requiring anything else is rejected as unsupported.
 pub const CAPABILITIES: &[&str] = &[
     "reservation.v1",
     "usage-events.v1",
@@ -52,7 +54,7 @@ pub const CAPABILITIES: &[&str] = &[
     "relay.code-execution.v1",
     "relay.remote-mcp.v1",
     "relay.web-fetch.v1",
-    policy::CAPABILITY,
+    "relay.cluster-policy.v1",
 ];
 
 /// An API key of the cluster, found by the SHA-256 of its secret (`KeyTable`).
@@ -142,14 +144,11 @@ struct Model {
     max_input_tokens: u32,
     max_output_tokens: u32,
     capabilities: ModelCapabilities,
-    #[serde(default)]
     token_dimensions: Vec<String>,
-    #[serde(default)]
     tool_dimensions: Vec<String>,
 }
 #[derive(Deserialize)]
 struct ModelCapabilities {
-    #[serde(default)]
     streaming: bool,
     tools: bool,
 }
@@ -172,12 +171,10 @@ pub struct Deployment {
     pub id: Uuid,
     model_id: Uuid,
     pub upstream_model: String,
-    #[serde(default)]
     pub region: String,
     pub base_url: url::Url,
     pub credential_id: Uuid,
     pub credential_version: i32,
-    #[serde(default)]
     pub upstream_version: i32,
     protocol_family: String,
     usage_format: Option<String>,
@@ -308,12 +305,8 @@ struct Resources {
     quota_policies: Vec<Quota>,
     routes: Vec<Route>,
     credential_refs: Vec<CredentialRef>,
-    /// Present only once the cluster policy differs from the built-in defaults.
-    #[serde(default)]
-    cluster_policy: Option<ClusterPolicy>,
-    /// Present only once resource counts differ from the built-in defaults.
-    #[serde(default)]
-    resource_limits: Option<ResourceSection>,
+    cluster_policy: ClusterPolicy,
+    resource_limits: ResourceSection,
 }
 
 pub struct Index {
@@ -446,13 +439,9 @@ impl Selection<'_> {
 impl Index {
     /// Build the index of `snapshot` with the cluster's keys at the snapshot's key sequence.
     pub fn build(snapshot: &mut Snapshot, keys: Arc<KeyTable>) -> Result<Self, ControlError> {
-        let mut r: Resources = serde_json::from_value(snapshot.resources.take())
+        let r: Resources = serde_json::from_value(snapshot.resources.take())
             .map_err(|_| ControlError::Invalid("resource schema"))?;
-        let (policy, resources) = policy::install(
-            r.cluster_policy.take(),
-            r.resource_limits.take(),
-            &snapshot.required_capabilities,
-        )?;
+        let (policy, resources) = policy::install(r.cluster_policy, r.resource_limits)?;
         let mut index = Self {
             cluster: snapshot.cluster_id,
             node: snapshot.node_id,
@@ -482,23 +471,21 @@ impl Index {
             )?;
         }
         for m in r.models {
-            for dim in &m.tool_dimensions {
-                let cap = match dim.as_str() {
+            let known = |dim: &str| {
+                matches!(
+                    dim,
                     "container_1g_minutes"
-                    | "container_4g_minutes"
-                    | "container_16g_minutes"
-                    | "container_64g_minutes" => "relay.openai-containers.v1",
-                    "code_execution_seconds" => "relay.claude-execution.v1",
-                    dim if crate::bedrock::guardrail::PRICED.contains(&dim) => {
-                        "relay.bedrock-guardrail-usage.v1"
-                    }
-                    "web_search_requests" => "relay.web-search.v1",
-                    "file_search_calls" | "vector_storage_byte_seconds" => "relay.file-search.v1",
-                    _ => return Err(ControlError::Invalid("unknown tool dimension")),
-                };
-                if !snapshot.required_capabilities.iter().any(|s| s == cap) {
-                    return Err(ControlError::Invalid("tool pricing capability"));
-                }
+                        | "container_4g_minutes"
+                        | "container_16g_minutes"
+                        | "container_64g_minutes"
+                        | "code_execution_seconds"
+                        | "web_search_requests"
+                        | "file_search_calls"
+                        | "vector_storage_byte_seconds"
+                ) || crate::bedrock::guardrail::PRICED.contains(&dim)
+            };
+            if !m.tool_dimensions.iter().all(|d| known(d)) {
+                return Err(ControlError::Invalid("unknown tool dimension"));
             }
             unique(&mut index.models, m.public_name.clone(), m)?;
         }
@@ -566,12 +553,7 @@ impl Index {
                     return Err(ControlError::Invalid("container pricing"));
                 }
                 if p.code_execution
-                    && (!p.tools
-                        || p.endpoint != UpstreamProtocol::AnthropicMessages
-                        || !snapshot
-                            .required_capabilities
-                            .iter()
-                            .any(|c| c == "relay.claude-execution.v1"))
+                    && (!p.tools || p.endpoint != UpstreamProtocol::AnthropicMessages)
                     || p.execution_reserve_seconds > 0
                         && (!p.code_execution
                             || !(300..=1_000_000_000).contains(&p.execution_reserve_seconds)
@@ -604,32 +586,16 @@ impl Index {
                     return Err(ControlError::Invalid("web search deployment"));
                 }
                 if (p.bedrock_guardrail.is_some() || !p.bedrock_model_fields.is_empty())
-                    && (p.endpoint != UpstreamProtocol::BedrockConverse
-                        || p.bedrock_invoke
-                        || !snapshot
-                            .required_capabilities
-                            .iter()
-                            .any(|v| v == "relay.bedrock-settings.v1"))
+                    && (p.endpoint != UpstreamProtocol::BedrockConverse || p.bedrock_invoke)
                 {
                     return Err(ControlError::Invalid("Bedrock Converse settings"));
                 }
                 if !p.bedrock_request_options.is_empty()
-                    && (p.endpoint != UpstreamProtocol::BedrockConverse
-                        || p.bedrock_invoke
-                        || !snapshot
-                            .required_capabilities
-                            .iter()
-                            .any(|v| v == "relay.bedrock-request-options.v1"))
+                    && (p.endpoint != UpstreamProtocol::BedrockConverse || p.bedrock_invoke)
                 {
                     return Err(ControlError::Invalid("Bedrock request options"));
                 }
-                if p.bedrock_invoke
-                    && (p.endpoint != UpstreamProtocol::BedrockConverse
-                        || !snapshot
-                            .required_capabilities
-                            .iter()
-                            .any(|s| s == "relay.bedrock-claude-invoke.v1"))
-                {
+                if p.bedrock_invoke && p.endpoint != UpstreamProtocol::BedrockConverse {
                     return Err(ControlError::Invalid("Bedrock Invoke profile"));
                 }
                 if p.auto_prompt_cache {
@@ -638,13 +604,9 @@ impl Index {
                     } else {
                         "input_cache_write_5m_tokens"
                     };
-                    if !snapshot
-                        .required_capabilities
+                    if ![write_dim, "input_cache_read_tokens"]
                         .iter()
-                        .any(|c| c == "relay.prompt-cache.v1")
-                        || ![write_dim, "input_cache_read_tokens"]
-                            .iter()
-                            .all(|d| dimensions.iter().any(|v| v == d))
+                        .all(|d| dimensions.iter().any(|v| v == d))
                     {
                         return Err(ControlError::Invalid("prompt cache configuration"));
                     }
@@ -674,10 +636,6 @@ impl Index {
                             ),
                         };
                         !endpoint
-                            || !snapshot
-                                .required_capabilities
-                                .iter()
-                                .any(|c| c == f.capability())
                     })
                 {
                     return Err(ControlError::Invalid("provider features"));
@@ -695,11 +653,7 @@ impl Index {
                         || p.continuation
                         || p.cancellation
                         || p.count_rule != "deployment_ceiling.v1"
-                        || d.region.is_empty()
-                        || !snapshot
-                            .required_capabilities
-                            .iter()
-                            .any(|c| c == "relay.bedrock-converse.v1"))
+                        || d.region.is_empty())
                 {
                     return Err(ControlError::Invalid("Bedrock profile"));
                 }
@@ -711,27 +665,14 @@ impl Index {
                             .is_some_and(|e| e != Endpoint::OpenaiResponses)
                         || p.auto_prompt_cache
                         || p.web_search_ceiling > 0
-                        || !snapshot
-                            .required_capabilities
-                            .iter()
-                            .any(|c| c == "relay.responses-to-chat.v1")
                     {
                         return Err(ControlError::Invalid("Chat Completions profile"));
                     }
-                } else if let Some(source) = p.convert_from {
-                    let capability = match source {
-                        Endpoint::AnthropicMessages => "relay.messages-to-responses.v1",
-                        Endpoint::OpenaiResponses => "relay.responses-to-messages.v1",
-                    };
-                    if UpstreamProtocol::from(source) == p.endpoint
-                        || !p.transports.iter().any(|t| t == "http")
-                        || !snapshot
-                            .required_capabilities
-                            .iter()
-                            .any(|c| c == capability)
-                    {
-                        return Err(ControlError::Invalid("conversion profile"));
-                    }
+                } else if let Some(source) = p.convert_from
+                    && (UpstreamProtocol::from(source) == p.endpoint
+                        || !p.transports.iter().any(|t| t == "http"))
+                {
+                    return Err(ControlError::Invalid("conversion profile"));
                 }
                 if d.protocol_family != family
                     || d.usage_format.as_deref()
@@ -740,18 +681,10 @@ impl Index {
                         } else {
                             p.endpoint.usage_format()
                         })
-                    || !snapshot
-                        .required_capabilities
-                        .iter()
-                        .any(|c| c == "relay.native.v1")
                     || p.transports.is_empty()
                     || p.transports.iter().any(|t| t != "http" && t != "websocket")
                     || (p.transports.iter().any(|t| t == "websocket")
-                        && (p.endpoint != UpstreamProtocol::OpenaiResponses
-                            || !snapshot
-                                .required_capabilities
-                                .iter()
-                                .any(|c| c == "relay.responses-ws.v1")))
+                        && p.endpoint != UpstreamProtocol::OpenaiResponses)
                     || p.bound_reference.trim().is_empty()
                     || !matches!(
                         p.count_rule.as_str(),

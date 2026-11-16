@@ -35,6 +35,9 @@ const COUNTS: Metric[] = [
   "vector_stores_per_key",
   "vector_stores_per_organization",
 ];
+// Admission concurrency overrides the Relay's NEXUS_RELAY_TENANT_ADMISSIONS for one organization.
+// Like resource counts it is a platform policy of the whole organization.
+const ORGANIZATION_ONLY: Metric[] = ["admission_concurrency", ...COUNTS];
 const SCOPES: ScopeType[] = ["organization", "project", "key"];
 const MAX_LIMIT = 2_000_000_000;
 
@@ -174,7 +177,7 @@ function QuotaDialog({
               value={layer}
               onValueChange={(value) => {
                 setLayer(value as Layer);
-                if (value !== "platform" && COUNTS.includes(metric)) setMetric("rpm");
+                if (value !== "platform" && ORGANIZATION_ONLY.includes(metric)) setMetric("rpm");
               }}
               disabled={Boolean(editing)}
             >
@@ -196,7 +199,7 @@ function QuotaDialog({
               value={metric}
               onValueChange={(value) => {
                 setMetric(value as Metric);
-                if (COUNTS.includes(value as Metric)) {
+                if (ORGANIZATION_ONLY.includes(value as Metric)) {
                   setScopeType("organization");
                   setScopeId("");
                 }
@@ -207,7 +210,7 @@ function QuotaDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(layer === "platform" ? [...RATES, ...COUNTS] : RATES).map((value) => (
+                {(layer === "platform" ? [...RATES, ...ORGANIZATION_ONLY] : RATES).map((value) => (
                   <SelectItem key={value} value={value}>
                     {t(`quotas.metrics.${value}`)}
                   </SelectItem>
@@ -224,7 +227,7 @@ function QuotaDialog({
               setScopeType(value as ScopeType);
               setScopeId("");
             }}
-            disabled={Boolean(editing) || COUNTS.includes(metric)}
+            disabled={Boolean(editing) || ORGANIZATION_ONLY.includes(metric)}
           >
             <SelectTrigger id="quota-scope" className="w-full">
               <SelectValue />
@@ -267,6 +270,9 @@ function QuotaDialog({
           ) : null}
           {touched && !scopeOk ? <span className="text-xs text-destructive">{t("quotas.scopeRequired")}</span> : null}
           {COUNTS.includes(metric) ? <span className="text-xs text-muted-foreground">{t("quotas.countHint")}</span> : null}
+          {metric === "admission_concurrency" ? (
+            <span className="text-xs text-muted-foreground">{t("quotas.admissionHint")}</span>
+          ) : null}
         </div>
         <div className="grid gap-2">
           <Label htmlFor="quota-limit">{t("quotas.limit")}</Label>

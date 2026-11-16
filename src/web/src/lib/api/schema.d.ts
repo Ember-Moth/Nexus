@@ -4915,7 +4915,7 @@ export type components = {
              * Metric
              * @enum {string}
              */
-            metric: "rpm" | "tpm" | "concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
+            metric: "rpm" | "tpm" | "concurrency" | "admission_concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
             /** Scope Id */
             scope_id?: string | null;
             /**
@@ -4952,7 +4952,7 @@ export type components = {
              * Metric
              * @enum {string}
              */
-            metric: "rpm" | "tpm" | "concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
+            metric: "rpm" | "tpm" | "concurrency" | "admission_concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
             /** Scope Id */
             scope_id: string | null;
             /**
@@ -4981,7 +4981,7 @@ export type components = {
              * Metric
              * @enum {string}
              */
-            metric: "rpm" | "tpm" | "concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
+            metric: "rpm" | "tpm" | "concurrency" | "admission_concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
             /**
              * Organization Id
              * Format: uuid
@@ -15628,7 +15628,7 @@ export interface operations {
             };
             path: {
                 layer: "platform" | "customer";
-                metric: "rpm" | "tpm" | "concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
+                metric: "rpm" | "tpm" | "concurrency" | "admission_concurrency" | "resources_per_key" | "resources_per_organization" | "vector_stores_per_key" | "vector_stores_per_organization";
                 organization_id: string;
                 scope_id: string;
                 scope_type: "organization" | "project" | "key";

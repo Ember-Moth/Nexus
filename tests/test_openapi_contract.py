@@ -1,5 +1,8 @@
 """Guards for the published management API contract; no services are started."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from nexus.api import create_app
@@ -12,6 +15,19 @@ GENERIC_PATH_PARAMETERS = {"cid", "org", "resource_id"}
 def spec(settings_factory):
     # create_app does not run the lifespan, so no database or Redis is contacted.
     return create_app(settings_factory()).openapi()
+
+
+WEB_SNAPSHOT = Path(__file__).parents[1] / "src/web/openapi/openapi.json"
+
+
+def test_web_snapshot_matches_the_live_contract(spec):
+    # The console builds its API types from this committed snapshot, so a schema change that
+    # skips the snapshot ships a console that does not know the new values.
+    snapshot = json.loads(WEB_SNAPSHOT.read_text())
+    assert snapshot == spec, (
+        "src/web/openapi/openapi.json is out of date: start the API in development mode and run "
+        "`pnpm api:types` in src/web"
+    )
 
 
 def operations(spec):

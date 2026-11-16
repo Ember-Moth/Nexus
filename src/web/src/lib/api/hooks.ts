@@ -23,6 +23,15 @@ export function useMe() {
   });
 }
 
+/** GET /setup: whether the built-in administrator still has to complete the setup wizard. */
+export function useSetupStatus() {
+  return useQuery({
+    queryKey: ["setup"],
+    queryFn: async () => (await call(() => nexus.GET("/api/v1/setup"))).data,
+    staleTime: 60_000,
+  });
+}
+
 /**
  * Cursor pagination: each page passes the previous `next_cursor` as `cursor`; filters must stay
  * identical between pages, so they belong in the query key.

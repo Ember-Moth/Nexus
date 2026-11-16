@@ -19,7 +19,6 @@ config:
     NEXUS_TURNSTILE_SITE_KEY: 0x4AAAAAAA...
     NEXUS_TURNSTILE_HOSTNAME: console.nexus.example.com
     NEXUS_PAYMENT_PUBLIC_BASE_URL: https://api.nexus.example.com
-    NEXUS_PAYMENT_RETURN_URL: https://console.nexus.example.com/payments
 # Export files; credentials in the nexus-app-r2 Secret (docs/deployment.md#对象存储cloudflare-r2).
 objectStorage:
   endpointURL: https://ACCOUNT_ID.r2.cloudflarestorage.com
@@ -29,6 +28,10 @@ relay:
   replicas: 0
 policy:
   groups:
+    # Initial values for the setup wizard; it must run after this import to pick them up.
+    identity.site_policy:
+      mode: initial
+      values: {site_name: Nexus, console_url: "https://console.nexus.example.com"}
     # Chosen before the first account, price or channel exists; later changes return 409.
     billing.policy:
       mode: initial

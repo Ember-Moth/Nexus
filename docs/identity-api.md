@@ -9,7 +9,7 @@
 3. Owner 调用 `POST /organizations/{org}/invitations`，提交目标登录名和角色，例如 `{"login":"alice","role":"org_developer"}`。将响应中一次性展示的 `token` 私下交给对方。邀请有效期为 7 天，向同一组织内同一登录名重发邀请会使旧令牌失效。
 4. 受邀者可以先注册，再以自己的会话调用 `POST /invitations/accept`，提交 `{"token":"<邀请令牌>"}`。加入后保留自己的个人组织。Owner 可以列出成员，变更角色或停用成员。已接受的邀请不能用来恢复被停用的成员或重新取得旧角色。
 
-个人组织永久绑定用户 ID。数据库禁止删除、归档、转让该组织，绑定人在该组织中的成员关系必须保持为有效的 `org_owner`。平台引导账号、管理员创建的账号以及升级前已有的账号同样拥有个人组织。加入其他组织时，按目标组织的成员角色授权。
+个人组织永久绑定用户 ID。数据库禁止删除、归档、转让该组织，绑定人在该组织中的成员关系必须保持为有效的 `org_owner`。内置管理员、管理员创建的账号以及升级前已有的账号同样拥有个人组织。加入其他组织时，按目标组织的成员角色授权。
 
 ## 邮箱验证、登录和密码找回
 
@@ -19,9 +19,9 @@
 | --- | --- | --- | --- |
 | 注册或重发注册邮件 | `POST /auth/registrations` | 提交 `login`、`password` 和 `email`；省略 `email` 时登录名必须是邮件地址。返回 202 和 `email_verification_required: true`，登录名是否已存在不影响响应（见[注册不暴露登录名](#注册不暴露登录名)）。注册关闭时返回 403 `registration_unavailable` | `register` |
 | 确认注册 | `POST /auth/registrations/verify` | 提交邮件中的 `token` 与本次注册的 `password`。成功返回 201，会话和个人组织在同一事务中创建。登录名已被他人先确认时返回 409 `login_in_use`；注册已关闭时返回 403 `registration_unavailable` | `confirm_registration` |
-| 登录 | `POST /auth/sessions` | 提交 `login`、`password`，成功返回 201 和会话 | `login` |
+| 登录 | `POST /auth/sessions` | `login` 填登录名或账号的邮箱，再提交 `password`，成功返回 201 和会话。登录名优先：某个账号的登录名恰好与另一账号的邮箱相同时，按登录名找账号；已验证的邮箱优先于未验证的邮箱 | `login` |
 | 绑定或更换邮箱 | `POST /me/email` | 携带现有会话，提交 `email` 和当前 `password`，成功受理返回 202 | `bind_email` |
-| 确认绑定 | `POST /me/email/verify` | 携带同一账号的会话，提交邮件中的 `token`。成功返回 204，可从 `GET /me` 读取 `verified_email` | `confirm_email` |
+| 确认绑定 | `POST /me/email/verify` | 携带同一账号的会话，提交邮件中的 `token`。成功返回 204，可从 `GET /me` 读取 `verified_email`；原来未验证的邮箱（`unverified_email`）随之清除，其他账号未验证地占用的同一地址也会让出 | `confirm_email` |
 | 忘记密码 | `POST /auth/password/forgot` | 提交 `email`。对格式正确的邮箱统一返回 202 和 `{"accepted":true}`，仅向已绑定该邮箱、且没有平台角色的有效账号发信（见[平台角色的找回](#平台角色的找回)） | `forgot_password` |
 | 重置密码 | `POST /auth/password/reset` | 提交邮件中的 `token` 和新 `password`。成功返回 204 并撤销旧会话和其他重置凭据，随后重新登录 | `reset_password` |
 | 管理员签发凭据设置密码 | `POST /auth/password` | 提交管理员签发的 `token` 和新 `password`，成功返回 204 | `set_password` |
@@ -72,9 +72,28 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 | Resend | `resend` | 设置 `NEXUS_RESEND_API_KEY` 并使用可发信的地址。Worker 按发送任务 ID 传递幂等键。[Resend Send Email](https://resend.com/docs/api-reference/emails/send-email) |
 | Cloudflare Email Service | `cloudflare` | 设置 `NEXUS_CLOUDFLARE_EMAIL_ACCOUNT_ID` 和 `NEXUS_CLOUDFLARE_EMAIL_API_TOKEN`，使用已开通 Email Sending 的发件域。[Cloudflare Email Service REST API](https://developers.cloudflare.com/email-service/api/send-emails/rest-api/) |
 
+## 初始化向导
+
+迁移创建内置管理员：登录名 `admin`、邮箱 `admin@example.com`、密码 `password`，持有 `platform_admin`。默认账号是公开的，所以完成初始化之前，管理 API 只放行健康检查、`GET /error-codes`、`GET /auth/options`、`POST /auth/sessions`、`DELETE /auth/sessions/current`、`GET /me` 和下表三个接口，其余接口（包括自助注册、找回与重置密码、兑换凭据和接受邀请）一律在鉴权之前返回 409 `setup_required`。这段时间 `GET /auth/options` 的 `registration` 总是 false。支付服务商通知（`/webhooks/...`）不是管理接口，照常处理。部署方式和重置命令见[初始管理员](development.md#初始管理员)。
+
+| 接口 | 行为 |
+| --- | --- |
+| `GET /setup` | 任何已登录账号可读：`required`（是否还需初始化）、`builtin_admin`（调用者是否为内置管理员）、`email_delivery_available`，以及站点策略 `site` |
+| `POST /setup/email-verification` | 仅内置管理员。提交 `{"email": ...}`，向新邮箱发送验证令牌，返回 202；未配置发信时返回 503 `mail_unavailable`。再次请求会使旧令牌失效 |
+| `POST /setup` | 仅内置管理员（其他账号 403 `forbidden`）。提交 `site`（`site_name`、`console_url`、`contact_email`）、`email`、`password`，配置了发信时还要提交 `email_token`。成功返回 200 和新的 `GET /setup` 结果 |
+
+`POST /setup` 的校验：
+
+- 新邮箱不能是 `admin@example.com`，不能用 example.com、example.net、example.org、`.example` 等文档保留域名（422 `email_reserved`），`.test`、`.invalid`、`.localhost`、`.local` 等特殊域名按无效邮箱处理（422 `invalid_email`）；已被其他账号使用时返回 409 `email_in_use`。
+- 配置了发信时缺少令牌返回 422 `email_verification_required`；令牌无效、过期或不是发给这个地址的，返回 422 `invalid_verification_token`。未配置发信时不需要令牌，邮箱记为未验证（`GET /me` 的 `unverified_email`）：可以用来登录，不能用来找回密码。
+- 新密码 16–1024 个字符，不能是 `password`（422 `invalid_password`）。
+- 站点策略被策略文件锁定时，`site` 必须与锁定的值完全相同，否则返回 409 `policy_managed_externally`。
+
+提交在一个事务里写入站点信息、新邮箱、新密码哈希，记录完成时间，吊销内置管理员除当前会话以外的全部会话和未用凭据，并写审计 `setup.completed`（只记录是否验证了邮箱和站点信息的变化，不记录邮箱地址）。同一会话重复提交或已完成后再提交返回 409 `setup_completed`；两个会话同时提交时只有一个成功，另一个得到 409 `setup_completed` 或因会话已被吊销得到 401。
+
 ## 管理员开户
 
-初始平台管理员由部署主机引导。管理员也可通过 `POST /users` 创建 pending 用户，将返回的一次性 `setup_token` 交给用户调用 `POST /auth/password` 设置密码。用户可随后调用 `POST /auth/sessions` 登录。[初始管理员](development.md#初始管理员)
+内置管理员完成初始化后，可通过 `POST /users` 创建 pending 用户，将返回的一次性 `setup_token` 交给用户调用 `POST /auth/password` 设置密码。用户可随后调用 `POST /auth/sessions` 登录。[初始管理员](development.md#初始管理员)
 
 ### 平台角色的找回
 
@@ -82,7 +101,7 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 
 ### 登录名
 
-新建登录名（自助注册、管理员创建、引导管理员）先做 NFKC 规范化，再去除首尾空格并转成小写，长度为 3–254 个字符，不能含空白、控制字符或不可见字符（零宽字符、双向控制符、变体选择符、Hangul 填充符等）。自助注册还不能使用保留名，默认包括 `admin`、`administrator`、`root`、`system`、`support`、`security`、`postmaster` 等，可通过身份策略的 `reserved_logins` 调整（整体替换列表）；保留名按规范化后的写法比较，管理员创建和引导管理员不受此限。
+新建登录名（自助注册、管理员创建）先做 NFKC 规范化，再去除首尾空格并转成小写，长度为 3–254 个字符，不能含空白、控制字符或不可见字符（零宽字符、双向控制符、变体选择符、Hangul 填充符等）。自助注册还不能使用保留名，默认包括 `admin`、`administrator`、`root`、`system`、`support`、`security`、`postmaster` 等，可通过身份策略的 `reserved_logins` 调整（整体替换列表）；保留名按规范化后的写法比较，管理员创建不受此限；内置管理员的登录名 `admin` 也在保留名里。
 
 登录、邀请时按规范化后的写法查找账号，并兼容升级前按原规则保存的登录名，存量用户不受影响；同一账号的各种写法共用一个登录限流桶。
 
@@ -109,10 +128,12 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 | 接口 | 行为 |
 | --- | --- |
 | `POST /auth/registrations` | 开始自助注册，返回 202；确认后由 `POST /auth/registrations/verify` 返回会话与个人组织 ID |
-| `POST /auth/sessions` | 校验密码，创建有期限且可撤销的管理会话 |
+| `POST /auth/sessions` | 按登录名或邮箱校验密码，创建有期限且可撤销的管理会话 |
 | `DELETE /auth/sessions/current` | 撤销当前会话，重复注销不产生额外副作用 |
 | `POST /auth/password` | 兑换一次性凭据并设置密码，同时撤销该用户已有管理会话 |
-| `GET /me` | 当前用户、个人组织 ID、平台角色和有效组织成员关系 |
+| `GET /me` | 当前用户、个人组织 ID、平台角色、有效组织成员关系，以及已验证或未验证的邮箱 |
+| `GET /setup`、`POST /setup/email-verification`、`POST /setup` | 初始化状态与向导，见[初始化向导](#初始化向导) |
+| `GET/PUT /settings/site` | 平台管理员读取或修改站点策略，见[站点策略](#站点策略) |
 | `GET/POST /users` | 平台管理员查询或创建用户；不返回密码哈希 |
 | `POST /users/{id}/password-reset-tokens` | 平台管理员重发一次性凭据；之前未用的凭据立即失效 |
 | `GET/POST /organizations` | 按权限列出或创建企业 |
@@ -148,6 +169,19 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 | `NEXUS_HASH_QUEUE_TIMEOUT_SECONDS` | 5 |
 | `NEXUS_AUTH_PROXY_PEERS` / `NEXUS_AUTH_PROXY_SECRET` | 未设置 |
 | 发信服务商与 Turnstile 的连接参数和密钥 | 见 `.env.example` |
+
+### 站点策略
+
+站点名称、控制台的公开地址和联系邮箱保存在 `identity.site_policy`，与初始化完成时间共用一行和一个版本号。平台管理员通过 `GET/PUT /api/v1/settings/site` 或管理后台“平台 → 设置 → 站点”修改，PUT 提交完整的 `site_name`、`console_url`、`contact_email`，带 `If-Match`。
+
+| 字段 | 默认值 | 用途与约束 |
+| --- | --- | --- |
+| `site_name` | `Nexus` | 显示在控制台和身份邮件的标题里；1–100 个字符，去掉首尾空格，不能含控制字符 |
+| `console_url` | 空 | 控制台的公开地址。充值订单的返回地址是 `{console_url}/o/{organization_id}/recharge`，为空时无法创建充值订单（503 `payment_endpoints_unconfigured`）。必须是 HTTPS，只有 `localhost`、`127.0.0.1`、`[::1]` 和 `*.localhost` 可以用 HTTP；不能带账号、查询参数或片段，末尾的 `/` 会去掉 |
+| `contact_email` | 空 | 运营方的联系邮箱，可为空 |
+| `setup_completed_at` | 空 | 只读，初始化完成时间。只由向导写入、由 `nexus setup reset` 清除 |
+
+策略文件可以用 `identity.site_policy` 组导入前三个字段（`initial` 或 `managed`），写入 `setup_completed_at` 等其他字段会使整个文件被拒绝。`initial` 只在该组从未改过时生效，所以要在完成向导之前导入，向导会以导入的值作为初始值；`managed` 锁定后向导只能原样提交。
 
 ### 身份策略
 

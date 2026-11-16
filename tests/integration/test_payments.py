@@ -7,8 +7,9 @@ from uuid import uuid4
 import httpx
 import pytest
 from policies import put_policy
+from setup_wizard import admin_session
 from test_billing import account_amounts, balance, finance_role, headers
-from test_identity_api import PASSWORD, auth, create_org, login
+from test_identity_api import auth, create_org, login
 
 from nexus.api import create_app
 from nexus.shared.storage import SCHEMA_REVISION
@@ -32,19 +33,17 @@ async def payments(runtime_settings):
         update={
             "mock_payment_url": provider.url,
             "payment_public_base_url": "https://control.nexus.test",
-            "payment_return_url": "https://billing.nexus.test/payments",
             "redis_namespace": "nexus:payments-test:" + uuid4().hex,
         }
     )
     app = create_app(settings)
     try:
         async with app.router.lifespan_context(app):
-            await app.state.identity_service.bootstrap_admin("root-admin", PASSWORD)
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
                 base_url="http://test",
             ) as client:
-                root = await login(client)
+                root = await admin_session(client)
                 yield SimpleNamespace(
                     client=client,
                     root=root,
@@ -126,6 +125,10 @@ async def test_payment_end_to_end_uses_gross_amount_and_one_funding_record(payme
     chan = await channel(p)
     item = await order(p, org, chan, key="new-payment")
     assert item["credit_state"] == "uncredited" and item["checkout"] is None
+    # The payer returns to the organization's recharge page at the site's console address.
+    assert admin.execute(
+        "SELECT return_url FROM billing.payment_orders WHERE id=%s", (item["id"],)
+    ).fetchone() == (f"https://console.nexus.test/o/{org['id']}/recharge",)
     repeated = await order(p, org, chan, key="new-payment")
     assert repeated["id"] == item["id"]
     await create_remote(p, org, item)
@@ -762,7 +765,7 @@ async def test_provider_calls_do_not_hold_a_database_connection_or_account_lock(
 
 
 async def test_payment_tenant_roles_and_client_paid_flags_cannot_write_ledger(payments, admin):
-    from test_identity_api import create_user, login
+    from test_identity_api import create_user
 
     p = payments
     owner = await create_user(p.client, p.root, "payment-owner")
@@ -846,7 +849,6 @@ async def test_worker_process_recovers_payment_without_a_callback(
             NEXUS_ENVIRONMENT="test",
             NEXUS_MOCK_PAYMENT_URL=p.provider.url,
             NEXUS_PAYMENT_PUBLIC_BASE_URL="https://control.nexus.test",
-            NEXUS_PAYMENT_RETURN_URL="https://billing.nexus.test/payments",
             NEXUS_WORKER_ID="payment-integration-worker",
         ),
         stdout=asyncio.subprocess.DEVNULL,

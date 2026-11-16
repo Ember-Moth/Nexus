@@ -55,12 +55,12 @@ async def check(settings: RuntimeSettings) -> dict[str, str]:
         await application.close()
 
 
-async def bootstrap(settings: RuntimeSettings, login: str, password: str) -> dict:
+async def reset_setup(settings: RuntimeSettings) -> dict:
+    """Restore the built-in administrator's defaults and lock the management API again."""
     application = Application(settings)
     try:
         await application.database.check_revision()
-        result = await application.identity.bootstrap_admin(login, password)
-        return {"user_id": str(result.user_id), "created": result.created}
+        return await application.identity.reset_setup()
     finally:
         await application.close()
 
@@ -78,13 +78,14 @@ async def worker_health(settings: RuntimeSettings) -> bool:
         await application.close()
 
 
-# Policy groups a policy file can address, and the service that plans each one.
+# Policy groups a policy file can address, and the planner of each one.
 POLICY_GROUPS = {
-    "identity.auth_policy": lambda app: app.identity,
-    "billing.policy": lambda app: app.billing_settings,
-    "reporting.export_policy": lambda app: app.reports,
-    "catalog.quota_defaults": lambda app: app.routing,
-    "publication.cluster_defaults": lambda app: app.publication,
+    "identity.auth_policy": lambda app: app.identity.plan_import,
+    "identity.site_policy": lambda app: app.identity.plan_site_import,
+    "billing.policy": lambda app: app.billing_settings.plan_import,
+    "reporting.export_policy": lambda app: app.reports.plan_import,
+    "catalog.quota_defaults": lambda app: app.routing.plan_import,
+    "publication.cluster_defaults": lambda app: app.publication.plan_import,
 }
 
 
@@ -130,9 +131,7 @@ async def import_policies(settings: RuntimeSettings, path: str, *, dry_run: bool
     try:
         await application.database.check_revision()
         plans = [
-            await POLICY_GROUPS[name](application).plan_import(
-                entry["mode"], entry.get("values") or {}, digest
-            )
+            await POLICY_GROUPS[name](application)(entry["mode"], entry.get("values") or {}, digest)
             for name, entry in groups.items()
         ]
         if not dry_run:

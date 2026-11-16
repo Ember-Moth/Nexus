@@ -261,6 +261,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -497,6 +510,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -751,6 +777,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -987,6 +1026,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -1241,6 +1293,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -1359,6 +1424,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -1610,6 +1688,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -1829,6 +1920,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -2002,6 +2106,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -2120,6 +2237,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -2295,6 +2425,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -2413,6 +2556,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -2550,9 +2706,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "export_unavailable"
+              "export_unavailable",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -2645,6 +2802,19 @@
             "description": "Caller may not perform this operation",
             "x-error-codes": [
               "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -2760,9 +2930,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "policy_managed_externally"
+              "policy_managed_externally",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -2919,9 +3090,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -3105,6 +3277,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -3213,6 +3398,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -3381,9 +3579,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -3580,9 +3779,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -3743,6 +3943,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -3844,14 +4057,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -3961,6 +4177,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -4111,14 +4340,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -4264,6 +4496,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -4396,6 +4641,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -4570,14 +4828,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -4716,6 +4977,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -4872,6 +5146,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -5014,9 +5301,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -5156,6 +5444,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -5392,6 +5693,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -5614,6 +5928,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -5759,7 +6086,7 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -5768,7 +6095,8 @@
               }
             },
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ]
           },
           "422": {
@@ -5911,6 +6239,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -5994,6 +6335,19 @@
             "description": "Caller may not perform this operation",
             "x-error-codes": [
               "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -6109,9 +6463,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "policy_managed_externally"
+              "policy_managed_externally",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -6311,6 +6666,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "412": {
             "description": "If-Match does not match the current resource version",
             "x-error-codes": [
@@ -6469,6 +6837,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "412": {
             "description": "If-Match does not match the current resource version",
             "x-error-codes": [
@@ -6608,6 +6989,19 @@
             "description": "Caller may not perform this operation",
             "x-error-codes": [
               "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -6828,14 +7222,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -7019,14 +7416,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -7199,6 +7599,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -7283,6 +7696,19 @@
             "description": "Caller may not perform this operation",
             "x-error-codes": [
               "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -7398,9 +7824,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "policy_managed_externally"
+              "policy_managed_externally",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -7524,7 +7951,7 @@
             ]
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -7533,7 +7960,8 @@
               }
             },
             "x-error-codes": [
-              "auth_policy_changed"
+              "auth_policy_changed",
+              "setup_required"
             ]
           },
           "422": {
@@ -7662,7 +8090,7 @@
             ]
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -7861,7 +8289,7 @@
             ]
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -7870,7 +8298,8 @@
               }
             },
             "x-error-codes": [
-              "auth_policy_changed"
+              "auth_policy_changed",
+              "setup_required"
             ]
           },
           "422": {
@@ -8036,6 +8465,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error",
             "x-error-codes": [
@@ -8141,9 +8583,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
               "policy_managed_externally",
+              "setup_required",
               "turnstile_not_configured"
             ],
             "content": {
@@ -8282,7 +8725,7 @@
             ]
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -8294,7 +8737,8 @@
               "auth_policy_changed",
               "conflict",
               "email_in_use",
-              "login_in_use"
+              "login_in_use",
+              "setup_required"
             ]
           },
           "422": {
@@ -8421,7 +8865,7 @@
             ]
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -8430,7 +8874,8 @@
               }
             },
             "x-error-codes": [
-              "auth_policy_changed"
+              "auth_policy_changed",
+              "setup_required"
             ]
           },
           "422": {
@@ -8556,7 +9001,7 @@
             ]
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -8567,7 +9012,8 @@
             "x-error-codes": [
               "auth_policy_changed",
               "conflict",
-              "email_in_use"
+              "email_in_use",
+              "setup_required"
             ]
           },
           "422": {
@@ -8684,7 +9130,7 @@
             ]
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -8693,7 +9139,8 @@
               }
             },
             "x-error-codes": [
-              "auth_policy_changed"
+              "auth_policy_changed",
+              "setup_required"
             ]
           },
           "422": {
@@ -8813,7 +9260,7 @@
             ]
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -8822,7 +9269,8 @@
               }
             },
             "x-error-codes": [
-              "auth_policy_changed"
+              "auth_policy_changed",
+              "setup_required"
             ]
           },
           "422": {
@@ -8970,6 +9418,598 @@
         ]
       }
     },
+    "/api/v1/setup": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Setup Status",
+        "description": "Whether the built-in administrator still has to complete the setup wizard.\n\nOpen to every signed-in account, also while the rest of the API is locked.",
+        "operationId": "setup_status_api_v1_setup_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Complete Setup",
+        "description": "Finish the wizard in one transaction; only the built-in administrator may call it.\n\nStores the site details, the new address (verified when mail is configured) and the new\npassword, marks setup complete and revokes every other session of the administrator.\nThe calling session stays valid. A second submission answers 409 setup_completed.",
+        "operationId": "complete_setup_api_v1_setup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupCompletion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "unauthorized"
+            ]
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "forbidden"
+            ]
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "email_in_use",
+              "policy_managed_externally",
+              "setup_completed"
+            ]
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "email_reserved",
+              "email_verification_required",
+              "invalid_email",
+              "invalid_password",
+              "invalid_verification_token",
+              "validation_error"
+            ]
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "authentication_unavailable",
+              "storage_unavailable"
+            ]
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/setup/email-verification": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Setup Email",
+        "description": "Mail a token proving the built-in administrator's new address (wizard step 2).",
+        "operationId": "setup_email_api_v1_setup_email_verification_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupEmail"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestAccepted"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "unauthorized"
+            ]
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "forbidden"
+            ]
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "email_in_use",
+              "setup_completed"
+            ]
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "email_reserved",
+              "invalid_email",
+              "validation_error"
+            ]
+          },
+          "429": {
+            "description": "Rate limit reached; retry later",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limited"
+            ],
+            "headers": {
+              "Retry-After": {
+                "description": "When supplied, seconds to wait before retrying",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "authentication_unavailable",
+              "mail_unavailable",
+              "storage_unavailable"
+            ]
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/settings/site": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Site Policy",
+        "description": "Site name, public console address and contact email; platform administrators only.",
+        "operationId": "site_policy_api_v1_settings_site_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SitePolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Update Site Policy",
+        "operationId": "update_site_policy_api_v1_settings_site_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiteInfo"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SitePolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "policy_managed_externally",
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "If-Match does not match the current resource version",
+            "x-error-codes": [
+              "version_conflict"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "invalid_version",
+              "validation_error"
+            ]
+          },
+          "428": {
+            "description": "A required If-Match or Idempotency-Key header is missing",
+            "x-error-codes": [
+              "precondition_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users": {
       "post": {
         "tags": [
@@ -9030,14 +10070,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -9150,6 +10193,19 @@
             "description": "Caller may not perform this operation",
             "x-error-codes": [
               "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -9277,14 +10333,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -9388,14 +10447,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -9517,6 +10579,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -9625,6 +10700,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -9775,14 +10863,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -9918,6 +11009,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -10068,11 +11172,12 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
               "invalid_transition",
               "organization_archived",
-              "personal_organization_required"
+              "personal_organization_required",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -10236,14 +11341,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -10388,6 +11496,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -10508,6 +11629,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -10618,7 +11752,7 @@
             ]
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
@@ -10629,7 +11763,8 @@
             "x-error-codes": [
               "conflict",
               "invitation_consumed",
-              "organization_inactive"
+              "organization_inactive",
+              "setup_required"
             ]
           },
           "410": {
@@ -10777,14 +11912,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -10929,6 +12067,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -11047,6 +12198,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -11207,14 +12371,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -11377,14 +12544,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -11540,14 +12710,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -11692,6 +12865,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -11810,6 +12996,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -11970,14 +13169,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -12133,14 +13335,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -12285,6 +13490,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -12403,6 +13621,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -12563,14 +13794,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -12733,14 +13967,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -12896,14 +14133,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -13065,6 +14305,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -13183,6 +14436,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -13343,14 +14609,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -13522,9 +14791,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -13725,6 +14995,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -13843,6 +15126,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -13995,14 +15291,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -14200,9 +15499,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -14385,6 +15685,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -14511,14 +15824,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -14637,6 +15953,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -14797,14 +16126,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -15006,6 +16338,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -15107,14 +16452,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -15283,6 +16631,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -15424,14 +16785,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -15582,6 +16946,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -15683,14 +17060,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -15799,6 +17179,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -15949,14 +17342,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -16130,6 +17526,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -16256,14 +17665,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -16382,6 +17794,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -16534,14 +17959,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -16726,6 +18154,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -16827,14 +18268,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -16943,6 +18387,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -17093,14 +18550,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -17245,6 +18705,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -17358,6 +18831,19 @@
             "description": "Caller may not perform this operation",
             "x-error-codes": [
               "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -17486,9 +18972,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -17655,14 +19142,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -17836,6 +19326,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -17978,9 +19481,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -18121,6 +19625,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -18281,14 +19798,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -18462,6 +19982,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -18604,9 +20137,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -18747,6 +20281,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -18901,6 +20448,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -19027,14 +20587,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "422": {
             "description": "Request is malformed or violates a business rule",
@@ -19153,6 +20716,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -19313,14 +20889,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -19466,6 +21045,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -19634,9 +21226,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -19817,14 +21410,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -20012,9 +21608,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -20191,6 +21788,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -20310,9 +21920,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -20443,6 +22054,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -20593,14 +22217,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -20788,9 +22415,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -20967,6 +22595,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -21086,9 +22727,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -21219,6 +22861,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -21369,14 +23024,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -21564,9 +23222,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -21749,6 +23408,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -21891,9 +23563,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -22070,14 +23743,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -22275,9 +23951,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -22475,6 +24152,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -22630,6 +24320,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -22747,6 +24450,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -22830,6 +24546,19 @@
             "description": "Caller may not perform this operation",
             "x-error-codes": [
               "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -22945,10 +24674,11 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
               "currency_locked",
-              "policy_managed_externally"
+              "policy_managed_externally",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -23071,6 +24801,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error",
             "x-error-codes": [
@@ -23176,6 +24919,19 @@
             "description": "Caller may not perform this operation",
             "x-error-codes": [
               "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -23304,9 +25060,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -23437,6 +25194,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -23603,9 +25373,10 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
-              "idempotency_conflict"
+              "idempotency_conflict",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -23788,6 +25559,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -23932,14 +25716,17 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "x-error-codes": [
+              "setup_required"
+            ]
           },
           "412": {
             "description": "If-Match does not match the current resource version",
@@ -24113,6 +25900,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -24257,11 +26057,12 @@
             }
           },
           "409": {
-            "description": "Idempotency key reuse, state transition or resource conflict",
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
               "account_not_ready",
               "idempotency_conflict",
-              "payment_channel_disabled"
+              "payment_channel_disabled",
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -24435,6 +26236,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -24562,6 +26376,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -24679,6 +26506,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -24824,6 +26664,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -24989,6 +26842,19 @@
               }
             }
           },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Request is malformed or violates a business rule",
             "content": {
@@ -25136,6 +27002,19 @@
             "description": "Resource does not exist or is not visible to the caller",
             "x-error-codes": [
               "not_found"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
             ],
             "content": {
               "application/json": {
@@ -27843,6 +29722,18 @@
             ],
             "title": "Verified Email"
           },
+          "unverified_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unverified Email",
+            "description": "An address the account signs in with but has not proven; it cannot recover the account"
+          },
           "personal_organization_id": {
             "type": "string",
             "format": "uuid",
@@ -29729,7 +31620,8 @@
             "type": "string",
             "maxLength": 254,
             "minLength": 3,
-            "title": "Login"
+            "title": "Login",
+            "description": "Login name, or the account's email address"
           },
           "password": {
             "type": "string",
@@ -35091,6 +36983,69 @@
         ],
         "title": "SessionCreated"
       },
+      "SetupCompletion": {
+        "properties": {
+          "site": {
+            "$ref": "#/components/schemas/SiteInfo",
+            "description": "Site details; while the site policy is managed by a policy file they must equal the managed values"
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Email",
+            "description": "The administrator's new address; not the default or an example domain"
+          },
+          "email_token": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Token",
+            "description": "Token mailed by POST /setup/email-verification; required when email delivery is available, ignored otherwise (the address is then stored unverified)"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 16,
+            "format": "password",
+            "title": "Password",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "site",
+          "email",
+          "password"
+        ],
+        "title": "SetupCompletion"
+      },
+      "SetupEmail": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Email"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "SetupEmail"
+      },
       "SetupIssued": {
         "properties": {
           "user": {
@@ -35114,6 +37069,37 @@
           "expires_at"
         ],
         "title": "SetupIssued"
+      },
+      "SetupStatus": {
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "description": "The setup wizard has not been completed; other management calls answer 409 setup_required"
+          },
+          "builtin_admin": {
+            "type": "boolean",
+            "title": "Builtin Admin",
+            "description": "The caller is the built-in administrator, the only account that can complete the wizard"
+          },
+          "email_delivery_available": {
+            "type": "boolean",
+            "title": "Email Delivery Available",
+            "description": "Mail is configured: the new administrator address must be verified"
+          },
+          "site": {
+            "$ref": "#/components/schemas/SitePolicyView"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "required",
+          "builtin_admin",
+          "email_delivery_available",
+          "site"
+        ],
+        "title": "SetupStatus"
       },
       "SignInLimits": {
         "properties": {
@@ -35145,6 +37131,122 @@
         ],
         "title": "SignInLimits",
         "description": "Attempts per window for one account and for one client address (IPv4 or IPv6 /64)."
+      },
+      "SiteInfo": {
+        "properties": {
+          "site_name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Site Name",
+            "description": "Shown in the console and in identity mail"
+          },
+          "console_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Console Url",
+            "description": "Public address of the management console; HTTPS except on loopback hosts. Payment checkouts return to it."
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 254
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email",
+            "description": "Where users reach the operators"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "site_name"
+        ],
+        "title": "SiteInfo",
+        "description": "How the deployment names itself and where people reach it."
+      },
+      "SitePolicyView": {
+        "properties": {
+          "site_name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Site Name",
+            "description": "Shown in the console and in identity mail"
+          },
+          "console_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Console Url"
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
+          },
+          "setup_completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Setup Completed At",
+            "description": "When the built-in administrator completed the setup wizard; until then the management API is locked"
+          },
+          "managed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManagedSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The policy file that locked these values; writes are refused while set"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "site_name",
+          "console_url",
+          "contact_email",
+          "setup_completed_at",
+          "managed",
+          "version"
+        ],
+        "title": "SitePolicyView"
       },
       "Statement": {
         "properties": {
@@ -36439,6 +38541,13 @@
         "retry": "after_correction"
       }
     ],
+    "setup_completed": [
+      {
+        "status": 409,
+        "action": "check_resource_state",
+        "retry": "after_correction"
+      }
+    ],
     "source_changed": [
       {
         "status": 409,
@@ -36492,6 +38601,13 @@
       {
         "status": 409,
         "action": "choose_another_email",
+        "retry": "after_correction"
+      }
+    ],
+    "setup_required": [
+      {
+        "status": 409,
+        "action": "complete_setup",
         "retry": "after_correction"
       }
     ],
@@ -36594,6 +38710,20 @@
       }
     ],
     "duplicate_candidate": [
+      {
+        "status": 422,
+        "action": "correct_input",
+        "retry": "after_correction"
+      }
+    ],
+    "email_reserved": [
+      {
+        "status": 422,
+        "action": "correct_input",
+        "retry": "after_correction"
+      }
+    ],
+    "email_verification_required": [
       {
         "status": 422,
         "action": "correct_input",
@@ -36811,6 +38941,13 @@
       }
     ],
     "invalid_usage": [
+      {
+        "status": 422,
+        "action": "correct_input",
+        "retry": "after_correction"
+      }
+    ],
+    "invalid_verification_token": [
       {
         "status": 422,
         "action": "correct_input",

@@ -6,10 +6,6 @@ class StorageUnavailable(NexusError):
     pass
 
 
-class BootstrapRejected(NexusError):
-    pass
-
-
 class ServiceError(NexusError):
     def __init__(
         self, code: str, message: str, status: int, *, retry_after: int | None = None

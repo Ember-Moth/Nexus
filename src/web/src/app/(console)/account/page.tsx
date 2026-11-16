@@ -109,6 +109,14 @@ function Account() {
                   {user.verified_email}
                   <StatusBadge tone="success">{t("id.account.verified")}</StatusBadge>
                 </span>
+              ) : user.unverified_email ? (
+                <span className="flex flex-col gap-1">
+                  <span className="flex items-center gap-2">
+                    {user.unverified_email}
+                    <StatusBadge tone="warning">{t("id.account.unverified")}</StatusBadge>
+                  </span>
+                  <span className="text-xs text-muted-foreground">{t("id.account.unverifiedHint")}</span>
+                </span>
               ) : (
                 <span className="text-muted-foreground">{t("id.account.notBound")}</span>
               )}

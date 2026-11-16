@@ -4,7 +4,7 @@
 
 | Schema | 主要数据与查询线索 |
 | --- | --- |
-| `identity` | `users`、`admin_sessions`、`platform_role_bindings` 记录用户身份；`memberships` 和 `project_grants` 决定组织、项目范围。`api_keys` 归属于 `service_accounts`，可沿 `access_policies` 和 `access_policy_models` 检查模型权限。 |
+| `identity` | `users`、`admin_sessions`、`platform_role_bindings` 记录用户身份；用户最多有一个邮箱，已验证的在 `verified_email`，未验证的（只能登录、不能找回密码）在 `unverified_email`。固定 ID `00000000-0000-4000-8000-000000000001` 的用户是迁移创建的内置管理员。单行表 `site_policy` 保存站点名称、控制台地址、联系邮箱和 `setup_completed_at`，后者为空时管理 API 处于初始化锁定状态；`auth_policy` 是认证策略。`memberships` 和 `project_grants` 决定组织、项目范围。`api_keys` 归属于 `service_accounts`，可沿 `access_policies` 和 `access_policy_models` 检查模型权限。 |
 | `catalog` | `deployments` 将 `models` 连接到 `upstreams` 和对应的 `upstream_credentials`。`route_policies` 与 `quota_policies` 提供候选部署和运行限额。 |
 | `billing` | `accounts` 是企业钱包。`ledger_entries` 保存已过账流水；`request_runs` 和 `request_attempts` 分别保存客户结算与上游尝试成本。支付订单、外部观察、收据和账务核对均归本模块。 |
 | `publication` | `gateway_principals` 把数据库登录绑定到节点与集群。`config_snapshots` 以集群和修订号标识内容，`credential_envelopes` 保存密文包，`config_outbox` 跟踪分发，`node_config_acks` 记录节点确认。`cluster_automation` 每个集群一行，记录期望快照对应的源向量、待发布的变化、最近一次自动发布和失败、回滚暂停，以及 Worker 租约。 |

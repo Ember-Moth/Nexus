@@ -60,8 +60,9 @@ class RuntimeSettings(BaseSettings):
     login_hash_concurrency: int = Field(default=2, ge=1, le=64)
     account_hash_concurrency: int = Field(default=1, ge=1, le=64)
     hash_queue_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    # Public origin of this API for payment provider notifications. Checkouts return to the
+    # console address in the site policy (``identity.site_policy.console_url``).
     payment_public_base_url: str | None = None
-    payment_return_url: str | None = None
     mock_payment_url: str | None = None
     # S3-compatible application object storage (Cloudflare R2 in production) holds export files.
     # Required by the API (it signs download URLs) and the Worker (it uploads and deletes them).
@@ -101,7 +102,7 @@ class RuntimeSettings(BaseSettings):
             raise ValueError("object storage credentials are required")
         return value
 
-    @field_validator("payment_public_base_url", "payment_return_url")
+    @field_validator("payment_public_base_url")
     @classmethod
     def payment_endpoint(cls, value):
         if value is None:
@@ -222,9 +223,8 @@ class RuntimeSettings(BaseSettings):
         if self.environment == "production":
             if self.mock_payment_url:
                 raise ValueError("mock payment gateway is not permitted in production")
-            if any(
-                value and not value.startswith("https://")
-                for value in (self.payment_public_base_url, self.payment_return_url)
+            if self.payment_public_base_url and not self.payment_public_base_url.startswith(
+                "https://"
             ):
                 raise ValueError("production payment endpoints require HTTPS")
             if url.query.get("sslmode") != "verify-full":

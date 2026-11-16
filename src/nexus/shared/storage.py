@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0046_export_objects"
+SCHEMA_REVISION = "0047_builtin_admin"

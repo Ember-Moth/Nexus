@@ -65,8 +65,8 @@ def test_prometheus_text_tolerates_a_process_without_traffic():
     assert "method=" not in text
 
 
-async def test_metrics_formats_share_platform_admin_access(settings_factory):
-    app = create_app(settings_factory())
+async def test_metrics_formats_share_platform_admin_access(settings_factory, completed_setup):
+    app = completed_setup(create_app(settings_factory()))
     seen = []
 
     async def operational_metrics(token):

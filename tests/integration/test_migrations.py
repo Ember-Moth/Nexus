@@ -5,6 +5,11 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
+from nexus.modules.identity.domain.setup import (
+    BUILTIN_ADMIN_ID,
+    DEFAULT_ADMIN_EMAIL,
+    DEFAULT_ADMIN_PASSWORD_HASH,
+)
 from nexus.shared.storage import SCHEMA_REVISION
 
 pytestmark = pytest.mark.integration
@@ -23,6 +28,71 @@ def test_migration_round_trip_and_repeat_upgrade(migration_settings, admin):
     assert admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchall() == [
         (SCHEMA_REVISION,)
     ]
+    # A reinstall starts with the built-in administrator only and the setup wizard pending.
+    assert admin.execute(
+        "SELECT u.id,u.login,u.password_hash,u.status,u.verified_email,u.unverified_email,b.role "
+        "FROM identity.users u JOIN identity.platform_role_bindings b ON b.user_id=u.id"
+    ).fetchall() == [
+        (
+            BUILTIN_ADMIN_ID,
+            "admin",
+            DEFAULT_ADMIN_PASSWORD_HASH,
+            "active",
+            None,
+            DEFAULT_ADMIN_EMAIL,
+            "platform_admin",
+        )
+    ]
+    assert admin.execute(
+        "SELECT site_name,console_url,contact_email,setup_completed_at,version,managed_sha256 "
+        "FROM identity.site_policy"
+    ).fetchall() == [("Nexus", None, None, None, 1, None)]
+
+
+def test_builtin_admin_migration_downgrades_and_upgrades_again(migration_settings, admin):
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.attributes["settings"] = migration_settings
+    admin.execute("UPDATE identity.site_policy SET setup_completed_at=now(),version=2")
+    try:
+        command.downgrade(config, "0046_export_objects")
+        assert admin.execute("SELECT to_regclass('identity.site_policy')").fetchone() == (None,)
+        assert "unverified_email" not in columns(admin, "identity", "users")
+        # The account stays as an ordinary platform administrator.
+        assert admin.execute(
+            "SELECT login FROM identity.users WHERE id=%s", (BUILTIN_ADMIN_ID,)
+        ).fetchone() == ("admin",)
+    finally:
+        command.upgrade(config, "head")
+    assert admin.execute(
+        "SELECT unverified_email FROM identity.users WHERE id=%s", (BUILTIN_ADMIN_ID,)
+    ).fetchone() == (DEFAULT_ADMIN_EMAIL,)
+    assert admin.execute("SELECT setup_completed_at FROM identity.site_policy").fetchone() == (
+        None,
+    )
+    for statement in (
+        "UPDATE identity.site_policy SET site_name=''",
+        "UPDATE identity.site_policy SET console_url='ftp://x'",
+        f"UPDATE identity.users SET verified_email='a@corp.internal' WHERE id='{BUILTIN_ADMIN_ID}'",
+    ):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            admin.execute(statement)
+    # Another account holding the built-in login stops the upgrade instead of being taken over.
+    try:
+        command.downgrade(config, "0046_export_objects")
+        admin.execute(
+            "UPDATE identity.users SET login='admin-renamed' WHERE id=%s", (BUILTIN_ADMIN_ID,)
+        )
+        admin.execute(
+            "INSERT INTO identity.users(id,login,password_hash) "
+            "VALUES (gen_random_uuid(),'admin','existing-hash')"
+        )
+        with pytest.raises(Exception, match="belongs to another account"):
+            command.upgrade(config, "head")
+    finally:
+        # The next test's reset empties the tables; only the head revision matters here.
+        admin.execute("UPDATE identity.users SET login='admin-intruder' WHERE login='admin'")
+        admin.execute("UPDATE identity.users SET login='admin' WHERE id=%s", (BUILTIN_ADMIN_ID,))
+        command.upgrade(config, "head")
 
 
 def test_runtime_cannot_migrate_and_functions_are_not_public(admin):

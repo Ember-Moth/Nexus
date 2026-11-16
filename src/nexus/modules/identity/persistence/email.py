@@ -112,6 +112,17 @@ class EmailRepository:
             )
         ).scalar_one()
 
+    async def addresses(self, user_id):
+        """(verified, unverified) addresses of an account; at most one is set."""
+        return tuple(
+            (
+                await self.session.execute(
+                    text("SELECT verified_email,unverified_email FROM identity.users WHERE id=:id"),
+                    {"id": user_id},
+                )
+            ).one()
+        )
+
     async def recipient(self, email, *, platform_recovery):
         # Holders of a platform role are recovered by another administrator unless the
         # deployment allows email recovery for them.
@@ -132,8 +143,25 @@ class EmailRepository:
         ).scalar_one_or_none()
 
     async def bind(self, user_id, email):
+        # A proven mailbox outranks an unproven claim on it, this account's or another's.
+        await self.session.execute(
+            text(
+                "UPDATE identity.users SET unverified_email=NULL "
+                "WHERE id=:id OR unverified_email=:email"
+            ),
+            {"id": user_id, "email": email},
+        )
         await self.session.execute(
             text("UPDATE identity.users SET verified_email=:email WHERE id=:id"),
+            {"id": user_id, "email": email},
+        )
+
+    async def set_unverified(self, user_id, email):
+        """Sign in with an address that has not been proven; it cannot recover the account."""
+        await self.session.execute(
+            text(
+                "UPDATE identity.users SET verified_email=NULL,unverified_email=:email WHERE id=:id"
+            ),
             {"id": user_id, "email": email},
         )
 

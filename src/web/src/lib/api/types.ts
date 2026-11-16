@@ -5,6 +5,11 @@ type Schemas = components["schemas"];
 // Every type here is generated from the OpenAPI contract (openapi/openapi.json).
 
 export type CurrentUser = Schemas["CurrentUser"];
+// First-run setup of the built-in administrator and the site description it writes.
+export type SetupStatus = Schemas["SetupStatus"];
+export type SetupCompletion = Schemas["SetupCompletion"];
+export type SiteInfo = Schemas["SiteInfo"];
+export type SitePolicy = Schemas["SitePolicyView"];
 export type Membership = Schemas["MemberView"];
 export type Organization = Schemas["OrganizationView"];
 export type Project = Schemas["ProjectView"];

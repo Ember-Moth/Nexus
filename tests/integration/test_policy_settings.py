@@ -144,7 +144,7 @@ async def test_identity_policy_applies_to_new_sessions_and_registrations(http, a
     )
     assert policy["reserved_logins"] == ["reserved-team"]
     created = await client.post(
-        "/api/v1/auth/sessions", json={"login": "root-admin", "password": PASSWORD}
+        "/api/v1/auth/sessions", json={"login": "admin", "password": PASSWORD}
     )
     expires = datetime.fromisoformat(created.json()["expires_at"])
     now = admin.execute("SELECT now()").fetchone()[0]

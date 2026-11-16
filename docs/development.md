@@ -18,7 +18,7 @@ uv run nexus --env-file .env.api check
 | 配置 | 进程与数据库角色 |
 | --- | --- |
 | `.env.migrate` | Alembic 迁移使用 `nexus_migrator` |
-| `.env.api` | 管理 API、就绪检查和管理员引导使用 `nexus_api` |
+| `.env.api` | 管理 API、就绪检查、策略导入和 `setup reset` 使用 `nexus_api` |
 | `.env.worker` | 后台任务与心跳使用 `nexus_worker` |
 
 ### 本地对象存储
@@ -40,13 +40,37 @@ uv run nexus --env-file .env.api check
 
 ## 初始管理员
 
-完成迁移后，在部署主机执行：
+迁移会创建一个内置管理员，持有 `platform_admin`：
+
+| 项 | 默认值 |
+| --- | --- |
+| 邮箱 | `admin@example.com` |
+| 登录名 | `admin` |
+| 密码 | `password` |
+
+默认账号是公开的，所以在完成初始化向导之前，管理 API 处于锁定状态：只接受健康检查、`GET /api/v1/error-codes`、`GET /api/v1/auth/options`、登录与退出、`GET /api/v1/me`、`GET /api/v1/setup` 和向导本身的两个接口。其余接口，包括自助注册、找回和重置密码、接受邀请，一律返回 409 `setup_required`。支付服务商的通知（`/webhooks/...`）不属于管理 API，照常处理。
+
+启动 API 和管理后台后，在登录页用 `admin@example.com`（或登录名 `admin`）和密码 `password` 登录，后台会进入 `/setup` 向导，依次填写：
+
+1. **站点信息**：站点名称（必填），控制台的公开地址和联系邮箱（可选）。控制台地址除本机地址外必须是 HTTPS，充值完成后付款人会回到这个地址。
+2. **管理员邮箱**：换成你能收信的地址，不能是默认邮箱，也不能用 example.com、`.test` 等保留域名。配置了发信渠道时，要先用邮件中的验证令牌确认新邮箱；没有配置时可以跳过验证，邮箱记为未验证：它能用来登录，但不能用来找回密码。
+3. **新密码**：16 – 1024 个字符，不能是 `password`。
+
+提交在一个事务里写入站点信息、新邮箱和新密码，把初始化标为完成，并吊销内置管理员的其他所有会话；当前会话保留。重复提交返回 409 `setup_completed`，两个请求同时提交只有一个成功。此后默认密码不能再登录，可以用新邮箱或登录名 `admin` 登录。不使用后台时，也可以按 [登录与企业成员](identity-api.md#初始化向导) 直接调用这三个接口。后续管理员和财务账号由内置管理员创建并分配角色。
+
+安装完成到初始化之间，任何人都可以用公开的默认账号抢先登录并完成向导。如果被抢先了，就重新安装：清空数据库后重新执行 `migrate`，系统回到上面的初始状态。
+
+### 重置内置管理员
+
+忘记管理员密码，或怀疑有人抢先完成了向导时，在部署主机执行：
 
 ```sh
-uv run nexus --env-file .env.api bootstrap-admin --login admin
+uv run nexus --env-file .env.api setup reset
 ```
 
-`admin` 可替换为自己的登录名。按提示输入并确认至少 16 字符的密码，成功返回 `user_id` 和 `created: true`。自动化可用 `--password-stdin` 传入密码。首次引导授予 `platform_admin`；相同登录名重复引导返回原用户，保留原密码。后续管理员和财务账号由已有管理员创建并分配角色。[登录与角色管理](identity-api.md)
+命令要求在终端里输入 `RESET` 确认，自动化使用 `--yes`。它把内置管理员恢复成默认邮箱和密码（并恢复 `platform_admin`），吊销它的全部会话和未用的凭据，并把系统改回“需要初始化”：管理 API 重新锁住，各进程在 2 秒内生效，直到有人再次完成向导。站点信息和其他账号、企业、账务数据都不变，其他用户的会话也保留，但在完成向导之前只能登录和查看初始化状态。重置会写入审计 `setup.reset`。
+
+重置只收回内置管理员账号。如果怀疑默认账号被人抢先使用过，对方可能已经创建了其他管理员或调用 Key，重新安装才能确保系统干净。
 
 ## 启动与健康检查
 
@@ -77,7 +101,7 @@ k3s 上的镜像、Helm chart、三层配置和运维流程见[部署手册](dep
 - API、Worker 和迁移进程分别注入各自的凭据。运行时设置 `NEXUS_ENVIRONMENT=production`，PostgreSQL 连接使用 `sslmode=verify-full`，Redis 使用带认证的 `rediss://`。给每个网关节点登记独立的数据库身份。[网关权限与接入](plane-protocol.md)
 - API 与 Worker 使用相同的 Redis 命名空间和应用加密密钥版本。先将新旧密钥分发到相关进程，再轮换当前版本，并保留历史密文所需的旧密钥。[凭据轮换](catalog-api.md#凭据加密与轮换)
 - 账务币种是账务策略的 `currency`，默认 USD。在出现第一个账户、价格、收款账户或支付渠道之前选定，之后修改返回 409 `currency_locked`。
-- 启用充值前配置 HTTPS 通知站点、返回地址和 live 商户渠道。先在相应商户环境验证付款、通知、查单及退款对账，再开放收款。启用收费模型前确认实际售价、成本、折扣、用量维度和可执行的输入输出上界。[支付接入](payments.md) · [定价与预算](billing-api.md)
+- 启用充值前配置 HTTPS 通知站点（`NEXUS_PAYMENT_PUBLIC_BASE_URL`）、站点策略里的控制台地址和 live 商户渠道。先在相应商户环境验证付款、通知、查单及退款对账，再开放收款。启用收费模型前确认实际售价、成本、折扣、用量维度和可执行的输入输出上界。[支付接入](payments.md) · [定价与预算](billing-api.md)
 - 按部署容量确定积压阈值、连接预算、保留期、可接受的数据丢失量（RPO）和恢复时间（RTO）。还原时需同时具备数据库备份、应用密钥和网关集群密钥。按实际环境验证跨机恢复、流量峰值和故障切换。[验收与恢复演练](control-plane-acceptance.md)
 
 ### 三层配置
@@ -87,7 +111,7 @@ k3s 上的镜像、Helm chart、三层配置和运维流程见[部署手册](dep
 | 层 | 放什么 | 何时生效 |
 | --- | --- | --- |
 | Secret | 含凭据的连接串和密钥：`NEXUS_DATABASE_URL`、`NEXUS_MIGRATION_DATABASE_URL`、`NEXUS_REDIS_URL`、`NEXUS_ENCRYPTION_KEY`、`NEXUS_PREVIOUS_ENCRYPTION_KEYS`、`NEXUS_AUTH_PROXY_SECRET`、`NEXUS_SMTP_PASSWORD`、`NEXUS_RESEND_API_KEY`、`NEXUS_CLOUDFLARE_EMAIL_API_TOKEN`、`NEXUS_TURNSTILE_SECRET_KEY`、`NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID`、`NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY`；Relay 的 `NEXUS_RELAY_DATABASE_URL`、`NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_PRIVATE_KEY` | 进程重启 |
-| ConfigMap（`envFrom` 注入） | 启动参数和单个进程或节点的资源上限：`NEXUS_ENVIRONMENT`、`NEXUS_PROCESS_ROLE`、`NEXUS_HOST`、`NEXUS_PORT`、`NEXUS_ENCRYPTION_KEY_VERSION`、连接池、`NEXUS_WORKER_ID`、`NEXUS_REDIS_NAMESPACE`、`NEXUS_LOG_LEVEL`、`NEXUS_DEPENDENCY_TIMEOUT`、`NEXUS_SHUTDOWN_TIMEOUT`、`NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL`、`NEXUS_AUTO_PUBLISH_POLL_SECONDS`、Argon2 并发、迁移超时、支付地址、发信服务商与 Turnstile 的非密钥参数、`NEXUS_AUTH_PROXY_PEERS`、对象存储的 `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION`；Relay 的监听地址、命名空间、上游 CA 路径和单节点上限（见[Relay 运行配置](relay-development.md#运行配置)）；Web 的 5 个变量 | 进程重启 |
+| ConfigMap（`envFrom` 注入） | 启动参数和单个进程或节点的资源上限：`NEXUS_ENVIRONMENT`、`NEXUS_PROCESS_ROLE`、`NEXUS_HOST`、`NEXUS_PORT`、`NEXUS_ENCRYPTION_KEY_VERSION`、连接池、`NEXUS_WORKER_ID`、`NEXUS_REDIS_NAMESPACE`、`NEXUS_LOG_LEVEL`、`NEXUS_DEPENDENCY_TIMEOUT`、`NEXUS_SHUTDOWN_TIMEOUT`、`NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL`、`NEXUS_AUTO_PUBLISH_POLL_SECONDS`、Argon2 并发、迁移超时、支付通知地址、发信服务商与 Turnstile 的非密钥参数、`NEXUS_AUTH_PROXY_PEERS`、对象存储的 `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION`；Relay 的监听地址、命名空间、上游 CA 路径和单节点上限（见[Relay 运行配置](relay-development.md#运行配置)）；Web 的 5 个变量 | 进程重启 |
 | 数据库策略表 | 运营方随时调整、要求全局一致或按企业区分的业务策略（下表） | API 与 Worker 约 2 秒；Relay 随集群的下一次发布 |
 
 ConfigMap 还可以挂载一个策略文件，在 Helm 安装或升级时由 `nexus settings import` 写入数据库：用它给新部署填初始值，或把一部分策略组交给 Git 管理（锁定后后台只读）。文件格式和 Job 示例见[运维：策略文件导入](operations.md#策略文件导入)。
@@ -100,6 +124,7 @@ k3s 部署的 chart 按这三层组织：Secret 只按名称和键引用（由 E
 
 | 策略组 | 表 | 接口 | 何时生效 |
 | --- | --- | --- | --- |
+| `identity.site_policy`：站点名称（控制台与身份邮件）、控制台公开地址（充值返回页）、联系邮箱；初始化是否完成和完成时间只读，不能导入 | `identity.site_policy` | `GET/PUT /api/v1/settings/site` | 2 秒内，所有 API 与 Worker 进程 |
 | `identity.auth_policy`：注册与验证开关、登录与身份邮件限额、会话与密码设置凭据有效期、保留登录名、平台角色邮件找回 | `identity.auth_policy` | `GET/PUT /api/v1/settings/authentication` | 2 秒内，所有 API 与 Worker 进程 |
 | `billing.policy`：账务币种、向量存储预付天数与到期策略、支付调用与通知限额 | `billing.settings` | `GET/PUT /api/v1/settings/billing` | 2 秒内；Worker 在每个账务事务中读取 |
 | `reporting.export_policy`：导出频率、保留时间、行数上限 | `reporting.export_policy` | `GET/PUT /api/v1/settings/reporting` | 下一次导出 |

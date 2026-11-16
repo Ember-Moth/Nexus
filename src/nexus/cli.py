@@ -1,5 +1,4 @@
 import argparse
-import getpass
 import json
 import sys
 
@@ -9,16 +8,16 @@ from pydantic import ValidationError
 
 from nexus.api import create_app
 from nexus.commands import (
-    bootstrap,
     check,
     import_policies,
     migrate,
     provision_database,
+    reset_setup,
     worker_health,
 )
 from nexus.config import MigrationSettings, ProvisionSettings, RuntimeSettings
 from nexus.infrastructure.provisioning import ProvisioningError
-from nexus.shared.errors import BootstrapRejected, ServiceError
+from nexus.shared.errors import ServiceError
 from nexus.shared.policy import PolicyRejected
 from nexus.shared.telemetry import configure_logging
 from nexus.worker import serve_worker
@@ -40,11 +39,14 @@ def parser() -> argparse.ArgumentParser:
         "provision-database",
         help="create the database, group roles and grants with an administrator connection",
     )
-    administrator = commands.add_parser(
-        "bootstrap-admin", help="create the first platform administrator"
+    setup = commands.add_parser("setup", help="the built-in administrator and first-run setup")
+    setup_commands = setup.add_subparsers(dest="setup_command", required=True)
+    reset = setup_commands.add_parser(
+        "reset",
+        help="restore the built-in administrator (admin@example.com / password), revoke its "
+        "sessions and lock the management API until the setup wizard is completed again",
     )
-    administrator.add_argument("--login", required=True)
-    administrator.add_argument("--password-stdin", action="store_true")
+    reset.add_argument("--yes", action="store_true", help="do not ask for confirmation")
     policies = commands.add_parser("settings", help="business policies stored in the database")
     policy_commands = policies.add_subparsers(dest="settings_command", required=True)
     importer = policy_commands.add_parser(
@@ -55,6 +57,18 @@ def parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="report the changes without writing them"
     )
     return result
+
+
+def confirm_reset() -> bool:
+    if not sys.stdin.isatty():
+        print("Pass --yes to reset without a terminal.", file=sys.stderr)
+        return False
+    answer = input(
+        "This signs out the built-in administrator, restores admin@example.com / password and "
+        "locks the management API until the setup wizard is completed again.\n"
+        "Type RESET to continue: "
+    )
+    return answer.strip() == "RESET"
 
 
 def main() -> int:
@@ -92,14 +106,11 @@ def main() -> int:
             checks = uvloop.run(check(settings))
             print(json.dumps(checks))
             return 0 if all(value == "ok" for value in checks.values()) else 1
-        elif args.command == "bootstrap-admin":
-            if args.password_stdin:
-                password = sys.stdin.readline(2049).rstrip("\r\n")
-            else:
-                password = getpass.getpass("Administrator password: ")
-                if password != getpass.getpass("Confirm password: "):
-                    raise BootstrapRejected("passwords do not match")
-            print(json.dumps(uvloop.run(bootstrap(settings, args.login, password))))
+        elif args.command == "setup":
+            if not args.yes and not confirm_reset():
+                print("Setup reset cancelled; nothing was changed.", file=sys.stderr)
+                return 1
+            print(json.dumps(uvloop.run(reset_setup(settings))))
         elif args.command == "settings":
             result = uvloop.run(import_policies(settings, args.file, dry_run=args.dry_run))
             print(json.dumps(result, default=str))
@@ -112,12 +123,12 @@ def main() -> int:
         print(
             f"Invalid configuration fields: {fields}. Check the selected profile.", file=sys.stderr
         )
-    except (BootstrapRejected, ProvisioningError) as exc:
+    except ProvisioningError as exc:
         print(str(exc), file=sys.stderr)
     except PolicyRejected as exc:
         print(f"Policy file rejected, nothing was written: {exc}", file=sys.stderr)
     except ServiceError as exc:
-        print(f"Policy import stopped ({exc.code}): {exc}", file=sys.stderr)
+        print(f"Command stopped ({exc.code}): {exc}", file=sys.stderr)
     except OSError as exc:
         print(f"Cannot read the policy file ({type(exc).__name__}).", file=sys.stderr)
     except KeyboardInterrupt:

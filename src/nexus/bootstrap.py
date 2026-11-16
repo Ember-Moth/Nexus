@@ -229,8 +229,11 @@ class Application:
             environment=settings.environment,
             provider_transport=ProviderHttp(),
             public_base_url=settings.payment_public_base_url,
-            return_url=settings.payment_return_url,
+            console_url=self._console_url,
         )
+
+    async def _console_url(self):
+        return (await self.identity.site()).console_url
 
     async def metrics(self, token):
         await self.identity.require_platform_admin(token)

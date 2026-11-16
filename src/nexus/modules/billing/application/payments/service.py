@@ -35,7 +35,7 @@ class PaymentService:
         *,
         policy,
         public_base_url,
-        return_url,
+        console_url,
     ):
         self._transactions, self._access, self._cipher, self._registry, self._limits = (
             transactions,
@@ -44,7 +44,7 @@ class PaymentService:
             registry,
             limits,
         )
-        self._public_base_url, self._return_url = public_base_url, return_url
+        self._public_base_url, self._console_url = public_base_url, console_url
         self._policy = policy
 
     async def gateway_types(self, token):
@@ -272,10 +272,15 @@ class PaymentService:
 
     async def create_order(self, token, org_id, body, key):
         scope = await self._access.authorize(token, org_id, operation="payment")
-        if not self._public_base_url or not self._return_url:
+        console = await self._console_url()
+        if not self._public_base_url or not console:
             raise ServiceError(
-                "payment_endpoints_unconfigured", "Server payment endpoints must be configured", 503
+                "payment_endpoints_unconfigured",
+                "Configure the payment callback base URL and the console URL of the site",
+                503,
             )
+        # The payer comes back to this organization's recharge page in the console.
+        return_url = f"{console}/o/{org_id}/recharge"
         async with self._transactions() as repo:
             action = f"{org_id}:payment-order:create"
             old, kd, rd = await replay(
@@ -328,7 +333,7 @@ class PaymentService:
                     "currency": body.currency,
                     "created_by": scope.actor_id,
                     "callback_url": callback_url,
-                    "return_url": self._return_url,
+                    "return_url": return_url,
                     "expires_at": await repo.now() + timedelta(minutes=30),
                 },
             )

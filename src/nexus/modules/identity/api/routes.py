@@ -42,7 +42,12 @@ from ..application.schemas import (
     RegistrationCreated,
     RequestAccepted,
     SessionCreated,
+    SetupCompletion,
+    SetupEmail,
     SetupIssued,
+    SetupStatus,
+    SiteInfo,
+    SitePolicyView,
     UserCreate,
     UserView,
     VerificationPending,
@@ -206,6 +211,80 @@ def create_router(
     @router.get("/me", response_model=CurrentUser)
     async def me(token: Token, service: Service):
         return await service.me(token)
+
+    @router.get("/setup", response_model=SetupStatus)
+    async def setup_status(token: Token, service: Service):
+        """Whether the built-in administrator still has to complete the setup wizard.
+
+        Open to every signed-in account, also while the rest of the API is locked.
+        """
+        return await service.setup_status(token)
+
+    @router.post(
+        "/setup/email-verification",
+        status_code=202,
+        response_model=RequestAccepted,
+        responses=business_errors(
+            "unauthorized",
+            "forbidden",
+            "setup_completed",
+            "invalid_email",
+            "email_reserved",
+            "email_in_use",
+            "mail_unavailable",
+            "rate_limited",
+            "authentication_unavailable",
+        ),
+    )
+    async def setup_email(body: SetupEmail, token: Token, service: Service, request: Request):
+        """Mail a token proving the built-in administrator's new address (wizard step 2)."""
+        await service.request_setup_email(token, body.email, peer(request))
+        return RequestAccepted()
+
+    @router.post(
+        "/setup",
+        response_model=SetupStatus,
+        responses=business_errors(
+            "unauthorized",
+            "forbidden",
+            "setup_completed",
+            "invalid_email",
+            "email_reserved",
+            "email_in_use",
+            "invalid_password",
+            "email_verification_required",
+            "invalid_verification_token",
+            "policy_managed_externally",
+            "authentication_unavailable",
+        ),
+    )
+    async def complete_setup(body: SetupCompletion, token: Token, service: Service):
+        """Finish the wizard in one transaction; only the built-in administrator may call it.
+
+        Stores the site details, the new address (verified when mail is configured) and the new
+        password, marks setup complete and revokes every other session of the administrator.
+        The calling session stays valid. A second submission answers 409 setup_completed.
+        """
+        return await service.complete_setup(token, body)
+
+    @router.get("/settings/site", response_model=SitePolicyView)
+    async def site_policy(service: Service, token: Token, response: Response):
+        """Site name, public console address and contact email; platform administrators only."""
+        result = await service.site_policy(token)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.put(
+        "/settings/site",
+        response_model=SitePolicyView,
+        responses=business_errors("version_conflict", "policy_managed_externally"),
+    )
+    async def update_site_policy(
+        body: SiteInfo, service: Service, token: Token, version: Version, response: Response
+    ):
+        result = await service.update_site_policy(token, body, version)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
 
     @router.post("/users", response_model=SetupIssued, status_code=201, responses=CONFLICT)
     async def create_user(body: UserCreate, token: Token, service: Service):

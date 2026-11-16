@@ -27,8 +27,10 @@ class EmailAuthentication:
 
     async def public_options(self):
         policy = await self._read_policy()
+        # Self-service registration stays closed until setup is complete.
+        site = await self.site()
         return PublicAuthOptions(
-            registration=policy.registration,
+            registration=policy.registration and site.setup_completed_at is not None,
             email_verification=policy.email_verification,
             turnstile=policy.turnstile,
             turnstile_site_key=self.providers.site_key if policy.turnstile else None,
@@ -199,6 +201,7 @@ class EmailAuthentication:
 
     async def register(self, body, peer):
         # Closed registration answers before any other check, identically for every input.
+        await self.require_setup_complete()
         policy = await self._read_policy()
         if not policy.registration:
             raise registration_unavailable()
@@ -288,6 +291,7 @@ class EmailAuthentication:
             await tx.audit.record(actor.user.id, "user.email_verified", actor.user.id)
 
     async def forgot(self, body, peer):
+        await self.require_setup_complete()
         address = mailbox(body.email)
         await self._throttle("forgot:" + peer, peer)
         version = await self.guard("forgot_password", body.turnstile_token)
@@ -359,7 +363,10 @@ class EmailAuthentication:
             token = self.cipher.decrypt(
                 job["ciphertext"], job["user_id"] or job["id"], job["id"], job["key_version"]
             )
-            status = await self.providers.send(job["email"], job["purpose"], token, job["id"])
+            site_name = (await self.site()).site_name
+            status = await self.providers.send(
+                job["email"], job["purpose"], token, job["id"], site_name=site_name
+            )
         except MailRejected as error:
             # The provider answered and refused this message. Retrying cannot help, and the
             # provider itself is reachable, so the worker stays ready.

@@ -278,7 +278,7 @@ async def test_registration_is_closed_by_default_and_answers_uniformly(delivery,
         await client.post(API + "/auth/registrations", json=body)
         for body in [
             {"login": "brand-new@example.com", "password": PASSWORD},
-            {"login": "root-admin", "email": "root@example.com", "password": PASSWORD},
+            {"login": "root-member", "email": "root@example.com", "password": PASSWORD},
             {"login": "admin", "email": "x@example.com", "password": PASSWORD},
             {"login": "not-an-email", "password": PASSWORD},
         ]
@@ -314,6 +314,7 @@ async def test_registration_is_closed_by_default_and_answers_uniformly(delivery,
 
 async def test_registration_does_not_disclose_taken_logins(delivery, admin):
     client, root, mail, messages, _ = delivery
+    await create_user(client, root, "root-member")
     await open_registration(client, root)
     hashes = count_hashes(mail)
     responses = [
@@ -322,8 +323,8 @@ async def test_registration_does_not_disclose_taken_logins(delivery, admin):
             json={"login": name, "email": address, "password": PASSWORD},
         )
         for name, address in [
-            ("root-admin", "taken@example.com"),
-            ("ＲＯＯＴ-ＡＤＭＩＮ", "taken-variant@example.com"),
+            ("root-member", "taken@example.com"),
+            ("ＲＯＯＴ-ＭＥＭＢＥＲ", "taken-variant@example.com"),
             ("fresh-member", "fresh@example.com"),
         ]
     ]
@@ -423,8 +424,8 @@ async def test_account_ip_and_global_mail_budgets(http, admin):
         ),
     ):
         install_mail(app.state.identity_service, settings)
-        await app.state.identity_service.bootstrap_admin("root-admin", PASSWORD)
-        root = await login(first, "root-admin")
+        # The http fixture already completed the setup wizard in this database.
+        root = await login(first)
         await put_policy(
             first,
             root,
@@ -486,9 +487,11 @@ async def test_backlogged_mail_is_still_delivered_and_redeemable(delivery, admin
 
 async def test_platform_roles_recover_through_administrators_not_email(delivery, admin):
     client, root, mail, messages, _ = delivery
-    root_id = admin.execute("SELECT id FROM identity.users WHERE login='root-admin'").fetchone()[0]
+    root_id = admin.execute("SELECT id FROM identity.users WHERE login='admin'").fetchone()[0]
     admin.execute(
-        "UPDATE identity.users SET verified_email='root@example.com' WHERE id=%s", (root_id,)
+        "UPDATE identity.users SET verified_email='root@example.com',unverified_email=NULL "
+        "WHERE id=%s",
+        (root_id,),
     )
     forgot = await client.post(API + "/auth/password/forgot", json={"email": "root@example.com"})
     assert forgot.status_code == 202 and forgot.json() == {"accepted": True}

@@ -118,21 +118,23 @@ class AuthProviders:
             return next(iter(error.recipients.values()))[0]
         return None
 
-    async def send(self, recipient, purpose, token, delivery_id):
+    async def send(self, recipient, purpose, token, delivery_id, *, site_name="Nexus"):
         if not self.mail_ready:
             raise RuntimeError("Identity mail provider unavailable")
+        # The site name comes from the site policy, which only administrators and policy files
+        # write; it is never text the requester typed.
         subject = {
-            "register": "Confirm your Nexus registration",
-            "bind": "Verify your Nexus email",
-            "reset": "Reset your Nexus password",
-            "exists": "Your Nexus registration request",
-        }[purpose]
+            "register": "Confirm your {} registration",
+            "bind": "Verify your {} email",
+            "reset": "Reset your {} password",
+            "exists": "Your {} registration request",
+        }[purpose].format(site_name)
         if purpose == "exists":
             # Fixed text with no token and nothing the requester typed.
             body = (
-                f"{subject}\n\nSomeone asked to register a Nexus account with this address, "
-                "but the requested login is already taken. If this was you, sign in or reset "
-                "your password instead. Otherwise you can ignore this message.\n"
+                f"{subject}\n\nSomeone asked to register a {site_name} account with this "
+                "address, but the requested login is already taken. If this was you, sign in or "
+                "reset your password instead. Otherwise you can ignore this message.\n"
             )
         else:
             body = f"{subject}\n\nUse this one-time token within 15 minutes:\n\n{token}\n"

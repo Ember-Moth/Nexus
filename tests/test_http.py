@@ -25,7 +25,6 @@ async def test_liveness_does_not_claim_dependency_readiness():
         assert response.status_code == 503
         assert response.json()["status"] == "not_ready"
         assert (await client.get("/docs")).status_code == 404
-        assert (await client.post("/api/v1/bootstrap-admin")).status_code == 404
 
 
 async def test_unexpected_errors_do_not_escape_or_echo_secrets(caplog):
@@ -54,8 +53,8 @@ async def test_unexpected_errors_do_not_escape_or_echo_secrets(caplog):
     assert response.headers["cache-control"] == "no-store"
 
 
-async def test_error_bodies_match_the_declared_envelopes(settings_factory):
-    app = create_app(settings_factory())
+async def test_error_bodies_match_the_declared_envelopes(settings_factory, completed_setup):
+    app = completed_setup(create_app(settings_factory()))
     app.state.routing = app.state.publication = object()  # rejected before any service call
     spec = app.openapi()
     responses = spec["paths"]["/api/v1/route-policies"]["post"]["responses"]

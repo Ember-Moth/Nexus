@@ -55,7 +55,7 @@ ERROR_DESCRIPTIONS = {
     401: "Session is missing, expired or revoked",
     403: "Caller may not perform this operation",
     404: "Resource does not exist or is not visible to the caller",
-    409: "Idempotency key reuse, state transition or resource conflict",
+    409: "Idempotency key reuse, state transition, resource conflict or setup not completed",
     410: "Invitation has expired",
     412: "If-Match does not match the current resource version",
     422: "Request is malformed or violates a business rule",
@@ -122,11 +122,14 @@ def _error_statuses(operation: dict[str, Any]) -> set[int]:
     return statuses
 
 
-def declare_error_responses(openapi: dict[str, Any]) -> dict[str, Any]:
+def declare_error_responses(
+    openapi: dict[str, Any], *, setup_open: Callable[[str, str], bool] | None = None
+) -> dict[str, Any]:
     """Add the error envelope for the failures each operation's inputs imply.
 
     FastAPI's default 422 schema describes its own validation body, which the API replaces with
-    the shared envelope, so 422 is always rewritten.
+    the shared envelope, so 422 is always rewritten. Operations that ``setup_open`` does not
+    list answer 409 ``setup_required`` until the setup wizard is complete.
     """
     schemas = openapi.setdefault("components", {}).setdefault("schemas", {})
     for model in (ErrorResponse, ValidationErrorResponse):
@@ -137,17 +140,20 @@ def declare_error_responses(openapi: dict[str, Any]) -> dict[str, Any]:
     openapi["x-error-catalog"] = {
         code: [guide.model_dump() for guide in guides] for code, guides in error_catalog().items()
     }
-    for item in openapi.get("paths", {}).values():
+    for path, item in openapi.get("paths", {}).items():
         for method, operation in item.items():
             if method not in {"get", "put", "post", "patch", "delete"}:
                 continue
             responses = operation.setdefault("responses", {})
-            for status in _error_statuses(operation):
+            locked = setup_open is not None and not setup_open(method.upper(), path)
+            for status in _error_statuses(operation) | ({409} if locked else set()):
                 if status == 422 and str(status) in responses:
                     responses[str(status)]["description"] = ERROR_DESCRIPTIONS[status]
                 if str(status) not in responses:
                     responses[str(status)] = {"description": ERROR_DESCRIPTIONS[status]}
             shared = {"internal_error", "validation_error", "storage_unavailable"}
+            if locked:
+                shared.add("setup_required")
             if operation.get("security"):
                 shared.update({"unauthorized", "forbidden"})
             for parameter in operation.get("parameters", []):

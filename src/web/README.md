@@ -23,7 +23,6 @@ Nexus 控制平面的管理后台。浏览器只和本应用同源通信，由 N
 uv sync --locked
 LC_ALL=en_US.UTF-8 uv run python scripts/dev_services.py start   # macOS 需设置 LC_ALL，否则 PostgreSQL 报 "postmaster became multithreaded"
 uv run nexus --env-file .env.migrate migrate
-uv run nexus --env-file .env.api bootstrap-admin --login admin
 uv run nexus --env-file .env.api api        # 127.0.0.1:8000，开发环境开放 /openapi.json
 uv run nexus --env-file .env.worker worker  # 开户、导出、支付查单依赖 Worker
 ```
@@ -38,7 +37,7 @@ pnpm install
 pnpm dev                     # http://localhost:3000
 ```
 
-用 `bootstrap-admin` 创建的账号登录。可选：给本地 API 准备演示数据（授予管理员 `platform_finance`、创建“演示企业”、人工入账 USD 1000.00）：
+用内置管理员 `admin@example.com`（或登录名 `admin`）和密码 `password` 登录，按 `/setup` 向导填写站点信息、换成自己的邮箱和新密码，之后用新密码登录（[初始管理员](../../docs/development.md#初始管理员)）。可选：给本地 API 准备演示数据（授予管理员 `platform_finance`、创建“演示企业”、人工入账 USD 1000.00）：
 
 ```sh
 NEXUS_API_URL=http://127.0.0.1:8000 NEXUS_ADMIN_PASSWORD_FILE=<存放管理员密码的文件> pnpm dev:seed
@@ -79,6 +78,7 @@ BFF 把地址放进 `X-Nexus-Client-IP`，并附上 `X-Nexus-Client-IP-Signature
 - **401 的区分**：API 对“请求体里的令牌无效”（邮箱验证令牌、邀请令牌）和“会话失效”都返回 401 `unauthorized`。代理收到 401 时用同一 token 探测 `GET /me`：会话仍有效则保留 Cookie 并加 `X-Nexus-Session-Valid: 1`，前端不登出、只显示“令牌无效”；否则清除 Cookie，前端回到登录页。
 - **公共认证路由**（`src/lib/server/public-auth.ts`）：同样校验 Origin，按白名单转发请求体，转发头由 `authRequestHeaders()` 生成（客户端 IP 等，见 `src/lib/server/auth-headers.ts`）；注册成功时从响应中取出 `access_token` 写入 Cookie，响应体不含 token。
 - **退出**：`DELETE /api/session` 调用 `DELETE /auth/sessions/current` 撤销服务端会话，并无条件清除 Cookie。
+- 初始化：控制台布局里的 `SetupGuard` 先读 `GET /api/v1/setup`，需要初始化时转到 `/setup`；API 客户端遇到 409 `setup_required` 也会转过去。真正的锁在 API，这里只负责导航。
 - `src/proxy.ts` 只负责把没有会话 Cookie 的页面访问重定向到 `/login?next=…`（`/login`、`/setup-password`、`/register`、`/forgot-password`、`/reset-password` 公开）；授权仍由 BFF 和 API 逐个请求判断。
 - **Turnstile**：`/auth/options` 返回 `turnstile: true` 时，登录、注册、找回和重置密码表单显式渲染 Cloudflare Turnstile，令牌随请求提交，失败后重置组件。
 - 安全响应头见 `next.config.ts`（`X-Frame-Options: DENY` 等）。Cache Components 保持关闭：页面都依赖会话，且路由保活会让一次性显示的 Key 明文在离开页面后仍留在 DOM 中。
@@ -124,7 +124,8 @@ pnpm api:types:check                                 # CI：生成结果必须�
 
 | 页面 | 状态 | 说明 |
 | --- | --- | --- |
-| 登录 `/login` | 已完成 | 登录名/密码错误（含追踪 ID）、429、会话过期提示、`next` 跳转、语言切换；Turnstile 开启时渲染组件；“忘记密码”“注册账号”入口 |
+| 登录 `/login` | 已完成 | 登录名或邮箱加密码；错误（含追踪 ID）、429、会话过期提示、`next` 跳转、语言切换；Turnstile 开启时渲染组件；“忘记密码”“注册账号”入口。不展示默认账号 |
+| 初始化 `/setup` | 已实现 | 内置管理员首次登录后的三步向导：站点信息、管理员邮箱（配置了发信时先发送并填写验证令牌，否则提示邮箱将记为未验证）、新密码；一次提交。初始化完成前，控制台所有路由都转到这里，任何接口返回 409 `setup_required` 时也会转来；完成后访问 `/setup` 回到首页。其他账号只看到“需要内置管理员完成初始化” |
 | 设置密码 `/setup-password` | 已完成 | 兑换一次性凭据 |
 | 注册 `/register` | 已实现 | 按 `/auth/options.registration` 显示：关闭时只显示“当前不开放自助注册”，登录页同时隐藏注册入口；开放时邮箱必填，提交后进入“请查收验证邮件”（202）。已在浏览器验证关闭和开放两种状态；本地没有发信渠道，开放状态提交得到 `mail_unavailable`，202 之后的步骤未走通 |
 | 完成注册 `/register/verify` | 已实现 | 令牌可从 `?token=` 带入或粘贴；本地没有发信渠道，只验证了无效令牌提示 |
@@ -171,7 +172,7 @@ pnpm api:types:check                                 # CI：生成结果必须�
 | 集群与发布 `clusters` | 已完成 | 新建与编辑：企业范围（指定企业 / 全部企业 / 全部个人企业）、自动发布开关、启停、轮换公钥；列表显示自动发布状态；详情页“自动发布”卡片显示最近一次自动发布及触发来源、最近一次失败的错误码与原因、回滚后的暂停与“恢复自动发布”；登记节点；手动发布或回滚（回滚前提示会暂停自动发布）；发布历史按 `initiator` 标出“系统（自动发布器）”。已在浏览器走通：开启自动发布 → 新 Key 触发自动发布 r2 → 回滚 r3 暂停 → 恢复后自动发布 r4；`personal` 范围缺少路由时显示失败原因 |
 | 审计事件 `audit` | 已完成 | 按企业、动作、追踪 ID 筛选，操作人与企业显示名称 |
 | 运行指标 `metrics` | 已完成 | 经 `GET /api/metrics`（仅平台管理员）读取 `/internal/metrics`，按 API 请求、数据库、发布、用量、支付、异常分组，15 秒刷新 |
-| 设置 `settings` | 已完成 | 按模块分 Tab：身份（`/settings/authentication` 的限额、有效期、保留登录名）、计费（`/settings/billing`，含出现账务数据前可改的币种）、报表（`/settings/reporting`）、资源配额（`/settings/resource-quotas`）、网关集群（`/settings/cluster-defaults` 默认值和 `/gateway-clusters/{id}/policy` 覆盖，留空跟随默认值）。均为整资源 PUT + If-Match，412 时提示重新加载；被策略文件锁定的组只读并显示文件摘要 |
+| 设置 `settings` | 已完成 | 按模块分 Tab：站点（`/settings/site` 的站点名称、控制台地址、联系邮箱，显示初始化完成时间）、身份（`/settings/authentication` 的限额、有效期、保留登录名）、计费（`/settings/billing`，含出现账务数据前可改的币种）、报表（`/settings/reporting`）、资源配额（`/settings/resource-quotas`）、网关集群（`/settings/cluster-defaults` 默认值和 `/gateway-clusters/{id}/policy` 覆盖，留空跟随默认值）。均为整资源 PUT + If-Match，412 时提示重新加载；被策略文件锁定的组只读并显示文件摘要 |
 
 ### 本地联调准备
 

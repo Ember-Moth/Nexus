@@ -44,6 +44,25 @@ export function onUnauthorized(listener: UnauthorizedListener): () => void {
   };
 }
 
+type SetupListener = () => void;
+const setupListeners = new Set<SetupListener>();
+
+/**
+ * The console sends the user to the setup wizard when the API answers 409 setup_required: the
+ * built-in administrator has not finished setup, or an operator ran `nexus setup reset`.
+ */
+export function onSetupRequired(listener: SetupListener): () => void {
+  setupListeners.add(listener);
+  return () => {
+    setupListeners.delete(listener);
+  };
+}
+
+async function announceSetupRequired(response: Response) {
+  const body = (await response.json().catch(() => null)) as { error?: { code?: string } } | null;
+  if (body?.error?.code === "setup_required") setupListeners.forEach((listener) => listener());
+}
+
 const csrfMiddleware: Middleware = {
   async onRequest({ request }) {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -57,6 +76,7 @@ const csrfMiddleware: Middleware = {
       csrfToken = null;
       unauthorizedListeners.forEach((listener) => listener());
     }
+    if (response.status === 409) void announceSetupRequired(response.clone());
     return response;
   },
 };

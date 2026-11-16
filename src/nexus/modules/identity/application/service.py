@@ -1,11 +1,11 @@
 import asyncio
 import secrets
 from datetime import timedelta
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from nexus.shared.errors import BootstrapRejected
 from nexus.shared.policy import CachedPolicy
 
+from ..domain.email import mailbox
 from ..domain.errors import IdentityError, forbidden, missing, unauthorized
 from ..domain.logins import login_candidates, new_login
 from ..domain.tokens import digest_token
@@ -13,7 +13,6 @@ from .authorization import AccessControl
 from .email_auth import EmailAuthentication
 from .ports import AuthLimits, Cursor, MailLimits, Passwords, TransactionFactory
 from .schemas import (
-    BootstrapResult,
     CurrentUser,
     FinancialAccess,
     InvitationIssued,
@@ -24,9 +23,20 @@ from .schemas import (
     SessionCreated,
     SetupIssued,
 )
+from .setup import SiteSetup
 
 
-class IdentityService(EmailAuthentication):
+def email_spelling(value: str) -> str | None:
+    """The address a sign-in input names, if it names one."""
+    if "@" not in value:
+        return None
+    try:
+        return mailbox(value)
+    except IdentityError:
+        return None
+
+
+class IdentityService(EmailAuthentication, SiteSetup):
     async def platform_roles(self, token, user_id):
         async with self._access.authenticated(token) as (tx, actor):
             self._access.platform_admin(actor)
@@ -37,7 +47,7 @@ class IdentityService(EmailAuthentication):
 
     async def update_platform_roles(self, token, user_id, body, version):
         async with self._access.authenticated(token) as (tx, actor):
-            await tx.administrators.lock_bootstrap()
+            await tx.administrators.lock_platform_roles()
             actor = await self._access._actor(tx, digest_token(token, "nxs_"))
             self._access.platform_admin(actor)
             user = await tx.directory.user(user_id, lock=True)
@@ -196,6 +206,8 @@ class IdentityService(EmailAuthentication):
         self._mail_limits = mail_limits
         # Limits, lifetimes and reserved logins; the switches are always read fresh.
         self._settings = CachedPolicy(self._read_policy)
+        # Site description and whether the setup wizard has been completed.
+        self._site = CachedPolicy(self._read_site)
         # Sign-in has its own Argon2 slots: a flood of sign-ups, resets or mailbox proofs can
         # only queue behind each other.
         self._login_slots = asyncio.Semaphore(login_hash_slots)
@@ -258,8 +270,12 @@ class IdentityService(EmailAuthentication):
         # Every spelling of an account shares its canonical bucket.
         await self._throttle("login:" + candidates[0], peer)
         version = await self.guard("login", turnstile_token)
+        address = email_spelling(login)
         async with self._transactions() as tx:
             credentials = await tx.directory.credentials(*candidates)
+            # A login name wins over an address with the same spelling.
+            if credentials is None and address is not None:
+                credentials = await tx.directory.credentials_by_email(address)
         password_hash = (
             credentials[1] if credentials and credentials[0].status == "active" else None
         )
@@ -290,8 +306,10 @@ class IdentityService(EmailAuthentication):
 
     async def me(self, token: str) -> CurrentUser:
         async with self._access.authenticated(token) as (tx, actor):
+            verified, unverified = await tx.email.addresses(actor.user.id)
             return CurrentUser(
-                verified_email=await tx.email.verified(actor.user.id),
+                verified_email=verified,
+                unverified_email=unverified,
                 personal_organization_id=await tx.directory.personal_org_id(actor.user.id),
                 user=actor.user,
                 platform_roles=sorted(actor.platform_roles),
@@ -560,28 +578,3 @@ class IdentityService(EmailAuthentication):
                     details={"role": member.role},
                 )
             return member
-
-    async def bootstrap_admin(self, login: str, password: str) -> BootstrapResult:
-        legacy = login.strip().lower()
-        try:
-            login = new_login(login)
-        except IdentityError as error:
-            message = str(error)
-            raise BootstrapRejected(message[0].lower() + message[1:]) from None
-        if not 16 <= len(password) <= 1024:
-            raise BootstrapRejected("administrator password must contain 16-1024 characters")
-        # CPU work is performed outside both the event loop and the database transaction.
-        password_hash = await asyncio.to_thread(self._passwords.hash, password)
-        async with self._transactions() as tx:
-            await tx.administrators.lock_bootstrap()
-            existing = await tx.administrators.first_admin()
-            if existing is not None:
-                if existing[1] not in {login, legacy}:
-                    raise BootstrapRejected("an administrator already exists")
-                return BootstrapResult(existing[0], created=False)
-            if await tx.administrators.login_exists(login):
-                raise BootstrapRejected("existing users cannot be promoted by bootstrap")
-            user_id = uuid4()
-            await tx.administrators.create(user_id, login, password_hash)
-            await tx.audit.record_bootstrap(user_id)
-            return BootstrapResult(user_id, created=True)

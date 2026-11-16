@@ -29,8 +29,9 @@ export interface PolicyField {
   path: string;
   label: MessageKey;
   hint?: MessageKey;
-  kind: "int" | "float" | "bool" | "lines" | "select" | "currency";
+  kind: "int" | "float" | "bool" | "lines" | "select" | "currency" | "text";
   min?: number;
+  /** The largest number, or the most characters of a text field. */
   max?: number;
   /** An empty value is sent as null (a cluster override that follows the default). */
   optional?: boolean;
@@ -43,7 +44,7 @@ export interface PolicyGroup {
 }
 
 /** Response fields that are not part of the PUT body. */
-const READ_ONLY = new Set(["version", "managed", "cluster_id", "effective", "overrides"]);
+const READ_ONLY = new Set(["version", "managed", "cluster_id", "effective", "overrides", "setup_completed_at"]);
 
 function read(view: Json, path: string): unknown {
   return path.split(".").reduce<unknown>((value, key) => (value as Json | undefined)?.[key], view);
@@ -82,6 +83,7 @@ function parsed(field: PolicyField, raw: string | boolean): { value: unknown; va
   const text = String(raw).trim();
   if (field.kind === "currency") return { value: text, valid: /^[A-Z]{3}$/.test(text) };
   if (field.optional && text === "") return { value: null, valid: true };
+  if (field.kind === "text") return { value: text, valid: text !== "" && text.length <= (field.max ?? 1000) };
   const pattern = field.kind === "int" ? /^\d+$/ : /^\d+(\.\d+)?$/;
   const number = pattern.test(text) ? Number(text) : NaN;
   const valid =
@@ -252,7 +254,9 @@ function PolicyForm<T>({
               const error = invalid
                 ? field.kind === "currency"
                   ? t("st.invalidCurrency")
-                  : t("st.invalid", { min: field.min ?? 0, max: (field.max ?? 0).toLocaleString() })
+                  : field.kind === "text"
+                    ? t("st.invalidText", { max: field.max ?? 1000 })
+                    : t("st.invalid", { min: field.min ?? 0, max: (field.max ?? 0).toLocaleString() })
                 : undefined;
               if (field.kind === "bool") {
                 return (
@@ -316,7 +320,7 @@ function PolicyForm<T>({
                       set(field.path, field.kind === "currency" ? event.target.value.toUpperCase() : event.target.value)
                     }
                     aria-invalid={invalid || undefined}
-                    className={field.kind === "currency" ? "font-mono uppercase" : "tabular-nums"}
+                    className={field.kind === "currency" ? "font-mono uppercase" : field.kind === "text" ? undefined : "tabular-nums"}
                   />
                 </Field>
               );

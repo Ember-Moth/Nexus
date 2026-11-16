@@ -4,7 +4,7 @@ from datetime import datetime
 from types import TracebackType
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, exists, func, select, text, tuple_, update
+from sqlalchemy import delete, exists, func, or_, select, text, tuple_, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,12 @@ from ..application.schemas import (
 )
 from ..domain.errors import IdentityError
 from ..domain.events import ORGANIZATION_CREATED, ORGANIZATION_CREATED_VERSION
+from ..domain.setup import (
+    BUILTIN_ADMIN_ID,
+    BUILTIN_ADMIN_LOGIN,
+    DEFAULT_ADMIN_EMAIL,
+    DEFAULT_ADMIN_PASSWORD_HASH,
+)
 from .email import EmailRepository
 from .models import (
     AdminSession,
@@ -38,6 +44,7 @@ from .models import (
 )
 from .policies import PolicyRepository
 from .projects import ApplicationRepository
+from .site import SiteRepository
 
 
 def view(kind, row):
@@ -61,6 +68,35 @@ class DirectoryRepository:
         }
         row = next((rows[login] for login in logins if login in rows), None)
         return (view(UserView, row), row.password_hash) if row else None
+
+    async def credentials_by_email(self, address: str):
+        """The account that signs in with this address; a proven address wins over a claimed one."""
+        row = (
+            (
+                await self._session.execute(
+                    select(User)
+                    .where(or_(User.verified_email == address, User.unverified_email == address))
+                    .order_by((User.verified_email == address).desc().nulls_last())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        return (view(UserView, row), row.password_hash) if row else None
+
+    async def email_taken(self, address: str, user_id: UUID) -> bool:
+        """Whether another account signs in with this address."""
+        return (
+            await self._session.execute(
+                select(
+                    exists().where(
+                        or_(User.verified_email == address, User.unverified_email == address),
+                        User.id != user_id,
+                    )
+                )
+            )
+        ).scalar_one()
 
     async def user(self, user_id: UUID, *, lock: bool = False):
         stmt = select(User).where(User.id == user_id).execution_options(populate_existing=True)
@@ -298,7 +334,11 @@ class DirectoryRepository:
         await self.replace_password(user_id, password_hash)
         return True
 
-    async def replace_password(self, user_id, password_hash):
+    async def replace_password(self, user_id, password_hash, *, keep_session=None):
+        """Store a new password and revoke every credential issued under the old one.
+
+        ``keep_session`` survives: the session that just proved the change.
+        """
         await self._session.execute(
             update(PasswordToken)
             .where(PasswordToken.user_id == user_id, PasswordToken.revoked_at.is_(None))
@@ -310,11 +350,38 @@ class DirectoryRepository:
             .where(User.id == user_id)
             .values(password_hash=password_hash, status="active")
         )
+        sessions = [AdminSession.user_id == user_id, AdminSession.revoked_at.is_(None)]
+        if keep_session is not None:
+            sessions.append(AdminSession.id != keep_session)
         await self._session.execute(
-            update(AdminSession)
-            .where(AdminSession.user_id == user_id, AdminSession.revoked_at.is_(None))
-            .values(revoked_at=func.clock_timestamp())
+            update(AdminSession).where(*sessions).values(revoked_at=func.clock_timestamp())
         )
+
+    async def restore_builtin_admin(self) -> None:
+        """Default login, address and password, platform_admin, and no live credentials."""
+        await self._session.execute(
+            text("""
+            INSERT INTO identity.users(id,login,password_hash,status,unverified_email)
+            VALUES(:id,:login,:hash,'active',:email)
+            ON CONFLICT (id) DO UPDATE SET password_hash=EXCLUDED.password_hash,
+                status='active',verified_email=NULL,unverified_email=EXCLUDED.unverified_email,
+                version=identity.users.version+1
+            """),
+            {
+                "id": BUILTIN_ADMIN_ID,
+                "login": BUILTIN_ADMIN_LOGIN,
+                "hash": DEFAULT_ADMIN_PASSWORD_HASH,
+                "email": DEFAULT_ADMIN_EMAIL,
+            },
+        )
+        await self._session.execute(
+            text(
+                "INSERT INTO identity.platform_role_bindings(user_id,role) "
+                "VALUES(:id,'platform_admin') ON CONFLICT DO NOTHING"
+            ),
+            {"id": BUILTIN_ADMIN_ID},
+        )
+        await self.replace_password(BUILTIN_ADMIN_ID, DEFAULT_ADMIN_PASSWORD_HASH)
 
     async def personal_org_id(self, user_id):
         return (
@@ -595,45 +662,19 @@ class AdministratorRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def lock_bootstrap(self) -> None:
+    async def lock_platform_roles(self) -> None:
+        """Serializes platform role changes, so two cannot both remove "another" administrator."""
         await self._session.execute(text("SELECT pg_advisory_xact_lock(336170374483)"))
-
-    async def first_admin(self) -> tuple[UUID, str] | None:
-        row = (
-            await self._session.execute(
-                select(User.id, User.login)
-                .join(PlatformRole, PlatformRole.user_id == User.id)
-                .where(PlatformRole.role == "platform_admin")
-                .limit(1)
-            )
-        ).first()
-        return (row[0], row[1]) if row else None
 
     async def login_exists(self, login: str) -> bool:
         return (
             await self._session.execute(select(User.id).where(User.login == login))
         ).first() is not None
 
-    async def create(self, user_id: UUID, login: str, password_hash: str) -> None:
-        self._session.add(User(id=user_id, login=login, password_hash=password_hash))
-        await self._session.flush()
-        self._session.add(PlatformRole(user_id=user_id, role="platform_admin"))
-
 
 class AuditRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
-
-    async def record_bootstrap(self, user_id: UUID) -> None:
-        self._session.add(
-            AuditEvent(
-                id=uuid4(),
-                actor_type="system",
-                action="administrator.bootstrapped",
-                resource_id=user_id,
-                details={"source": "bootstrap_cli"},
-            )
-        )
 
     async def record_system(self, action: str, resource_id: UUID, details: dict) -> None:
         """An operator command run outside any session, such as a settings import."""
@@ -674,7 +715,7 @@ def integrity_conflict(error):
     constraint = getattr(diagnostic, "constraint_name", None)
     if constraint == "users_login_key":
         return IdentityError("login_in_use", "Login is already in use", 409)
-    if constraint == "users_verified_email_key":
+    if constraint in {"users_verified_email_key", "users_unverified_email_key"}:
         return IdentityError("email_in_use", "Email is already bound to an account", 409)
     return IdentityError("conflict", "Resource already exists or conflicts with current state", 409)
 
@@ -696,6 +737,7 @@ class IdentityUnitOfWork:
         self.email = EmailRepository(session)
         self.applications = ApplicationRepository(session)
         self.policies = PolicyRepository(session)
+        self.site = SiteRepository(session)
         return self
 
     async def __aexit__(

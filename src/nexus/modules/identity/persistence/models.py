@@ -19,6 +19,8 @@ class User(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")
     version: Mapped[int] = mapped_column(default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    verified_email: Mapped[str | None] = mapped_column(String(254), unique=True)
+    unverified_email: Mapped[str | None] = mapped_column(String(254), unique=True)
 
 
 class PlatformRole(Base):

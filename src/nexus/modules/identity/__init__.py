@@ -8,7 +8,6 @@ from nexus.shared.storage import ModuleName
 from .application.model_access import ModelAccessService
 from .application.ports import AuthLimits, MailLimits
 from .application.projects import ProjectService
-from .application.schemas import BootstrapResult
 from .application.service import IdentityService
 from .domain.events import ORGANIZATION_CREATED, ORGANIZATION_CREATED_VERSION
 from .persistence.organizations import create_organization_source
@@ -20,7 +19,6 @@ __all__ = [
     "create_audit_reader",
     "create_identity_source",
     "create_organization_source",
-    "BootstrapResult",
     "IdentityService",
     "ProjectService",
     "ModelAccessService",

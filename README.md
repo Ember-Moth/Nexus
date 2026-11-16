@@ -6,7 +6,7 @@ Nexus 是企业 AI API 的控制平面。平台管理员配置模型、上游和
 
 ## 从本机开始
 
-按[运行指南](docs/development.md)启动 PostgreSQL、Redis 和本地对象存储，迁移数据库，创建第一个平台管理员，再分别启动 API 与 Worker。本机默认地址为 `http://127.0.0.1:8000`。打开 `/docs`，用 `POST /api/v1/auth/sessions` 登录，将返回的 `access_token` 填入 **Authorize**。调用 `GET /api/v1/me` 可确认身份和角色。
+按[运行指南](docs/development.md)启动 PostgreSQL、Redis 和本地对象存储，迁移数据库，再分别启动 API 与 Worker。迁移会创建内置管理员（`admin@example.com` / `password`），首次登录后必须先完成初始化向导，换掉默认邮箱和密码，在此之前管理 API 只接受登录和向导，见[初始管理员](docs/development.md#初始管理员)。本机默认地址为 `http://127.0.0.1:8000`。打开 `/docs`，用 `POST /api/v1/auth/sessions` 登录，将返回的 `access_token` 填入 **Authorize**。调用 `GET /api/v1/me` 可确认身份和角色。
 
 ## 使用与接入
 

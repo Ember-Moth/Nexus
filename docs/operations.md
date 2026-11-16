@@ -339,6 +339,9 @@ Worker 日志事件：`publication.auto_published`，outcome 为 published 或 u
 ```yaml
 version: 1
 groups:
+  identity.site_policy:          # /api/v1/settings/site：站点名称、控制台地址、联系邮箱
+    mode: initial
+    values: {site_name: Acme AI, console_url: "https://console.example.com"}
   identity.auth_policy:          # 与 PUT /api/v1/settings/authentication 的请求体同构
     mode: managed
     values:
@@ -358,7 +361,7 @@ groups:
     values: {relay: {max_attempts: 3}, auto_publish: {quiet_seconds: 5}}
 ```
 
-`values` 可以只写部分字段，没写的字段保持数据库现值。不在文件里的组完全不受影响。单个集群的覆盖值和单个企业的资源数量覆盖属于运行时数据，不进文件。
+`values` 可以只写部分字段，没写的字段保持数据库现值。不在文件里的组完全不受影响。`identity.site_policy` 只接受 `site_name`、`console_url`、`contact_email`：初始化是否完成只由初始化向导和 `nexus setup reset` 改变，文件里出现 `setup_completed_at` 之类的字段会使整个文件被拒绝。初始化向导会把站点信息改成管理员提交的值并推进版本，所以 `initial` 值要在完成向导之前导入（Helm 的导入 Job 在安装时就运行）。单个集群的覆盖值和单个企业的资源数量覆盖属于运行时数据，不进文件。
 
 | 模式 | 写入 | 锁定 |
 | --- | --- | --- |

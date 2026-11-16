@@ -1,15 +1,11 @@
-import asyncio
 import json
 from uuid import uuid4
 
 import pytest
-from argon2 import PasswordHasher
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from nexus.bootstrap import Application
-from nexus.commands import bootstrap
-from nexus.shared.errors import BootstrapRejected
 from nexus.shared.storage import SCHEMA_REVISION, ModuleName
 
 pytestmark = pytest.mark.integration
@@ -45,7 +41,9 @@ async def test_transaction_rolls_back_and_scope_cannot_read_other_schema(runtime
                     {"id": user_id, "login": "rollback-user", "hash": "test-only-hash"},
                 )
                 raise RuntimeError("abort")
-        assert admin.execute("SELECT count(*) FROM identity.users").fetchone()[0] == 0
+        assert admin.execute(
+            "SELECT count(*) FROM identity.users WHERE id=%s", (user_id,)
+        ).fetchone() == (0,)
         with pytest.raises(DBAPIError):
             async with application.database.for_module(ModuleName.BILLING).transaction() as session:
                 await session.execute(text("SELECT id FROM identity.users"))
@@ -59,27 +57,6 @@ async def test_transaction_rolls_back_and_scope_cannot_read_other_schema(runtime
         assert all(value == "ok" for value in (await application.readiness()).values())
     finally:
         await application.close()
-
-
-async def test_bootstrap_is_atomic_concurrent_and_does_not_reset_password(runtime_settings, admin):
-    password = "test-initial-password-at-least-16"
-    results = await asyncio.gather(
-        *(bootstrap(runtime_settings, "FIRST-ADMIN", password) for _ in range(2))
-    )
-    assert sum(result["created"] for result in results) == 1
-    assert len({result["user_id"] for result in results}) == 1
-    stored = admin.execute("SELECT login, password_hash FROM identity.users").fetchone()
-    assert stored[0] == "first-admin"
-    assert PasswordHasher().verify(stored[1], password)
-    again = await bootstrap(runtime_settings, "first-admin", "a-different-password-at-least-16")
-    assert again["created"] is False
-    assert admin.execute("SELECT password_hash FROM identity.users").fetchone()[0] == stored[1]
-    assert admin.execute("SELECT role FROM identity.platform_role_bindings").fetchall() == [
-        ("platform_admin",)
-    ]
-    assert admin.execute("SELECT count(*) FROM identity.audit_events").fetchone()[0] == 1
-    with pytest.raises(BootstrapRejected):
-        await bootstrap(runtime_settings, "second-admin", password)
 
 
 async def test_redis_heartbeat_cleanup_is_atomic_and_owned(runtime_settings):

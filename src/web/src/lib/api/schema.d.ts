@@ -1977,6 +1977,77 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/site": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Site Policy
+         * @description Site name, public console address and contact email; platform administrators only.
+         */
+        get: operations["site_policy_api_v1_settings_site_get"];
+        /** Update Site Policy */
+        put: operations["update_site_policy_api_v1_settings_site_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Setup Status
+         * @description Whether the built-in administrator still has to complete the setup wizard.
+         *
+         *     Open to every signed-in account, also while the rest of the API is locked.
+         */
+        get: operations["setup_status_api_v1_setup_get"];
+        put?: never;
+        /**
+         * Complete Setup
+         * @description Finish the wizard in one transaction; only the built-in administrator may call it.
+         *
+         *     Stores the site details, the new address (verified when mail is configured) and the new
+         *     password, marks setup complete and revokes every other session of the administrator.
+         *     The calling session stays valid. A second submission answers 409 setup_completed.
+         */
+        post: operations["complete_setup_api_v1_setup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/setup/email-verification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Setup Email
+         * @description Mail a token proving the built-in administrator's new address (wizard step 2).
+         */
+        post: operations["setup_email_api_v1_setup_email_verification_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/upstream-resources": {
         parameters: {
             query?: never;
@@ -3186,6 +3257,11 @@ export type components = {
             personal_organization_id: string;
             /** Platform Roles */
             platform_roles: string[];
+            /**
+             * Unverified Email
+             * @description An address the account signs in with but has not proven; it cannot recover the account
+             */
+            unverified_email?: string | null;
             user: components["schemas"]["UserView"];
             /** Verified Email */
             verified_email?: string | null;
@@ -3927,7 +4003,10 @@ export type components = {
         };
         /** Login */
         Login: {
-            /** Login */
+            /**
+             * Login
+             * @description Login name, or the account's email address
+             */
             login: string;
             /**
              * Password
@@ -5884,6 +5963,31 @@ export type components = {
              */
             token_type: string;
         };
+        /** SetupCompletion */
+        SetupCompletion: {
+            /**
+             * Email
+             * @description The administrator's new address; not the default or an example domain
+             */
+            email: string;
+            /**
+             * Email Token
+             * @description Token mailed by POST /setup/email-verification; required when email delivery is available, ignored otherwise (the address is then stored unverified)
+             */
+            email_token?: string | null;
+            /**
+             * Password
+             * Format: password
+             */
+            password: string;
+            /** @description Site details; while the site policy is managed by a policy file they must equal the managed values */
+            site: components["schemas"]["SiteInfo"];
+        };
+        /** SetupEmail */
+        SetupEmail: {
+            /** Email */
+            email: string;
+        };
         /** SetupIssued */
         SetupIssued: {
             /**
@@ -5894,6 +5998,25 @@ export type components = {
             /** Setup Token */
             setup_token: string;
             user: components["schemas"]["UserView"];
+        };
+        /** SetupStatus */
+        SetupStatus: {
+            /**
+             * Builtin Admin
+             * @description The caller is the built-in administrator, the only account that can complete the wizard
+             */
+            builtin_admin: boolean;
+            /**
+             * Email Delivery Available
+             * @description Mail is configured: the new administrator address must be verified
+             */
+            email_delivery_available: boolean;
+            /**
+             * Required
+             * @description The setup wizard has not been completed; other management calls answer 409 setup_required
+             */
+            required: boolean;
+            site: components["schemas"]["SitePolicyView"];
         };
         /**
          * SignInLimits
@@ -5906,6 +6029,48 @@ export type components = {
             per_ip: number;
             /** Window Seconds */
             window_seconds: number;
+        };
+        /**
+         * SiteInfo
+         * @description How the deployment names itself and where people reach it.
+         */
+        SiteInfo: {
+            /**
+             * Console Url
+             * @description Public address of the management console; HTTPS except on loopback hosts. Payment checkouts return to it.
+             */
+            console_url?: string | null;
+            /**
+             * Contact Email
+             * @description Where users reach the operators
+             */
+            contact_email?: string | null;
+            /**
+             * Site Name
+             * @description Shown in the console and in identity mail
+             */
+            site_name: string;
+        };
+        /** SitePolicyView */
+        SitePolicyView: {
+            /** Console Url */
+            console_url: string | null;
+            /** Contact Email */
+            contact_email: string | null;
+            /** @description The policy file that locked these values; writes are refused while set */
+            managed: components["schemas"]["ManagedSource"] | null;
+            /**
+             * Setup Completed At
+             * @description When the built-in administrator completed the setup wizard; until then the management API is locked
+             */
+            setup_completed_at: string | null;
+            /**
+             * Site Name
+             * @description Shown in the console and in identity mail
+             */
+            site_name: string;
+            /** Version */
+            version: number;
         };
         /** Statement */
         Statement: {
@@ -6271,6 +6436,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -6376,7 +6550,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6456,7 +6630,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6543,7 +6717,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6623,7 +6797,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6712,7 +6886,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6801,7 +6975,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6944,6 +7118,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -7015,7 +7198,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7109,6 +7292,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -7191,7 +7383,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7301,7 +7493,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7398,6 +7590,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -7467,7 +7668,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7545,6 +7746,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7634,7 +7844,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7769,6 +7979,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -7838,7 +8057,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7916,6 +8135,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8005,7 +8233,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8108,6 +8336,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -8183,6 +8420,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8287,6 +8533,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -8368,7 +8623,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8449,6 +8704,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8538,7 +8802,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8633,6 +8897,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -8711,7 +8984,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8854,7 +9127,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8941,7 +9214,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9032,6 +9305,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -9101,7 +9383,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9183,6 +9465,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9272,7 +9563,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9367,6 +9658,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -9436,7 +9736,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9514,6 +9814,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9603,7 +9912,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9709,6 +10018,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -9789,7 +10107,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9868,6 +10186,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9958,7 +10285,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10061,6 +10388,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -10130,6 +10466,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10220,7 +10565,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10326,6 +10671,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -10408,7 +10762,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10503,6 +10857,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -10583,7 +10946,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10691,6 +11054,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -10773,7 +11145,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10868,6 +11240,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -10947,7 +11328,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -11058,7 +11439,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -11164,6 +11545,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -11244,7 +11634,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -11323,6 +11713,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11413,7 +11812,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -11520,6 +11919,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -11596,6 +12004,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11688,6 +12105,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -11760,6 +12186,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11849,7 +12284,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -11950,7 +12385,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -12061,7 +12496,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -12167,6 +12602,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -12240,6 +12684,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12335,6 +12788,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -12412,7 +12874,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -12493,6 +12955,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12582,7 +13053,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -12677,6 +13148,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -12760,7 +13240,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -12866,7 +13346,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -12973,7 +13453,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13079,6 +13559,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -13159,7 +13648,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13236,6 +13725,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13328,6 +13826,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -13398,6 +13905,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13477,6 +13993,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13564,7 +14089,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13650,6 +14175,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -13727,7 +14261,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13837,7 +14371,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13943,6 +14477,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -14022,6 +14565,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -14094,6 +14646,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14183,7 +14744,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -14278,6 +14839,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -14351,6 +14921,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14438,6 +15017,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -14508,6 +15096,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14595,6 +15192,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -14667,6 +15273,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14754,7 +15369,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -14840,6 +15455,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -14917,7 +15541,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -15027,7 +15651,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -15133,6 +15757,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -15213,7 +15846,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -15292,6 +15925,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15382,7 +16024,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -15488,6 +16130,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -15579,7 +16230,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -15701,7 +16352,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -15813,6 +16464,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -15883,6 +16543,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15970,6 +16639,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -16050,7 +16728,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -16129,6 +16807,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16219,7 +16906,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -16331,6 +17018,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -16413,7 +17109,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -16508,6 +17204,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -16584,6 +17289,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16676,6 +17390,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -16761,6 +17484,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -16822,6 +17554,15 @@ export interface operations {
             };
             /** @description Caller may not perform this operation */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16900,7 +17641,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -16994,6 +17735,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -17077,7 +17827,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -17183,6 +17933,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -17262,7 +18021,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -17354,6 +18113,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal server error */
             500: {
                 headers: {
@@ -17406,6 +18174,15 @@ export interface operations {
             };
             /** @description Caller may not perform this operation */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17484,7 +18261,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -17584,7 +18361,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -17681,6 +18458,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -17750,6 +18536,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17840,7 +18635,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -17938,7 +18733,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -18024,6 +18819,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -18097,6 +18901,15 @@ export interface operations {
             };
             /** @description Caller may not perform this operation */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18214,6 +19027,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description If-Match does not match the current resource version */
             412: {
                 headers: {
@@ -18301,6 +19123,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -18372,7 +19203,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -18466,6 +19297,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -18548,7 +19388,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -18658,7 +19498,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -18750,6 +19590,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal server error */
             500: {
                 headers: {
@@ -18812,7 +19661,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -18904,6 +19753,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal server error */
             500: {
                 headers: {
@@ -18966,7 +19824,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -19058,6 +19916,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal server error */
             500: {
                 headers: {
@@ -19120,7 +19987,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -19212,6 +20079,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal server error */
             500: {
                 headers: {
@@ -19274,7 +20150,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -19366,6 +20242,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal server error */
             500: {
                 headers: {
@@ -19428,7 +20313,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -19458,6 +20343,392 @@ export interface operations {
             /** @description A required If-Match or Idempotency-Key header is missing */
             428: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    site_policy_api_v1_settings_site_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SitePolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_site_policy_api_v1_settings_site_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiteInfo"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SitePolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setup_status_api_v1_setup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupStatus"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    complete_setup_api_v1_setup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupCompletion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupStatus"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setup_email_api_v1_setup_email_verification_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupEmail"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestAccepted"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Rate limit reached; retry later */
+            429: {
+                headers: {
+                    /** @description When supplied, seconds to wait before retrying */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19528,6 +20799,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -19589,6 +20869,15 @@ export interface operations {
             };
             /** @description Caller may not perform this operation */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19665,7 +20954,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -19743,6 +21032,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19832,7 +21130,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -19938,6 +21236,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -20018,7 +21325,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -20097,6 +21404,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20183,7 +21499,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -20278,6 +21594,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Request is malformed or violates a business rule */
             422: {
                 headers: {
@@ -20347,7 +21672,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -20432,7 +21757,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -20510,6 +21835,15 @@ export interface operations {
             };
             /** @description Resource does not exist or is not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20599,7 +21933,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Idempotency key reuse, state transition or resource conflict */
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
             409: {
                 headers: {
                     [name: string]: unknown;

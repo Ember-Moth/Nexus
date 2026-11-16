@@ -2,6 +2,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import (
@@ -16,12 +17,8 @@ from pydantic import (
 
 from nexus.shared.views import ManagedSource
 
-
-@dataclass(frozen=True, slots=True)
-class BootstrapResult:
-    user_id: UUID
-    created: bool
-
+from ..domain.email import mailbox
+from ..domain.errors import IdentityError
 
 type MemberRole = Literal["org_owner", "org_developer", "org_finance"]
 type OrganizationStatus = Literal["provisioning", "active", "suspended", "archived"]
@@ -36,7 +33,9 @@ class ChallengeInput(Schema):
 
 
 class Login(ChallengeInput):
-    login: str = Field(min_length=3, max_length=254)
+    login: str = Field(
+        min_length=3, max_length=254, description="Login name, or the account's email address"
+    )
     password: SecretStr = Field(min_length=1, max_length=1024)
 
 
@@ -292,6 +291,11 @@ class RegistrationCreated(SessionCreated):
 
 class CurrentUser(Schema):
     verified_email: str | None = None
+    unverified_email: str | None = Field(
+        default=None,
+        description="An address the account signs in with but has not proven; "
+        "it cannot recover the account",
+    )
     personal_organization_id: UUID
     user: UserView
     platform_roles: list[str]
@@ -506,3 +510,126 @@ class FinancialAccess:
     organization_status: str
     project_id: UUID | None = None
     key_id: UUID | None = None
+
+
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def console_address(value: str) -> str:
+    """The console's public address: HTTPS, or plain HTTP on a loopback host."""
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        if (
+            parsed.scheme not in {"https", "http"}
+            or not host
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or any(char.isspace() or not char.isprintable() for char in value)
+        ):
+            raise ValueError
+        _ = parsed.port  # raises ValueError on an invalid port
+    except ValueError:
+        raise ValueError(
+            "console URL must be an HTTP(S) URL without credentials, query or fragment"
+        ) from None
+    # Session cookies are Secure, which browsers accept on HTTPS and on loopback hosts only.
+    if parsed.scheme == "http" and not (host in LOOPBACK_HOSTS or host.endswith(".localhost")):
+        raise ValueError("console URL must use HTTPS outside loopback hosts")
+    return value.rstrip("/")
+
+
+class SiteInfo(Schema):
+    """How the deployment names itself and where people reach it."""
+
+    site_name: str = Field(
+        min_length=1, max_length=100, description="Shown in the console and in identity mail"
+    )
+    console_url: str | None = Field(
+        default=None,
+        max_length=2048,
+        description="Public address of the management console; HTTPS except on loopback hosts. "
+        "Payment checkouts return to it.",
+    )
+    contact_email: str | None = Field(
+        default=None, max_length=254, description="Where users reach the operators"
+    )
+
+    @field_validator("site_name")
+    @classmethod
+    def plain_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("site name cannot be blank")
+        if any(unicodedata.category(char)[0] == "C" for char in value):
+            raise ValueError("site name cannot contain control characters")
+        return value
+
+    @field_validator("console_url")
+    @classmethod
+    def console(cls, value: str | None) -> str | None:
+        return console_address(value) if value is not None else None
+
+    @field_validator("contact_email")
+    @classmethod
+    def contact(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return mailbox(value)
+        except IdentityError:
+            raise ValueError("contact email must be a valid address") from None
+
+
+class SitePolicyView(SiteInfo):
+    console_url: str | None
+    contact_email: str | None
+    setup_completed_at: datetime | None = Field(
+        description="When the built-in administrator completed the setup wizard; "
+        "until then the management API is locked"
+    )
+    managed: ManagedSource | None = Field(
+        description="The policy file that locked these values; writes are refused while set"
+    )
+    version: int
+
+
+class SetupStatus(Schema):
+    required: bool = Field(
+        description="The setup wizard has not been completed; other management calls "
+        "answer 409 setup_required"
+    )
+    builtin_admin: bool = Field(
+        description="The caller is the built-in administrator, the only account that can "
+        "complete the wizard"
+    )
+    email_delivery_available: bool = Field(
+        description="Mail is configured: the new administrator address must be verified"
+    )
+    site: SitePolicyView
+
+
+class SetupEmail(Schema):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class SetupCompletion(Schema):
+    site: SiteInfo = Field(
+        description="Site details; while the site policy is managed by a policy file they must "
+        "equal the managed values"
+    )
+    email: str = Field(
+        min_length=3,
+        max_length=254,
+        description="The administrator's new address; not the default or an example domain",
+    )
+    email_token: SecretStr | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Token mailed by POST /setup/email-verification; required when email "
+        "delivery is available, ignored otherwise (the address is then stored unverified)",
+    )
+    password: SecretStr = Field(min_length=16, max_length=1024)

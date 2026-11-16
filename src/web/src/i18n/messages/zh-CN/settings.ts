@@ -9,17 +9,34 @@ const settings = {
   reset: "撤销修改",
   invalid: "请填写 {min} – {max} 之间的数值",
   invalidCurrency: "请填写 3 位大写字母的币种代码",
+  invalidText: "请填写 1 – {max} 个字符",
   managed: {
     badge: "由策略文件管理",
     title: "由策略文件管理，只读",
     body: "该组由 nexus settings import 锁定（文件摘要 {digest}…，导入于 {at}）。修改请提交策略文件；文件里把该组声明为 initial 即解除锁定。",
   },
   tabs: {
+    site: "站点",
     identity: "身份",
     billing: "计费",
     reporting: "报表",
     quotas: "资源配额",
     clusters: "网关集群",
+  },
+  site: {
+    title: "站点信息",
+    description: "站点名称、控制台的公开地址和联系邮箱。站点名称用于控制台和身份邮件，充值完成后付款人回到控制台地址下的充值页。",
+    completed: "初始化已于 {at} 完成。需要重新初始化时，在主机上执行 nexus setup reset。",
+    pending: "尚未完成初始化。",
+    fields: {
+      site_name: "站点名称",
+      console_url: "控制台地址",
+      contact_email: "联系邮箱",
+    },
+    hints: {
+      site_name: "最多 100 个字符",
+      console_url: "除本机地址外必须是 HTTPS；不填则无法发起在线充值",
+    },
   },
   identity: {
     title: "登录、邮件与会话",

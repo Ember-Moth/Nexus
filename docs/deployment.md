@@ -127,7 +127,7 @@ values 的 `policy.groups` 渲染成策略文件 `policy.yaml`（`{version: 1, g
 | `NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL`、`NEXUS_AUTO_PUBLISH_POLL_SECONDS` | 启动参数 | Worker。自动发布的静默时间和最长延迟是 `publication.cluster_defaults` 策略 |
 | `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM`、`NEXUS_SMTP_HOST`、`NEXUS_SMTP_PORT`、`NEXUS_SMTP_SECURITY`、`NEXUS_SMTP_USERNAME`、`NEXUS_CLOUDFLARE_EMAIL_ACCOUNT_ID` | 启动参数 | 发信服务商的非密钥参数 |
 | `NEXUS_TURNSTILE_SITE_KEY`、`NEXUS_TURNSTILE_HOSTNAME` | 启动参数 | 是否启用 Turnstile 是 `identity.auth_policy` 策略 |
-| `NEXUS_PAYMENT_PUBLIC_BASE_URL`、`NEXUS_PAYMENT_RETURN_URL` | 启动参数 | 生产环境必须是 HTTPS |
+| `NEXUS_PAYMENT_PUBLIC_BASE_URL` | 启动参数 | API 的公开地址，用于支付通知，生产环境必须是 HTTPS。充值完成后的返回页是站点策略的控制台地址（`identity.site_policy.console_url`），不是环境变量 |
 | `NEXUS_MOCK_PAYMENT_URL` | — | 生产环境禁止设置 |
 | `NEXUS_MIGRATION_LOCK_TIMEOUT_MS`、`NEXUS_MIGRATION_STATEMENT_TIMEOUT_MS` | 启动参数 | `config.migrate`，只进迁移 Job |
 | `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION` | 派生 | 来自 `objectStorage.*`，API、Worker 和策略导入 Job 都必需；`objectStorage.endpointURL` 没有默认值，不填时 chart 渲染失败。见[对象存储](#对象存储cloudflare-r2) |
@@ -287,7 +287,11 @@ R2 的生命周期按对象上传时间计算，删除最多可能延后一天�
    ```
 
    `my-values.yaml` 至少填写 `hosts.*` 和 `objectStorage.endpointURL`（参考 [`deploy/examples/values-production.yaml`](../deploy/examples/values-production.yaml)）。首次安装时保持 `relay.replicas: 0`。pre-install 钩子依次执行建库（授予权限）、迁移和策略导入。
-4. **管理员**：按初始化流程创建第一个管理员（待定：初始化流程由另一项改动提供，届时在此补充具体步骤），再按 [登录与企业成员](identity-api.md) 建立日常账号。为 Relay 节点登记 Job 建一个专用平台管理员，例如 `deployer`，把它的登录名和密码写入 `nexus-deployer`。
+4. **初始化**：迁移已经创建内置管理员，默认邮箱 `admin@example.com`、登录名 `admin`、密码 `password`。在这一步完成之前，管理 API 只接受登录和初始化向导，其余接口返回 409 `setup_required`。安装一结束就打开 `https://<hosts.console>`，用默认账号登录，按向导填写站点信息（控制台地址填 `https://<hosts.console>`）、换成自己的邮箱和至少 16 个字符的新密码。提交后默认密码立即失效，内置管理员的其他会话全部退出。细节见[初始管理员](development.md#初始管理员)。
+
+   默认账号是公开的：安装完成到你完成向导之间，别人也可能抢先登录并完成向导。如果你登录时发现向导已经完成、不是你做的，就重新安装：`helm uninstall nexus`，删除并重建数据库（`nexus-data` 的 `Cluster` 和 PVC，或外部数据库里的 `nexus` 库），再从第 2 步开始。只是忘了密码时，在 API Pod 里执行 `nexus setup reset`（见下文[重置内置管理员](#重置内置管理员)）。
+
+   然后按 [登录与企业成员](identity-api.md) 建立日常账号。为 Relay 节点登记 Job 建一个专用平台管理员，例如 `deployer`，把它的登录名和密码写入 `nexus-deployer`。
 5. **目录与计价**：配置模型、上游、凭据、部署（含 `relay_profile`）、售价、成本价、路由和企业。见[模型与上游目录](catalog-api.md)和[定价](billing-api.md)。
 6. **集群**：用 `nexus-relay-cluster` 私钥对应的公钥调用 `POST /api/v1/gateway-clusters`，记下返回的 `id`。公钥可以这样计算：
 
@@ -382,6 +386,18 @@ Secret 的变化不会触发 checksum 重启（checksum 只跟踪 ConfigMap）�
 | k3s Secret 加密密钥 | `k3s secrets-encrypt rotate-keys`，完成后用 `k3s secrets-encrypt status` 确认 |
 | TLS 证书 | cert-manager 自动续期。Redis 不会重新加载证书文件，内部证书有效期为 1 年、提前 30 天续期，续期后要重启 Redis |
 | 部署账号 | 在后台修改 `deployer` 的密码，并同步更新 `nexus-deployer` |
+
+### 重置内置管理员
+
+忘记内置管理员的密码，或需要重新走一遍初始化时，在 API Pod 里执行：
+
+```bash
+kubectl -n nexus exec -it deploy/nexus-api -- nexus setup reset
+```
+
+命令要求输入 `RESET` 确认（非交互执行时加 `--yes`）。它把内置管理员恢复成 `admin@example.com` / `password` 并恢复 `platform_admin`，吊销它的全部会话，同时把系统改回“需要初始化”：管理 API 在 2 秒内重新锁住，所有控制台路由都转到 `/setup`，直到有人再次完成向导。其他账号、企业和账务数据不受影响。重置期间默认账号又是公开的，执行后立即登录完成向导。
+
+重置只收回内置管理员。如果怀疑默认账号曾被别人抢先使用，对方可能已经建了其他管理员或调用 Key，应当重新安装而不是重置。
 
 ## 扩展成集群
 

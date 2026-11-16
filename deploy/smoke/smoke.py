@@ -563,22 +563,35 @@ def deploy_from_scratch(address, ingress, api):
     expect(all(f"nexus-{c}" in configmaps for c in ("api", "worker", "web", "policy")),
            "per-component ConfigMaps", configmaps)  # fmt: skip
 
-    step("administrator, organization, catalog")
-    kubectl(
-        "-n", NS, "exec", "-i", "deploy/nexus-api", "--",
-        "nexus", "bootstrap-admin", "--login", admin["admin_login"], "--password-stdin",
-        input=admin["admin_password"] + "\n",
-    )  # fmt: skip
+    step("setup wizard, deployer account, organization, catalog")
+    # The migration created the built-in administrator with the published default account.
+    default = {"login": "admin@example.com", "password": "password"}
+    api.token = api.call("POST", "/auth/sessions", default, expect=201)["access_token"]
+    expect(api.call("GET", "/setup", expect=200)["required"], "a new install waits for setup")
+    api.call("GET", "/organizations", expect=409)
+    ok("management API locked until the setup wizard is completed")
+    api.call("POST", "/setup", {
+        "site": {"site_name": "Nexus smoke", "console_url": f"https://{HOSTS['console']}",
+                 "contact_email": None},
+        "email": "smoke-operator@nexus.internal", "password": secrets.token_urlsafe(24),
+    }, expect=200)  # fmt: skip
+    status, _, _ = api.ingress.request(HOSTS["api"], "POST", "/api/v1/auth/sessions", default)
+    expect(status == 401, "the default password stops working after setup", f"HTTP {status}")
+    # The Relay registration Job signs in as a dedicated platform administrator.
+    created = api.call("POST", "/users", {"login": admin["admin_login"]}, expect=201)
+    api.call("POST", "/auth/password",
+             {"token": created["setup_token"], "password": admin["admin_password"]},
+             expect=204)  # fmt: skip
+    deployer = created["user"]["id"]
+    roles = api.call("GET", f"/users/{deployer}/platform-roles", expect=200)
+    api.call("PATCH", f"/users/{deployer}/platform-roles",
+             {"roles": ["platform_admin", "platform_finance"]}, version=roles["version"],
+             expect=200)  # fmt: skip
     session = api.call("POST", "/auth/sessions",
                        {"login": admin["admin_login"], "password": admin["admin_password"]},
                        expect=201)  # fmt: skip
     api.token = session["access_token"]
-    me = api.call("GET", "/me", expect=200)
-    roles = api.call("GET", f"/users/{me['user']['id']}/platform-roles", expect=200)
-    api.call("PATCH", f"/users/{me['user']['id']}/platform-roles",
-             {"roles": ["platform_admin", "platform_finance"]}, version=roles["version"],
-             expect=200)  # fmt: skip
-    ok("administrator created through bootstrap-admin and signed in via the ingress")
+    ok("setup completed through the API; deployer administrator signed in via the ingress")
     run_id = uuid.uuid4().hex[:6]
     org = api.call("POST", "/organizations", {"name": f"Smoke {run_id}"}, expect=201)
     deadline = time.monotonic() + 120

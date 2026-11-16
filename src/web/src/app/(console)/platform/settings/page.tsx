@@ -12,11 +12,14 @@ import { call, nexus } from "@/lib/api/client";
 import { useCursorList } from "@/lib/api/hooks";
 import type { components } from "@/lib/api/schema";
 import type { GatewayCluster } from "@/lib/api/types";
+import { formatDateTime } from "@/lib/format";
 
 import { PolicyCard, type PolicyGroup } from "./policy-form";
 
 type Schemas = components["schemas"];
 type AuthPolicy = Schemas["AuthPolicy"];
+type SiteInfo = Schemas["SiteInfo"];
+type SitePolicy = Schemas["SitePolicyView"];
 type BillingPolicy = Schemas["BillingPolicy"];
 type ReportingPolicy = Schemas["ReportingPolicy"];
 type ResourceQuotaDefaults = Schemas["ResourceQuotaDefaults"];
@@ -26,6 +29,23 @@ type ClusterPolicyView = Schemas["ClusterPolicyView"];
 
 const INT_MAX = 2_147_483_647;
 const COUNT_MAX = 2_000_000_000;
+
+const SITE: PolicyGroup[] = [
+  {
+    fields: [
+      { path: "site_name", label: "st.site.fields.site_name", hint: "st.site.hints.site_name", kind: "text", max: 100 },
+      {
+        path: "console_url",
+        label: "st.site.fields.console_url",
+        hint: "st.site.hints.console_url",
+        kind: "text",
+        max: 2048,
+        optional: true,
+      },
+      { path: "contact_email", label: "st.site.fields.contact_email", kind: "text", max: 254, optional: true },
+    ],
+  },
+];
 
 const IDENTITY: PolicyGroup[] = [
   {
@@ -231,14 +251,39 @@ export default function PlatformSettingsPage() {
   return (
     <PageContainer>
       <PageHeader title={t("st.title")} description={t("st.description")} />
-      <Tabs defaultValue="identity" className="gap-4">
+      <Tabs defaultValue="site" className="gap-4">
         <TabsList>
+          <TabsTrigger value="site">{t("st.tabs.site")}</TabsTrigger>
           <TabsTrigger value="identity">{t("st.tabs.identity")}</TabsTrigger>
           <TabsTrigger value="billing">{t("st.tabs.billing")}</TabsTrigger>
           <TabsTrigger value="reporting">{t("st.tabs.reporting")}</TabsTrigger>
           <TabsTrigger value="quotas">{t("st.tabs.quotas")}</TabsTrigger>
           <TabsTrigger value="clusters">{t("st.tabs.clusters")}</TabsTrigger>
         </TabsList>
+        <TabsContent value="site">
+          <PolicyCard<SitePolicy>
+            title={t("st.site.title")}
+            description={t("st.site.description")}
+            queryKey={["settings", "site"]}
+            load={() => call(() => nexus.GET("/api/v1/settings/site"))}
+            save={(body, etag) =>
+              call(() =>
+                nexus.PUT("/api/v1/settings/site", {
+                  params: { header: { "If-Match": etag } },
+                  body: body as SiteInfo,
+                }),
+              )
+            }
+            groups={SITE}
+            facts={(policy) => (
+              <Note>
+                {policy.setup_completed_at
+                  ? t("st.site.completed", { at: formatDateTime(policy.setup_completed_at) })
+                  : t("st.site.pending")}
+              </Note>
+            )}
+          />
+        </TabsContent>
         <TabsContent value="identity">
           <PolicyCard
             title={t("st.identity.title")}

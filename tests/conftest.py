@@ -27,6 +27,21 @@ def settings_factory():
     return create
 
 
+@pytest.fixture
+def completed_setup():
+    """Open the setup lock of an app that runs without its lifespan (and so without a database)."""
+
+    class Completed:
+        async def require_setup_complete(self):
+            return None
+
+    def apply(app):
+        app.state.identity_service = Completed()
+        return app
+
+    return apply
+
+
 def pytest_addoption(parser):
     parser.addoption("--capacity", action="store_true", help="run timed settlement load profiles")
 

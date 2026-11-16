@@ -135,7 +135,7 @@ def test_source_boundaries():
         ),
         (
             "nexus.modules.billing.application.accounts",
-            "from nexus.modules.identity.application.schemas import BootstrapResult",
+            "from nexus.modules.identity.application.schemas import SetupStatus",
         ),
         ("nexus.modules.billing.application.accounts", "from fastapi import Depends"),
         ("nexus.modules.billing.application.schemas", "from ..persistence.models import Account"),
@@ -175,7 +175,7 @@ def test_guard_rejects_invalid_dependencies(module, source):
         ("nexus.bootstrap", "from nexus.modules import identity"),
         (
             "nexus.modules.billing.application.accounts",
-            "from nexus.modules.identity import BootstrapResult",
+            "from nexus.modules.identity import IdentityService",
         ),
         ("nexus.modules.identity.api.routes", "from fastapi import APIRouter"),
         ("nexus.modules.billing.api.payments", "from fastapi import APIRouter"),

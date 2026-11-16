@@ -30,9 +30,49 @@ from nexus.shared.telemetry import event, request_id
 
 type Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 type Readiness = Callable[[], Awaitable[dict[str, str]]]
+type SetupOpen = Callable[[str, str], bool]
+
+# What the API answers before the built-in administrator completes the setup wizard: health, the
+# error catalog, the sign-in options, signing in and out, the current session and the wizard.
+# Every other route, including routes added later, answers 409 setup_required.
+SETUP_OPEN_ROUTES = frozenset(
+    {
+        ("GET", "/health/live"),
+        ("GET", "/health/ready"),
+        ("GET", "/api/v1/error-codes"),
+        ("GET", "/api/v1/auth/options"),
+        ("POST", "/api/v1/auth/sessions"),
+        ("DELETE", "/api/v1/auth/sessions/current"),
+        ("GET", "/api/v1/me"),
+        ("GET", "/api/v1/setup"),
+        ("POST", "/api/v1/setup/email-verification"),
+        ("POST", "/api/v1/setup"),
+    }
+)
+# Payment provider notifications are not management calls. They carry their own signatures and
+# record money that has already been paid, which a reset must not turn away.
+SETUP_OPEN_PREFIXES = ("/webhooks/",)
 
 
-def build_server(lifespan: Lifespan, *, development: bool = False) -> FastAPI:
+def setup_open(method: str, path: str) -> bool:
+    return (method, path) in SETUP_OPEN_ROUTES or path.startswith(SETUP_OPEN_PREFIXES)
+
+
+def setup_lock(is_open: SetupOpen):
+    async def locked(request: Request) -> None:
+        # The matched route template, so path parameters cannot dodge the list.
+        path = getattr(request.scope.get("route"), "path", request.url.path)
+        method = "GET" if request.method == "HEAD" else request.method
+        if not is_open(method, path):
+            await request.app.state.identity_service.require_setup_complete()
+
+    return locked
+
+
+def build_server(
+    lifespan: Lifespan, *, development: bool = False, setup: SetupOpen | None = None
+) -> FastAPI:
+    """``setup`` names the routes open before setup is complete; None leaves every route open."""
     app = FastAPI(
         title="Nexus Control Plane",
         version="0.1.0",
@@ -40,12 +80,14 @@ def build_server(lifespan: Lifespan, *, development: bool = False) -> FastAPI:
         docs_url="/docs" if development else None,
         redoc_url=None,
         openapi_url="/openapi.json" if development else None,
+        # Application-wide, so every route registered later is locked unless listed as open.
+        dependencies=[Depends(setup_lock(setup))] if setup else None,
     )
     generate_openapi = app.openapi
 
     def openapi() -> dict:
         if app.openapi_schema is None:
-            app.openapi_schema = declare_error_responses(generate_openapi())
+            app.openapi_schema = declare_error_responses(generate_openapi(), setup_open=setup)
         return app.openapi_schema
 
     app.openapi = openapi
@@ -236,7 +278,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     def get_routing(request: Request):
         return request.app.state.routing
 
-    app = build_server(lifespan, development=settings.environment != "production")
+    app = build_server(lifespan, development=settings.environment != "production", setup=setup_open)
 
     @app.get("/internal/metrics", include_in_schema=False)
     async def metrics(request: Request, token: Annotated[str, Depends(credentials)]):

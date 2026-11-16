@@ -20,7 +20,7 @@ def auth(token, version=None):
     return headers
 
 
-async def login(client, login_name="root-admin", password=PASSWORD):
+async def login(client, login_name="admin", password=PASSWORD):
     response = await client.post(
         "/api/v1/auth/sessions", json={"login": login_name, "password": password}
     )
@@ -187,12 +187,12 @@ async def test_logout_expiration_and_disabled_user(http, admin):
     )
     assert (await client.get("/api/v1/me", headers=auth(root))).status_code == 401
     root = await login(client)
-    admin.execute("UPDATE identity.users SET status='disabled' WHERE login='root-admin'")
+    admin.execute("UPDATE identity.users SET status='disabled' WHERE login='admin'")
     assert (await client.get("/api/v1/me", headers=auth(root))).status_code == 401
     for name, password in [
-        ("root-admin", PASSWORD),
+        ("admin", PASSWORD),
         ("unknown-user", PASSWORD),
-        ("root-admin", "wrong"),
+        ("admin", "wrong"),
     ]:
         response = await client.post(
             "/api/v1/auth/sessions", json={"login": name, "password": password}
@@ -383,7 +383,7 @@ async def test_pagination_validation_and_secret_redaction(http):
         ).status_code == 422
     secret = "should-not-appear-in-validation-output"
     response = await client.post(
-        "/api/v1/auth/sessions", json={"login": "root-admin", "password": {"value": secret}}
+        "/api/v1/auth/sessions", json={"login": "admin", "password": {"value": secret}}
     )
     assert response.status_code == 422
     assert secret not in response.text and "input" not in response.json()["error"]
@@ -435,11 +435,11 @@ async def test_authentication_rate_limits_and_fail_closed(http):
     ):
         await login(client)
         response = await client.post(
-            "/api/v1/auth/sessions", json={"login": "root-admin", "password": "bad"}
+            "/api/v1/auth/sessions", json={"login": "admin", "password": "bad"}
         )
         assert response.status_code == 401
         limited = await client.post(
-            "/api/v1/auth/sessions", json={"login": "root-admin", "password": PASSWORD}
+            "/api/v1/auth/sessions", json={"login": "admin", "password": PASSWORD}
         )
         assert limited.status_code == 429
         assert limited.headers["Retry-After"] == str(policy["sign_in"]["window_seconds"])
@@ -462,7 +462,7 @@ async def test_authentication_rate_limits_and_fail_closed(http):
 
         app.state.identity_service._auth_limits = Unavailable()
         response = await client.post(
-            "/api/v1/auth/sessions", json={"login": "root-admin", "password": PASSWORD}
+            "/api/v1/auth/sessions", json={"login": "admin", "password": PASSWORD}
         )
         assert response.status_code == 503
         assert "private dependency detail" not in response.text

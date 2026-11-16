@@ -4,6 +4,8 @@ from pathlib import Path
 
 from alembic import op
 
+from nexus.infrastructure.migrations import references
+
 revision = "0033_storage_prepayment"
 down_revision = "0032_container_coverage"
 branch_labels = None
@@ -39,9 +41,8 @@ def upgrade():
         code += f"\nREVOKE ALL ON FUNCTION billing.{name} FROM PUBLIC;"
     code += "\nREVOKE ALL ON FUNCTION billing.v1_storage_lapsed(uuid) FROM PUBLIC;"
     code += "\nGRANT EXECUTE ON FUNCTION billing.v1_storage_lapsed(uuid) TO nexus_bridge;"
-    op.execute("GRANT REFERENCES ON billing.request_runs TO nexus_billing")
-    install("billing", "nexus_billing", code)
-    op.execute("REVOKE REFERENCES ON billing.request_runs FROM nexus_billing")
+    with references(["billing.request_runs"], "nexus_billing"):
+        install("billing", "nexus_billing", code)
     install("gateway_v1", "nexus_bridge", (D / "gateway.sql").read_text())
 
 

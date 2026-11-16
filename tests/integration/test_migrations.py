@@ -263,6 +263,65 @@ def test_migrations_fail_fast_instead_of_queueing_behind_a_busy_table(
     ]
 
 
+def test_reference_grants_do_not_deadlock_with_analyze(
+    migration_settings, admin, service_directory
+):
+    """0032 lets nexus_billing reference billing.request_runs, the table autovacuum analyzes most.
+
+    ANALYZE holds the table's SHARE UPDATE EXCLUSIVE lock while it rewrites the table's pg_class
+    row; the holder below does both with a GRANT. Had the revision granted before locking, the
+    holder's GRANT would wait for the revision while the revision's foreign key waited for the
+    holder's lock, and the deadlock detector would fail one of them.
+    """
+    import json
+    import threading
+    from time import monotonic, sleep
+
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.attributes["settings"] = migration_settings
+    command.downgrade(config, "0031_model_call_bounds")
+    data = json.loads((service_directory / "services.json").read_text())
+    outcome = {}
+
+    def upgrade():
+        try:
+            command.upgrade(config, "0032_container_coverage")
+            outcome["error"] = None
+        except Exception as error:
+            outcome["error"] = error
+
+    try:
+        with psycopg.connect(
+            host="127.0.0.1",
+            port=data["pg_port"],
+            dbname=data["database"],
+            user="nexus_local_admin",
+            password=data["admin_password"],
+            options="-c statement_timeout=10000",
+        ) as holder:
+            holder.execute("LOCK TABLE billing.request_runs IN SHARE UPDATE EXCLUSIVE MODE")
+            worker = threading.Thread(target=upgrade)
+            worker.start()
+            deadline = monotonic() + 10
+            while not admin.execute(
+                "SELECT EXISTS(SELECT FROM pg_locks WHERE NOT granted "
+                "AND relation='billing.request_runs'::regclass)"
+            ).fetchone()[0]:
+                assert monotonic() < deadline and worker.is_alive(), outcome
+                sleep(0.02)
+            # Rewrites the row the way ANALYZE does; it must not wait for the revision.
+            holder.execute("GRANT TRUNCATE ON billing.request_runs TO nexus_billing")
+            holder.rollback()
+            worker.join(30)
+        assert not worker.is_alive()
+        assert outcome == {"error": None}
+    finally:
+        command.upgrade(config, "head")
+    assert admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchall() == [
+        (SCHEMA_REVISION,)
+    ]
+
+
 def columns(admin, schema, table):
     return {
         row[0]

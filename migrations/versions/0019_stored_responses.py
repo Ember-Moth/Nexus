@@ -4,6 +4,8 @@ from pathlib import Path
 
 from alembic import op
 
+from nexus.infrastructure.migrations import references
+
 revision = "0019_stored_responses"
 down_revision = "0018_relay_preflight"
 branch_labels = None
@@ -43,19 +45,18 @@ CONTRACTS = [
 
 
 def upgrade():
-    op.execute("GRANT REFERENCES ON publication.gateway_clusters TO nexus_publication")
-    for schema, owner, grantee, file, functions in CONTRACTS:
-        op.execute(f"GRANT CREATE ON SCHEMA {schema} TO {owner}")
-        op.execute(f"SET LOCAL ROLE {owner}")
-        op.get_bind().exec_driver_sql(
-            (SQL / file).read_text(), execution_options={"no_parameters": True}
-        )
-        for name in functions:
-            op.execute(f"REVOKE ALL ON FUNCTION {schema}.{name} FROM PUBLIC")
-            op.execute(f"GRANT EXECUTE ON FUNCTION {schema}.{name} TO {grantee}")
-        op.execute("RESET ROLE")
-        op.execute(f"REVOKE CREATE ON SCHEMA {schema} FROM {owner}")
-    op.execute("REVOKE REFERENCES ON publication.gateway_clusters FROM nexus_publication")
+    with references(["publication.gateway_clusters"], "nexus_publication"):
+        for schema, owner, grantee, file, functions in CONTRACTS:
+            op.execute(f"GRANT CREATE ON SCHEMA {schema} TO {owner}")
+            op.execute(f"SET LOCAL ROLE {owner}")
+            op.get_bind().exec_driver_sql(
+                (SQL / file).read_text(), execution_options={"no_parameters": True}
+            )
+            for name in functions:
+                op.execute(f"REVOKE ALL ON FUNCTION {schema}.{name} FROM PUBLIC")
+                op.execute(f"GRANT EXECUTE ON FUNCTION {schema}.{name} TO {grantee}")
+            op.execute("RESET ROLE")
+            op.execute(f"REVOKE CREATE ON SCHEMA {schema} FROM {owner}")
 
 
 def downgrade():

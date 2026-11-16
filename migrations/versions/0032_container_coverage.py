@@ -4,6 +4,8 @@ from pathlib import Path
 
 from alembic import op
 
+from nexus.infrastructure.migrations import references
+
 revision = "0032_container_coverage"
 down_revision = "0031_model_call_bounds"
 branch_labels = None
@@ -41,9 +43,8 @@ def upgrade():
     code = (D / "schema.sql").read_text() + "\n" + (D / "billing.sql").read_text()
     for name in NEW:
         code += f"\nREVOKE ALL ON FUNCTION billing.{name} FROM PUBLIC;"
-    op.execute("GRANT REFERENCES ON billing.request_runs TO nexus_billing")
-    install(code)
-    op.execute("REVOKE REFERENCES ON billing.request_runs FROM nexus_billing")
+    with references(["billing.request_runs"], "nexus_billing"):
+        install(code)
 
 
 def downgrade():

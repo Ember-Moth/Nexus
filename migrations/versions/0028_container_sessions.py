@@ -4,6 +4,8 @@ from pathlib import Path
 
 from alembic import op
 
+from nexus.infrastructure.migrations import references
+
 revision = "0028_container_sessions"
 down_revision = "0027_execution_containers"
 branch_labels = None
@@ -117,19 +119,18 @@ def upgrade():
     )
     formats(True)
     usage_fields(True)
-    op.execute("GRANT REFERENCES ON billing.price_versions TO nexus_billing")
-    for schema, owner, grantee, file, names in CONTRACTS:
-        code = (D / file).read_text()
-        for name in names:
-            code += f"\nREVOKE ALL ON FUNCTION {schema}.{name} FROM PUBLIC;"
-            code += f"\nGRANT EXECUTE ON FUNCTION {schema}.{name} TO {grantee};"
-        if file == "billing.sql":
-            code += (
-                "\nREVOKE ALL ON FUNCTION billing.v1_review_container(),"
-                "billing.v1_container_settled() FROM PUBLIC;"
-            )
-        install(schema, owner, code)
-    op.execute("REVOKE REFERENCES ON billing.price_versions FROM nexus_billing")
+    with references(["billing.price_versions"], "nexus_billing"):
+        for schema, owner, grantee, file, names in CONTRACTS:
+            code = (D / file).read_text()
+            for name in names:
+                code += f"\nREVOKE ALL ON FUNCTION {schema}.{name} FROM PUBLIC;"
+                code += f"\nGRANT EXECUTE ON FUNCTION {schema}.{name} TO {grantee};"
+            if file == "billing.sql":
+                code += (
+                    "\nREVOKE ALL ON FUNCTION billing.v1_review_container(),"
+                    "billing.v1_container_settled() FROM PUBLIC;"
+                )
+            install(schema, owner, code)
     op.execute("SET LOCAL ROLE nexus_billing")
     op.execute("GRANT EXECUTE ON FUNCTION billing.v1_container_settled() TO nexus_migrator")
     op.execute("RESET ROLE")

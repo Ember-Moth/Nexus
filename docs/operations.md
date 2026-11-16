@@ -432,5 +432,6 @@ spec:
 - 一个修订只做一件可以整体回滚的事；数据回填与约束、索引分开成不同的修订。
 - 加列不带易变默认值（PostgreSQL 11 起常量或 `now()` 这类稳定默认值不重写表）；需要非空约束时，先回填，再以 `NOT VALID` 添加 CHECK 约束并单独 `VALIDATE CONSTRAINT`。
 - 业务表上的索引在 `upgrade()` 中用 `nexus.infrastructure.migrations.create_index_concurrently` 建立，删除用 `drop_index_concurrently`；`downgrade()` 不使用它们，以保持降级的原子性。辅助函数会提交修订中之前的语句，在 autocommit 下执行 `CONCURRENTLY`，并在该语句上取消迁移级超时（并发建索引只取 SHARE UPDATE EXCLUSIVE 锁，不阻塞读写，但要等待库内所有更早的事务结束）。中断留下的 INVALID 索引在重跑时会被删除重建。`0036_identity_abuse_limits` 是参考用法。
+- 模块角色要对已有的表建外键时，在 `with nexus.infrastructure.migrations.references([...], role):` 块内建，不要直接写 `GRANT REFERENCES`（`tests/test_migration_sources.py` 会检查）。原因是 GRANT 会改写表在 `pg_class` 中的行；如果 autovacuum 的 ANALYZE 已持有该表的 SHARE UPDATE EXCLUSIVE 锁，它会等本事务结束才能写这一行，而随后的外键要等 ANALYZE 释放锁，两者死锁，修订失败。辅助函数先以外键本来就要取的 SHARE ROW EXCLUSIVE 锁住表，再授权，块结束后收回。
 - 大批量回填分批提交，每批按主键范围更新，避免长事务和长时间行锁。
 - 会被 Relay 访问的表（`billing.*` 的请求、尝试和审计表，`catalog.deployments` 等）上的锁表操作，按 0017 的方式安排维护窗口或先摘流。

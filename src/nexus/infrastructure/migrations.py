@@ -20,9 +20,13 @@ helper again drops it and starts over.
 Use the helpers in ``upgrade()`` only. Upgrades commit revision by revision; a downgrade runs in a
 single transaction so that a revision refusing to drop retained data undoes the whole request,
 and an autocommit block there would commit the revisions already downgraded.
+
+A revision that lets a module role reference an existing table grants REFERENCES through
+``references`` instead of a bare ``GRANT REFERENCES``; see its docstring.
 """
 
 import re
+from contextlib import contextmanager
 
 from alembic import op
 from sqlalchemy import text
@@ -99,3 +103,24 @@ def drop_index_concurrently(index: str) -> None:
     schema, name = _qualified(index)
     with op.get_context().autocommit_block():
         _unbounded(op.get_bind(), f"DROP INDEX CONCURRENTLY IF EXISTS {schema}.{name}")
+
+
+@contextmanager
+def references(tables: list[str], role: str):
+    """Let ``role`` create foreign keys to the existing ``tables`` inside the ``with`` block.
+
+    The tables are locked in SHARE ROW EXCLUSIVE mode before the GRANT, the lock their foreign
+    keys take anyway. The GRANT rewrites each table's ``pg_class`` row. An ANALYZE or VACUUM,
+    autovacuum's included, that already holds a table's SHARE UPDATE EXCLUSIVE lock must wait
+    for this transaction before it updates that row, while the foreign key waits for the
+    ANALYZE: a deadlock that fails the revision. With the lock taken first, autovacuum skips the
+    table and a manual ANALYZE waits for the revision to commit. The grant is revoked after the
+    block.
+    """
+    names = ",".join(".".join(_qualified(table)) for table in tables)
+    if not IDENTIFIER.fullmatch(role):
+        raise ValueError(f"expected a role name, got {role!r}")
+    op.execute(f"LOCK TABLE {names} IN SHARE ROW EXCLUSIVE MODE")
+    op.execute(f"GRANT REFERENCES ON {names} TO {role}")
+    yield
+    op.execute(f"REVOKE REFERENCES ON {names} FROM {role}")

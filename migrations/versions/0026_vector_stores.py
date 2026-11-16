@@ -4,6 +4,8 @@ from pathlib import Path
 
 from alembic import op
 
+from nexus.infrastructure.migrations import references
+
 revision = "0026_vector_stores"
 down_revision = "0025_openai_files"
 branch_labels = None
@@ -148,33 +150,26 @@ def upgrade():
     op.get_bind().exec_driver_sql(
         (NEW / "schema.sql").read_text(), execution_options={"no_parameters": True}
     )
-    op.execute(
-        "GRANT REFERENCES ON billing.price_versions,billing.discount_versions TO nexus_billing"
-    )
     op.execute("GRANT USAGE ON SCHEMA publication TO nexus_billing")
-    op.execute("GRANT REFERENCES ON publication.config_snapshots TO nexus_billing")
-    formats(True)
-    status_events(True)
-    for schema, owner, grantee, file, names in CONTRACTS:
-        code = (NEW / file).read_text()
-        for name in names:
-            code += f"\nREVOKE ALL ON FUNCTION {schema}.{name} FROM PUBLIC;"
-            code += f"\nGRANT EXECUTE ON FUNCTION {schema}.{name} TO {grantee};"
-        if file == "storage.sql":
-            code += "\nREVOKE ALL ON FUNCTION billing.v1_stage_storage() FROM PUBLIC;"
-            code += (
-                "\nREVOKE ALL ON FUNCTION billing.v1_storage_writable(uuid,uuid,"
-                "uuid,boolean) FROM PUBLIC;"
-            )
-        if file == "admission.sql":
-            code += f"\nREVOKE ALL ON FUNCTION gateway_v1.reserve_tools({GARGS}) FROM PUBLIC;"
-        install(schema, owner, code)
-
-    op.execute("REVOKE REFERENCES ON publication.config_snapshots FROM nexus_billing")
+    tables = ["billing.price_versions", "billing.discount_versions", "publication.config_snapshots"]
+    with references(tables, "nexus_billing"):
+        formats(True)
+        status_events(True)
+        for schema, owner, grantee, file, names in CONTRACTS:
+            code = (NEW / file).read_text()
+            for name in names:
+                code += f"\nREVOKE ALL ON FUNCTION {schema}.{name} FROM PUBLIC;"
+                code += f"\nGRANT EXECUTE ON FUNCTION {schema}.{name} TO {grantee};"
+            if file == "storage.sql":
+                code += "\nREVOKE ALL ON FUNCTION billing.v1_stage_storage() FROM PUBLIC;"
+                code += (
+                    "\nREVOKE ALL ON FUNCTION billing.v1_storage_writable(uuid,uuid,"
+                    "uuid,boolean) FROM PUBLIC;"
+                )
+            if file == "admission.sql":
+                code += f"\nREVOKE ALL ON FUNCTION gateway_v1.reserve_tools({GARGS}) FROM PUBLIC;"
+            install(schema, owner, code)
     op.execute("REVOKE USAGE ON SCHEMA publication FROM nexus_billing")
-    op.execute(
-        "REVOKE REFERENCES ON billing.price_versions,billing.discount_versions FROM nexus_billing"
-    )
 
 
 def downgrade():

@@ -1,6 +1,5 @@
 import asyncio
 from decimal import Decimal
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -12,12 +11,10 @@ from test_billing import account_amounts, balance, finance_role, headers
 from test_identity_api import auth, create_org, login
 
 from nexus.api import create_app
-from nexus.shared.storage import SCHEMA_REVISION
 from scripts.mock_payment_provider import MockPaymentProvider
 
 pytestmark = pytest.mark.integration
 RATE_OF_ONE = {"requests_per_merchant_per_minute": 1}
-REPO_ROOT = Path(__file__).resolve().parents[2]
 API_KEY = "mock-api-key-for-local-tests-0000000001"
 SIGNING_KEY = "mock-signing-key-for-local-tests-000001"
 NEW_API_KEY = "mock-api-key-for-local-tests-0000000002"
@@ -1118,33 +1115,6 @@ async def test_unregistered_gateway_does_not_block_wallet_reads_or_fabricate_not
         json={"channel_id": chan["id"], "amount": "10", "currency": "USD"},
     )
     assert response.status_code == 422
-
-
-async def test_payment_migration_cannot_erase_retained_remote_intents(
-    payments, migration_settings, admin
-):
-    from alembic import command
-    from alembic.config import Config
-
-    p = payments
-    org = await enterprise(p)
-    chan = await channel(p)
-    item = await order(p, org, chan)
-    config = Config(str(REPO_ROOT / "alembic.ini"))
-    config.attributes["settings"] = migration_settings
-    with pytest.raises(Exception, match="cannot downgrade while payment orders are retained"):
-        await asyncio.to_thread(command.downgrade, config, "0006_pricing_reservations")
-    assert (
-        admin.execute("SELECT version_num FROM nexus_meta.alembic_version").fetchone()[0]
-        == SCHEMA_REVISION
-    )
-    assert (
-        admin.execute(
-            "SELECT count(*) FROM billing.payment_operations WHERE order_id=%s", (item["id"],)
-        ).fetchone()[0]
-        == 2
-    )
-    assert (await read_order(p, org, item))["credit_state"] == "uncredited"
 
 
 async def test_stale_invalid_query_does_not_replace_a_newer_verified_credit(payments, admin):

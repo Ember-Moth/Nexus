@@ -9,4 +9,4 @@ class ModuleName(StrEnum):
     REPORTING = "reporting"
 
 
-SCHEMA_REVISION = "0048_superseded_gateway"
+SCHEMA_REVISION = "0001_baseline"

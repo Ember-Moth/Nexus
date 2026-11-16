@@ -172,7 +172,7 @@ catalog 按端点校验这些声明，publication 随快照发布；这些功能
 | `anthropic.messages.v1` | `input_tokens` 为普通输入，缓存读取和创建分别采集；创建总量与 5 分钟、1 小时分项核对。输出取可信终态的累计值。 | 普通输入 80、缓存读 20、创建 5 分钟缓存 10、输出从 2 累计到 7，最终四个收费量为 80、20、10、7。 |
 | `openai.responses.v1` | 从原始 usage 提取总输入、缓存命中和总输出；推理是输出子集。仅启用已映射的计价维度。另有缓存写入计数或其他收费项目的部署，须验证其语义和价格后才能开放。 | 在仅有普通输入、缓存读和输出的定价下，输入 100（缓存 25）、输出 20（推理 6），收费量为 75、25、20。 |
 
-字段缺失、有冲突、计数越界或未知收费维度时，保留可用事实并进入核对。不得为了通过现有 Worker 校验而发送 `fixture.*` 或补零。若厂商契约对特定可选字段规定了零值语义，在该格式版本的样本中单独证明。两种协议互转时，费用取决于实际调用的上游。用量包继续满足 v1 的 64 KiB 限制、扁平 `*_tokens` 键和最多 16 个计数字段，上游原始业务响应留在转发路径。[Anthropic 缓存用量](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) · [OpenAI Docs：Responses usage](https://developers.openai.com/api/reference/resources/responses/methods/create) · [入库约束](../migrations/sql/0008_gateway_protocol/events.sql)
+字段缺失、有冲突、计数越界或未知收费维度时，保留可用事实并进入核对。不得为了通过现有 Worker 校验而发送 `fixture.*` 或补零。若厂商契约对特定可选字段规定了零值语义，在该格式版本的样本中单独证明。两种协议互转时，费用取决于实际调用的上游。用量包继续满足 v1 的 64 KiB 限制、扁平 `*_tokens` 键和最多 16 个计数字段，上游原始业务响应留在转发路径。[Anthropic 缓存用量](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) · [OpenAI Docs：Responses usage](https://developers.openai.com/api/reference/resources/responses/methods/create) · [入库约束](../migrations/sql/0001_baseline/04_billing.sql)
 
 ## 一次请求如何执行
 

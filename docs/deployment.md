@@ -367,7 +367,7 @@ helm upgrade nexus deploy/helm/nexus -n nexus -f my-values.yaml --wait --timeout
 - **schema 未变化**：`helm rollback nexus <修订号>` 会滚回镜像和配置。回滚不会执行迁移钩子。
 - **schema 已变化**：`nexus migrate` 只会升级，旧版 API 在新 schema 上不会就绪。可选的做法：
   - 优先前滚，修复后再发一个新版本；
-  - 确需退回时，在维护窗口内用迁移角色执行 Alembic 降级（`alembic downgrade <修订>`，配置见 [`alembic.ini`](../alembic.ini)），再执行 `helm rollback`。部分修订在会丢失保留数据时会拒绝降级，此时整次降级回滚，不留下半降级的状态；
+  - 确需退回时，在维护窗口内用迁移角色执行 Alembic 降级（`alembic downgrade <修订>`，配置见 [`alembic.ini`](../alembic.ini)），再执行 `helm rollback`。部分修订在会丢失保留数据时会拒绝降级，此时整次降级回滚，不留下半降级的状态。基线 `0001_baseline` 的降级删除全部 Nexus 对象和数据，只用于测试和重装，不能当作回滚；
   - 最后的手段是把 PostgreSQL 恢复到升级前的时间点，见下文。这会丢失升级之后写入的数据。
 - 应用回滚不涉及数据层 release。
 

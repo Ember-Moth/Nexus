@@ -1,6 +1,6 @@
 """The built-in administrator and the first-run setup it must complete.
 
-Migration ``0047_builtin_admin`` creates the administrator with these defaults, and
+The baseline migration (``0001_baseline``) creates the administrator with these defaults, and
 ``nexus setup reset`` restores them. Until the setup wizard has stored a new email and password,
 the management API refuses everything except signing in and the wizard itself.
 """

@@ -161,7 +161,14 @@ class NativeServices:
         )
 
     def start(self) -> None:
-        for name in ("initdb", "pg_ctl", "redis-server"):
+        executable("redis-server")
+        self.start_postgres()
+        self.start_redis()
+        self.start_object_storage()
+
+    def start_postgres(self) -> None:
+        """Start PostgreSQL alone and provision its roles and database."""
+        for name in ("initdb", "pg_ctl"):
             executable(name)
         if not (self.pg_data / "PG_VERSION").exists():
             password_file = self.root / "initdb.password"
@@ -212,6 +219,8 @@ class NativeServices:
                 ]
             )
         self._provision_roles()
+
+    def start_redis(self) -> None:
         redis_config = self.root / "redis.conf"
         if not redis_config.exists():
             write_private(
@@ -249,7 +258,6 @@ class NativeServices:
                     if time.monotonic() >= deadline:
                         raise RuntimeError("isolated Redis did not become ready") from None
                 time.sleep(0.1)
-        self.start_object_storage()
 
     def _s3_pid(self) -> int | None:
         """The pid of this directory's moto server, if it is still that process."""

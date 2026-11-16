@@ -22,6 +22,7 @@ import http.client
 import json
 import os
 import pathlib
+import re
 import secrets
 import shlex
 import socket
@@ -547,7 +548,12 @@ def deploy_from_scratch(address, ingress, api):
     step("nexus: first install (relay.replicas=0); hooks provision, migrate, import policy")
     install_app()
     revision = psql("SELECT version_num FROM nexus_meta.alembic_version")
-    expect(revision.startswith("00"), "migration hook reached head", revision)
+    head = re.search(
+        r'^SCHEMA_REVISION = "(.+)"$',
+        (REPO / "src/nexus/shared/storage.py").read_text(),
+        re.M,
+    ).group(1)
+    expect(revision == head, "migration hook reached head", revision)
     expect("Database roles and grants" in job_log("nexus-provision-database"),
            "provision-database hook succeeded")  # fmt: skip
     imported = json.loads(job_log("nexus-policy-import").strip().splitlines()[-1])

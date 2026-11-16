@@ -1,6 +1,6 @@
 """The setup lock, the built-in administrator's defaults and the site description rules."""
 
-import importlib.util
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -103,21 +103,18 @@ def test_contract_declares_the_lock_on_every_locked_operation(settings_factory):
 
 def test_default_account_matches_the_migration_and_the_published_password():
     assert PasswordHasher().verify(DEFAULT_ADMIN_PASSWORD_HASH, DEFAULT_ADMIN_PASSWORD)
-    path = ROOT / "migrations/versions/0047_builtin_admin.py"
-    spec = importlib.util.spec_from_file_location("builtin_admin_migration", path)
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    assert (
-        migration.ADMIN_ID,
-        migration.ADMIN_LOGIN,
-        migration.ADMIN_EMAIL,
-        migration.ADMIN_PASSWORD_HASH,
-    ) == (
-        str(BUILTIN_ADMIN_ID),
-        BUILTIN_ADMIN_LOGIN,
-        DEFAULT_ADMIN_EMAIL,
-        DEFAULT_ADMIN_PASSWORD_HASH,
-    )
+    seed = (ROOT / "migrations/sql/0001_baseline/18_builtin_admin.sql").read_text()
+    values = re.search(r"INSERT INTO identity\.users \(([^)]*)\)\s*VALUES \(([^)]*)\);", seed)
+    columns = [c.strip() for c in values.group(1).split(",")]
+    row = dict(zip(columns, re.findall(r"'([^']*)'", values.group(2)), strict=True))
+    assert row == {
+        "id": str(BUILTIN_ADMIN_ID),
+        "login": BUILTIN_ADMIN_LOGIN,
+        "password_hash": DEFAULT_ADMIN_PASSWORD_HASH,
+        "status": "active",
+        "unverified_email": DEFAULT_ADMIN_EMAIL,
+    }
+    assert f"VALUES ('{BUILTIN_ADMIN_ID}', 'platform_admin');" in seed
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,7 @@ from nexus.shared.views import managed_source
 
 from ..application.schemas import SitePolicyView
 
-SITE_FIELDS = ("site_name", "console_url", "contact_email")
+SITE_FIELDS = ("site_name", "console_url", "api_url", "contact_email")
 SITE_COLUMNS = ",".join(
     (*SITE_FIELDS, "setup_completed_at", "version", "managed_sha256", "managed_at")
 )
@@ -51,7 +51,7 @@ class SiteRepository:
             params["managed"] = managed
         return await self._one(
             f"""UPDATE identity.site_policy SET site_name=:site_name,console_url=:console_url,
-                contact_email=:contact_email,version=version+1{lock}
+                api_url=:api_url,contact_email=:contact_email,version=version+1{lock}
             WHERE singleton AND version=:version RETURNING {SITE_COLUMNS}""",
             **params,
             version=version,
@@ -61,7 +61,7 @@ class SiteRepository:
         """Record the finished wizard together with its site description."""
         return await self._one(
             f"""UPDATE identity.site_policy SET site_name=:site_name,console_url=:console_url,
-                contact_email=:contact_email,setup_completed_at=clock_timestamp(),
+                api_url=:api_url,contact_email=:contact_email,setup_completed_at=clock_timestamp(),
                 version=version+1
             WHERE singleton RETURNING {SITE_COLUMNS}""",
             **{name: getattr(info, name) for name in SITE_FIELDS},

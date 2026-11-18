@@ -33,7 +33,8 @@ type Readiness = Callable[[], Awaitable[dict[str, str]]]
 type SetupOpen = Callable[[str, str], bool]
 
 # What the API answers before the built-in administrator completes the setup wizard: health, the
-# error catalog, the sign-in options, signing in and out, the current session and the wizard.
+# error catalog, the sign-in options, signing in and out, the current session, the wizard and the
+# mail settings its optional mail step edits.
 # Every other route, including routes added later, answers 409 setup_required.
 SETUP_OPEN_ROUTES = frozenset(
     {
@@ -47,6 +48,10 @@ SETUP_OPEN_ROUTES = frozenset(
         ("GET", "/api/v1/setup"),
         ("POST", "/api/v1/setup/email-verification"),
         ("POST", "/api/v1/setup"),
+        # The wizard's optional mail step.
+        ("GET", "/api/v1/settings/mail"),
+        ("PUT", "/api/v1/settings/mail"),
+        ("POST", "/api/v1/settings/mail/test"),
     }
 )
 # Payment provider notifications are not management calls. They carry their own signatures and

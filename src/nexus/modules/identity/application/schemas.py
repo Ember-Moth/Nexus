@@ -1,6 +1,8 @@
+import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from ipaddress import ip_address
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -515,8 +517,8 @@ class FinancialAccess:
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
-def console_address(value: str) -> str:
-    """The console's public address: HTTPS, or plain HTTP on a loopback host."""
+def public_address(value: str, name: str = "console URL") -> str:
+    """A public address of this site: HTTPS, or plain HTTP on a loopback host."""
     try:
         parsed = urlsplit(value)
         host = parsed.hostname
@@ -533,11 +535,12 @@ def console_address(value: str) -> str:
         _ = parsed.port  # raises ValueError on an invalid port
     except ValueError:
         raise ValueError(
-            "console URL must be an HTTP(S) URL without credentials, query or fragment"
+            f"{name} must be an HTTP(S) URL without credentials, query or fragment"
         ) from None
-    # Session cookies are Secure, which browsers accept on HTTPS and on loopback hosts only.
+    # Session cookies are Secure, which browsers accept on HTTPS and on loopback hosts only, and
+    # payment providers deliver notifications to HTTPS endpoints.
     if parsed.scheme == "http" and not (host in LOOPBACK_HOSTS or host.endswith(".localhost")):
-        raise ValueError("console URL must use HTTPS outside loopback hosts")
+        raise ValueError(f"{name} must use HTTPS outside loopback hosts")
     return value.rstrip("/")
 
 
@@ -552,6 +555,12 @@ class SiteInfo(Schema):
         max_length=2048,
         description="Public address of the management console; HTTPS except on loopback hosts. "
         "Payment checkouts return to it.",
+    )
+    api_url: str | None = Field(
+        default=None,
+        max_length=2048,
+        description="Public address of this API; HTTPS except on loopback hosts. Payment "
+        "providers send notifications to it; payments are unavailable until it is set.",
     )
     contact_email: str | None = Field(
         default=None, max_length=254, description="Where users reach the operators"
@@ -570,7 +579,12 @@ class SiteInfo(Schema):
     @field_validator("console_url")
     @classmethod
     def console(cls, value: str | None) -> str | None:
-        return console_address(value) if value is not None else None
+        return public_address(value) if value is not None else None
+
+    @field_validator("api_url")
+    @classmethod
+    def api(cls, value: str | None) -> str | None:
+        return public_address(value, "API URL") if value is not None else None
 
     @field_validator("contact_email")
     @classmethod
@@ -585,6 +599,7 @@ class SiteInfo(Schema):
 
 class SitePolicyView(SiteInfo):
     console_url: str | None
+    api_url: str | None
     contact_email: str | None
     setup_completed_at: datetime | None = Field(
         description="When the built-in administrator completed the setup wizard; "
@@ -633,3 +648,260 @@ class SetupCompletion(Schema):
         "delivery is available, ignored otherwise (the address is then stored unverified)",
     )
     password: SecretStr = Field(min_length=16, max_length=1024)
+
+
+# Secrets are write-only. A PUT that omits one keeps the stored value, a new value replaces it and
+# an explicit null removes it; the stored value is never returned.
+SECRET = (
+    "Write-only. Omit to keep the stored value, send a new value to replace it, or null to "
+    "remove it."
+)
+HOST_NAME = re.compile(
+    r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+
+
+def host_name(value: str, *, addresses: bool = False) -> str:
+    """A DNS host name in lower case; ``addresses`` also accepts an IP address."""
+    value = value.strip().lower()
+    if addresses:
+        try:
+            return str(ip_address(value.strip("[]")))
+        except ValueError:
+            pass
+    if not HOST_NAME.fullmatch(value):
+        raise ValueError("expected a host name without scheme, port or path")
+    return value
+
+
+def secret_text(value: SecretStr | None, *, spaces: bool) -> SecretStr | None:
+    """Secrets are single-line text; API keys and tokens have no white space at all."""
+    if value is None:
+        return None
+    raw = value.get_secret_value()
+    if any(unicodedata.category(char)[0] == "C" for char in raw) or (
+        not spaces and any(char.isspace() for char in raw)
+    ):
+        raise ValueError("the secret contains characters it cannot contain")
+    return value
+
+
+type MailProvider = Literal["smtp", "resend", "cloudflare"]
+
+
+class SmtpSettings(Schema):
+    host: str = Field(min_length=1, max_length=253, description="SMTP server host name or address")
+    port: int = Field(default=587, ge=1, le=65535)
+    security: Literal["starttls", "tls"] = Field(
+        default="starttls",
+        description="starttls upgrades a plain connection (usually port 587); tls connects "
+        "with TLS from the start (usually port 465)",
+    )
+    username: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=254,
+        description="Empty for a server that accepts mail without authentication",
+    )
+    password: SecretStr | None = Field(
+        default=None, min_length=1, max_length=1024, description=SECRET
+    )
+
+    @field_validator("host")
+    @classmethod
+    def server(cls, value: str) -> str:
+        return host_name(value, addresses=True)
+
+    @field_validator("password")
+    @classmethod
+    def password_text(cls, value):
+        return secret_text(value, spaces=True)
+
+
+class ResendSettings(Schema):
+    api_key: SecretStr | None = Field(
+        default=None, min_length=1, max_length=1024, description=SECRET
+    )
+
+    @field_validator("api_key")
+    @classmethod
+    def key_text(cls, value):
+        return secret_text(value, spaces=False)
+
+
+class CloudflareMailSettings(Schema):
+    account_id: str = Field(pattern=r"^[0-9a-fA-F]{32}$", description="Cloudflare account ID")
+    api_token: SecretStr | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1024,
+        description="API token with Email Sending permission. " + SECRET,
+    )
+
+    @field_validator("account_id")
+    @classmethod
+    def lower(cls, value: str) -> str:
+        return value.lower()
+
+    @field_validator("api_token")
+    @classmethod
+    def token_text(cls, value):
+        return secret_text(value, spaces=False)
+
+
+class MailSettings(Schema):
+    """The identity mail provider; a PUT replaces it.
+
+    Only the selected provider's section is stored; choosing another provider discards the
+    previous one together with its secret.
+    """
+
+    provider: MailProvider | None = Field(
+        description="null removes the configuration: identity mail is then unavailable"
+    )
+    sender: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=254,
+        description="From address; required with a provider",
+    )
+    smtp: SmtpSettings | None = Field(default=None, description="Required with provider smtp")
+    resend: ResendSettings | None = Field(
+        default=None, description="With provider resend; omit to keep the stored API key"
+    )
+    cloudflare: CloudflareMailSettings | None = Field(
+        default=None, description="Required with provider cloudflare"
+    )
+
+    @field_validator("sender")
+    @classmethod
+    def from_address(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return mailbox(value)
+        except IdentityError:
+            raise ValueError("sender must be a valid address") from None
+
+    @model_validator(mode="after")
+    def one_provider(self):
+        sections = {"smtp": self.smtp, "resend": self.resend, "cloudflare": self.cloudflare}
+        if self.provider is None:
+            if self.sender is not None or any(sections.values()):
+                raise ValueError("without a provider, leave sender and every section out")
+            return self
+        if self.sender is None:
+            raise ValueError("sender is required")
+        if any(value is not None for name, value in sections.items() if name != self.provider):
+            raise ValueError("only the selected provider's section may be present")
+        if self.provider != "resend" and sections[self.provider] is None:
+            raise ValueError(f"the {self.provider} section is required")
+        return self
+
+
+class SmtpView(Schema):
+    host: str
+    port: int
+    security: Literal["starttls", "tls"]
+    username: str | None
+    password_set: bool
+
+
+class ResendView(Schema):
+    api_key_set: bool
+
+
+class CloudflareMailView(Schema):
+    account_id: str
+    api_token_set: bool
+
+
+class ProviderStatus(Schema):
+    available: bool = Field(
+        description="Configured, and the stored secret can be decrypted with the current keys"
+    )
+    key_version: int | None = Field(
+        description="Encryption key version of the stored secret; every save re-encrypts it "
+        "with the current key"
+    )
+    managed: ManagedSource | None = Field(
+        description="The policy file that locked this policy; writes are refused while set"
+    )
+    version: int
+
+
+class MailPolicyView(ProviderStatus):
+    provider: MailProvider | None
+    sender: str | None
+    smtp: SmtpView | None
+    resend: ResendView | None
+    cloudflare: CloudflareMailView | None
+    required_by: list[Literal["registration", "email_verification"]] = Field(
+        description="Authentication switches that are on and need identity mail; the "
+        "configuration cannot be removed while any is on"
+    )
+
+
+class TurnstileSettings(Schema):
+    """Cloudflare Turnstile keys; a PUT replaces them. A new secret is checked with Siteverify."""
+
+    site_key: str | None = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[0-9A-Za-z_-]+$",
+        description="Public site key; null removes the configuration",
+    )
+    secret_key: SecretStr | None = Field(
+        default=None, min_length=1, max_length=1024, description=SECRET
+    )
+    hostname: str | None = Field(
+        default=None,
+        max_length=253,
+        description="Host name Siteverify must report; empty uses the host of the console "
+        "URL in the site policy",
+    )
+
+    @field_validator("hostname")
+    @classmethod
+    def widget_host(cls, value: str | None) -> str | None:
+        return host_name(value) if value else None
+
+    @field_validator("secret_key")
+    @classmethod
+    def key_text(cls, value):
+        return secret_text(value, spaces=False)
+
+    @model_validator(mode="after")
+    def keys_together(self):
+        if self.site_key is None and (self.secret_key is not None or self.hostname is not None):
+            raise ValueError("without a site key, leave the secret and hostname out")
+        return self
+
+
+class TurnstilePolicyView(ProviderStatus):
+    site_key: str | None
+    secret_key_set: bool
+    hostname: str | None
+    effective_hostname: str | None = Field(
+        description="The hostname Siteverify must report: the configured one, else the host "
+        "of the console URL"
+    )
+    required_by: list[Literal["turnstile"]] = Field(
+        description="Authentication switches that are on and need Turnstile; the configuration "
+        "cannot be removed while any is on"
+    )
+
+
+class MailTest(Schema):
+    recipient: str = Field(min_length=3, max_length=254)
+
+
+class MailTestResult(Schema):
+    accepted: bool = Field(description="The provider accepted the message for delivery")
+    provider: MailProvider
+    provider_status: int | str | None = Field(
+        description="HTTP or SMTP status of the provider's answer, when there was one"
+    )
+    detail: str | None = Field(
+        description="Summary of the provider's error; never contains credentials"
+    )

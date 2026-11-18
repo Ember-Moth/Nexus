@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2Icon, CircleAlertIcon, ShieldCheckIcon } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -9,6 +10,7 @@ import { useAuthOptions } from "@/components/auth-layout";
 import { ConflictAlert, Spinner } from "@/components/feedback";
 import { PcErrorAlert } from "@/components/platform-catalog/errors";
 import { SwitchRow } from "@/components/platform-catalog/form";
+import { MAIL_KEY, SETTINGS_LINKS, TURNSTILE_KEY, useMailPolicy, useTurnstilePolicy } from "@/components/provider-settings";
 import type { AuthPolicyView } from "@/components/platform-catalog/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,9 +22,10 @@ import { isConflict } from "@/lib/api/errors";
 const settingsKey = ["settings", "authentication"] as const;
 
 /**
- * GET /settings/authentication for the switches and the ETag, PUT with If-Match. Readiness hints
- * come from the public GET /auth/options (mail delivery; Turnstile keys are only reported once
- * enabled, so a missing key surfaces as the API's 409).
+ * GET /settings/authentication for the switches and the ETag, PUT with If-Match. Whether mail and
+ * Turnstile are usable comes from GET /settings/mail and /settings/turnstile: a switch whose
+ * provider is not ready cannot be turned on (it can always be turned off) and links to the
+ * settings tab that configures it.
  */
 export function AuthSettingsCard() {
   const t = useT();
@@ -83,6 +86,8 @@ function AuthSettingsForm({
   const t = useT();
   const queryClient = useQueryClient();
   const options = useAuthOptions();
+  const mail = useMailPolicy();
+  const turnstileKeys = useTurnstilePolicy();
   const [registration, setRegistration] = useState(policy.registration);
   const [emailVerification, setEmailVerification] = useState(policy.email_verification);
   const [turnstile, setTurnstile] = useState(policy.turnstile);
@@ -105,6 +110,8 @@ function AuthSettingsForm({
       toast.success(t("pc.auth.saved"));
       void queryClient.invalidateQueries({ queryKey: settingsKey });
       void queryClient.invalidateQueries({ queryKey: ["auth-options"] });
+      void queryClient.invalidateQueries({ queryKey: MAIL_KEY });
+      void queryClient.invalidateQueries({ queryKey: TURNSTILE_KEY });
     },
   });
 
@@ -113,7 +120,11 @@ function AuthSettingsForm({
     emailVerification !== policy.email_verification ||
     turnstile !== policy.turnstile;
   const conflict = isConflict(save.error);
-  const mailReady = options.data?.email_delivery_available;
+  const mailReady = mail.data?.data.available;
+  const turnstileReady = turnstileKeys.data?.data.available;
+  // A switch that is off cannot be turned on without its provider; one that is on can go off.
+  const mailBlocked = mailReady === false;
+  const turnstileBlocked = turnstileReady === false && !policy.turnstile;
 
   return (
     <div className="grid gap-3">
@@ -133,7 +144,7 @@ function AuthSettingsForm({
         label={t("pc.auth.registration")}
         hint={t("pc.auth.registrationHint")}
         checked={registration}
-        disabled={locked}
+        disabled={locked || (mailBlocked && !registration)}
         onChange={(next) => {
           setRegistration(next);
           // The API refuses open registration without email verification.
@@ -147,12 +158,17 @@ function AuthSettingsForm({
         label={t("pc.auth.emailVerification")}
         hint={registration ? t("pc.auth.emailVerificationLocked") : t("pc.auth.emailVerificationHint")}
         checked={emailVerification}
-        disabled={registration || locked}
+        disabled={registration || locked || (mailBlocked && !emailVerification)}
         onChange={setEmailVerification}
       >
-        {options.data ? (
-          <Readiness ok={Boolean(mailReady)} text={mailReady ? t("pc.auth.mailReady") : t("pc.auth.mailMissing")} />
-        ) : options.error ? (
+        {mail.data ? (
+          <Readiness
+            ok={Boolean(mailReady)}
+            text={mailReady ? t("pc.auth.mailReady") : t("pc.auth.mailMissing")}
+            href={SETTINGS_LINKS.mail}
+            link={t("pc.auth.mailConfigure")}
+          />
+        ) : mail.error ? (
           <Readiness ok={false} text={t("pc.auth.optionsUnavailable")} />
         ) : null}
       </SwitchRow>
@@ -161,11 +177,18 @@ function AuthSettingsForm({
         label={t("pc.auth.turnstile")}
         hint={t("pc.auth.turnstileHint")}
         checked={turnstile}
-        disabled={locked}
+        disabled={locked || (turnstileBlocked && !turnstile)}
         onChange={setTurnstile}
       >
         {options.data?.turnstile && options.data.turnstile_site_key ? (
-          <Readiness ok text={t("pc.auth.turnstileActive")} />
+          <Readiness ok text={t("pc.auth.turnstileActive")} href={SETTINGS_LINKS.turnstile} link={t("pc.auth.turnstileConfigure")} />
+        ) : turnstileKeys.data ? (
+          <Readiness
+            ok={Boolean(turnstileReady)}
+            text={turnstileReady ? t("pc.auth.turnstileReady") : t("pc.auth.turnstileMissing")}
+            href={SETTINGS_LINKS.turnstile}
+            link={t("pc.auth.turnstileConfigure")}
+          />
         ) : null}
       </SwitchRow>
       <div className="flex justify-end">
@@ -182,11 +205,16 @@ function AuthSettingsForm({
   );
 }
 
-function Readiness({ ok, text }: { ok: boolean; text: string }) {
+function Readiness({ ok, text, href, link }: { ok: boolean; text: string; href?: string; link?: string }) {
   return (
     <span className={ok ? "flex items-center gap-1 text-xs text-emerald-700" : "flex items-center gap-1 text-xs text-amber-700"}>
       {ok ? <CheckCircle2Icon className="size-3.5" aria-hidden /> : <CircleAlertIcon className="size-3.5" aria-hidden />}
       {text}
+      {href && link ? (
+        <Link href={href} className="ml-1 font-medium underline underline-offset-4">
+          {link}
+        </Link>
+      ) : null}
     </span>
   );
 }

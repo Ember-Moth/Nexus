@@ -101,7 +101,7 @@ k3s 上的镜像、Helm chart、三层配置和运维流程见[部署手册](dep
 - API、Worker 和迁移进程分别注入各自的凭据。运行时设置 `NEXUS_ENVIRONMENT=production`，PostgreSQL 连接使用 `sslmode=verify-full`，Redis 使用带认证的 `rediss://`。给每个网关节点登记独立的数据库身份。[网关权限与接入](plane-protocol.md)
 - API 与 Worker 使用相同的 Redis 命名空间和应用加密密钥版本。先将新旧密钥分发到相关进程，再轮换当前版本，并保留历史密文所需的旧密钥。[凭据轮换](catalog-api.md#凭据加密与轮换)
 - 账务币种是账务策略的 `currency`，默认 USD。在出现第一个账户、价格、收款账户或支付渠道之前选定，之后修改返回 409 `currency_locked`。
-- 启用充值前配置 HTTPS 通知站点（`NEXUS_PAYMENT_PUBLIC_BASE_URL`）、站点策略里的控制台地址和 live 商户渠道。先在相应商户环境验证付款、通知、查单及退款对账，再开放收款。启用收费模型前确认实际售价、成本、折扣、用量维度和可执行的输入输出上界。[支付接入](payments.md) · [定价与预算](billing-api.md)
+- 启用充值前在站点策略里填写 HTTPS 的 API 地址（支付通知）和控制台地址，并配置 live 商户渠道。先在相应商户环境验证付款、通知、查单及退款对账，再开放收款。启用收费模型前确认实际售价、成本、折扣、用量维度和可执行的输入输出上界。[支付接入](payments.md) · [定价与预算](billing-api.md)
 - 按部署容量确定积压阈值、连接预算、保留期、可接受的数据丢失量（RPO）和恢复时间（RTO）。还原时需同时具备数据库备份、应用密钥和网关集群密钥。按实际环境验证跨机恢复、流量峰值和故障切换。[验收与恢复演练](control-plane-acceptance.md)
 
 ### 三层配置
@@ -110,9 +110,9 @@ k3s 上的镜像、Helm chart、三层配置和运维流程见[部署手册](dep
 
 | 层 | 放什么 | 何时生效 |
 | --- | --- | --- |
-| Secret | 含凭据的连接串和密钥：`NEXUS_DATABASE_URL`、`NEXUS_MIGRATION_DATABASE_URL`、`NEXUS_REDIS_URL`、`NEXUS_ENCRYPTION_KEY`、`NEXUS_PREVIOUS_ENCRYPTION_KEYS`、`NEXUS_AUTH_PROXY_SECRET`、`NEXUS_SMTP_PASSWORD`、`NEXUS_RESEND_API_KEY`、`NEXUS_CLOUDFLARE_EMAIL_API_TOKEN`、`NEXUS_TURNSTILE_SECRET_KEY`、`NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID`、`NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY`；Relay 的 `NEXUS_RELAY_DATABASE_URL`、`NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_PRIVATE_KEY` | 进程重启 |
-| ConfigMap（`envFrom` 注入） | 启动参数和单个进程或节点的资源上限：`NEXUS_ENVIRONMENT`、`NEXUS_PROCESS_ROLE`、`NEXUS_HOST`、`NEXUS_PORT`、`NEXUS_ENCRYPTION_KEY_VERSION`、连接池、`NEXUS_WORKER_ID`、`NEXUS_REDIS_NAMESPACE`、`NEXUS_LOG_LEVEL`、`NEXUS_DEPENDENCY_TIMEOUT`、`NEXUS_SHUTDOWN_TIMEOUT`、`NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL`、`NEXUS_AUTO_PUBLISH_POLL_SECONDS`、Argon2 并发、迁移超时、支付通知地址、发信服务商与 Turnstile 的非密钥参数、`NEXUS_AUTH_PROXY_PEERS`、对象存储的 `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION`；Relay 的监听地址、命名空间、上游 CA 路径和单节点上限（见[Relay 运行配置](relay-development.md#运行配置)）；Web 的 5 个变量 | 进程重启 |
-| 数据库策略表 | 运营方随时调整、要求全局一致或按企业区分的业务策略（下表） | API 与 Worker 约 2 秒；Relay 随集群的下一次发布 |
+| Secret | 含凭据的连接串和密钥：`NEXUS_DATABASE_URL`、`NEXUS_MIGRATION_DATABASE_URL`、`NEXUS_REDIS_URL`、`NEXUS_ENCRYPTION_KEY`、`NEXUS_PREVIOUS_ENCRYPTION_KEYS`、`NEXUS_AUTH_PROXY_SECRET`、`NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID`、`NEXUS_OBJECT_STORAGE_SECRET_ACCESS_KEY`；Relay 的 `NEXUS_RELAY_DATABASE_URL`、`NEXUS_RELAY_REDIS_URL`、`NEXUS_RELAY_PRIVATE_KEY` | 进程重启 |
+| ConfigMap（`envFrom` 注入） | 启动参数和单个进程或节点的资源上限：`NEXUS_ENVIRONMENT`、`NEXUS_PROCESS_ROLE`、`NEXUS_HOST`、`NEXUS_PORT`、`NEXUS_ENCRYPTION_KEY_VERSION`、连接池、`NEXUS_WORKER_ID`、`NEXUS_REDIS_NAMESPACE`、`NEXUS_LOG_LEVEL`、`NEXUS_DEPENDENCY_TIMEOUT`、`NEXUS_SHUTDOWN_TIMEOUT`、`NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL`、`NEXUS_AUTO_PUBLISH_POLL_SECONDS`、Argon2 并发、迁移超时、`NEXUS_AUTH_PROXY_PEERS`、对象存储的 `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION`；Relay 的监听地址、命名空间、上游 CA 路径和单节点上限（见[Relay 运行配置](relay-development.md#运行配置)）；Web 的 5 个变量 | 进程重启 |
+| 数据库策略表 | 运营方随时调整、要求全局一致或按企业区分的业务策略（下表），包括发信服务商和 Turnstile：它们的密钥用 `NEXUS_ENCRYPTION_KEY` 加密后存在表里 | API 与 Worker 约 2 秒；Relay 随集群的下一次发布 |
 
 ConfigMap 还可以挂载一个策略文件，在 Helm 安装或升级时由 `nexus settings import` 写入数据库：用它给新部署填初始值，或把一部分策略组交给 Git 管理（锁定后后台只读）。文件格式和 Job 示例见[运维：策略文件导入](operations.md#策略文件导入)。
 
@@ -124,7 +124,9 @@ k3s 部署的 chart 按这三层组织：Secret 只按名称和键引用（由 E
 
 | 策略组 | 表 | 接口 | 何时生效 |
 | --- | --- | --- | --- |
-| `identity.site_policy`：站点名称（控制台与身份邮件）、控制台公开地址（充值返回页）、联系邮箱；初始化是否完成和完成时间只读，不能导入 | `identity.site_policy` | `GET/PUT /api/v1/settings/site` | 2 秒内，所有 API 与 Worker 进程 |
+| `identity.site_policy`：站点名称（控制台与身份邮件）、控制台公开地址（充值返回页）、API 公开地址（支付通知）、联系邮箱；初始化是否完成和完成时间只读，不能导入 | `identity.site_policy` | `GET/PUT /api/v1/settings/site` | 2 秒内，所有 API 与 Worker 进程 |
+| `identity.mail_policy`：发信服务商（SMTP、Resend、Cloudflare）、发件地址和该服务商的参数，密钥加密存放 | `identity.mail_policy` | `GET/PUT /api/v1/settings/mail`，`POST /api/v1/settings/mail/test` | 2 秒内，所有 API 与 Worker 进程 |
+| `identity.turnstile_policy`：Turnstile 站点密钥、加密的密钥和主机名 | `identity.turnstile_policy` | `GET/PUT /api/v1/settings/turnstile` | 2 秒内，所有 API 进程 |
 | `identity.auth_policy`：注册与验证开关、登录与身份邮件限额、会话与密码设置凭据有效期、保留登录名、平台角色邮件找回 | `identity.auth_policy` | `GET/PUT /api/v1/settings/authentication` | 2 秒内，所有 API 与 Worker 进程 |
 | `billing.policy`：账务币种、向量存储预付天数与到期策略、支付调用与通知限额 | `billing.settings` | `GET/PUT /api/v1/settings/billing` | 2 秒内；Worker 在每个账务事务中读取 |
 | `reporting.export_policy`：导出频率、保留时间、行数上限 | `reporting.export_policy` | `GET/PUT /api/v1/settings/reporting` | 下一次导出 |

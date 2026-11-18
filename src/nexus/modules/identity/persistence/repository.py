@@ -44,6 +44,7 @@ from .models import (
 )
 from .policies import PolicyRepository
 from .projects import ApplicationRepository
+from .providers import ProviderRepository
 from .site import SiteRepository
 
 
@@ -734,6 +735,7 @@ class IdentityUnitOfWork:
         self.applications = ApplicationRepository(session)
         self.policies = PolicyRepository(session)
         self.site = SiteRepository(session)
+        self.providers = ProviderRepository(session)
         return self
 
     async def __aexit__(

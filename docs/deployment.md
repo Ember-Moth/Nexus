@@ -44,7 +44,7 @@ Nexus 在 k3s 上从单节点起步：内置 etcd、一台 server 同时承载�
 | --- | --- | --- | --- |
 | 密钥 | 连接口令、加密密钥、集群私钥、共享密钥、第三方凭据 | Kubernetes Secret，chart 只引用名称和键 | External Secrets 或 SOPS；改后重启读取它的组件 |
 | 启动参数 | 非敏感的启动参数、单节点资源上限 | 每个组件一个 ConfigMap，由 values 的 `config.*` 生成，`envFrom` 注入 | `helm upgrade`；checksum 注解使对应组件滚动重启 |
-| 业务策略 | 运营方随时调整、要求全局一致或按企业区分的策略：认证与邮件限额、账务币种与支付限额、导出、资源数量默认值、Relay 集群策略 | 数据库各模块的策略表，以数据库为准，见[数据库中的策略](development.md#数据库中的策略) | 管理后台“平台 → 设置”或 `/api/v1/settings/*`；values 的 `policy.groups` 经导入 Job 写入初始值或锁定由 Git 管理的组 |
+| 业务策略 | 运营方随时调整、要求全局一致或按企业区分的策略：站点地址、发信服务商与 Turnstile（密钥加密存放）、认证与邮件限额、账务币种与支付限额、导出、资源数量默认值、Relay 集群策略 | 数据库各模块的策略表，以数据库为准，见[数据库中的策略](development.md#数据库中的策略) | 管理后台“平台 → 设置”或 `/api/v1/settings/*`；values 的 `policy.groups` 经导入 Job 写入初始值或锁定由 Git 管理的组 |
 
 应用不读写 k3s 的 etcd，也不调用 Kubernetes API。唯一调用 Kubernetes API 的是 Relay 节点登记 Job，它只读写节点登录 Secret。
 
@@ -61,7 +61,7 @@ chart 中不出现任何明文。生产用 [External Secrets 示例](../deploy/e
 | `nexus-auth-proxy` | `secret`（至少 32 个字符） | 管理后台和 API |
 | `nexus-relay-cluster` | `private-key`（Base64 的 32 字节 Curve25519 私钥） | Relay |
 | `nexus-relay-node-<序号>` | `username`、`password`、`node-id` | 只有该序号 Relay Pod 的 init 容器；由登记 Job 创建，也可预先由 External Secrets 提供 |
-| `nexus-integrations` | `smtp-password`、`resend-api-key`、`cloudflare-email-api-token`、`turnstile-secret-key`，均可选 | API、Worker |
+| `policy.secrets` 指定的 Secret（示例名 `nexus-policy-secrets`），可选 | 任意键，例如 `smtp-password`、`turnstile-secret-key` | 只挂载到策略导入 Job 的 `/etc/nexus/policy-secrets/`，策略文件用 `{file: /etc/nexus/policy-secrets/<键>}` 引用；导入时加密写入数据库，API 和 Worker 不读取这个 Secret |
 | `nexus-deployer` | `login`、`password` | Relay 节点登记 Job 用这个平台管理员登录 |
 | `nexus-backup-r2` | `ACCESS_KEY_ID`、`ACCESS_SECRET_KEY`、`ACCESS_REGION`（R2 为 `auto`） | CloudNativePG 的 WAL 归档和备份；备份 bucket 的 R2 API Token |
 | `nexus-app-r2` | `ACCESS_KEY_ID`、`ACCESS_SECRET_KEY` | API、Worker、策略导入 Job，必需；应用 bucket 的 R2 API Token：API 用它签发导出下载地址，Worker 用它上传和删除导出文件 |
@@ -90,7 +90,10 @@ values 的 `policy.groups` 渲染成策略文件 `policy.yaml`（`{version: 1, g
 
 | 组 | 对应接口 | `values` 示例 |
 | --- | --- | --- |
+| `identity.site_policy` | `PUT /api/v1/settings/site` | `{site_name: Nexus, console_url: "https://console.example.com", api_url: "https://api.example.com"}` |
 | `identity.auth_policy` | `PUT /api/v1/settings/authentication` | `{sign_in: {per_ip: 100}}` |
+| `identity.mail_policy` | `PUT /api/v1/settings/mail` | `{provider: smtp, sender: nexus@example.com, smtp: {host: smtp.example.com, username: nexus, password: {file: /etc/nexus/policy-secrets/smtp-password}}}` |
+| `identity.turnstile_policy` | `PUT /api/v1/settings/turnstile` | `{site_key: 0x4AAAAAAA..., secret_key: {file: /etc/nexus/policy-secrets/turnstile-secret-key}}` |
 | `billing.policy` | `PUT /api/v1/settings/billing` | `{currency: USD}`，只能在出现第一个账户、价格、收款账户或支付渠道之前设定 |
 | `reporting.export_policy` | `PUT /api/v1/settings/reporting` | `{exports: {max_rows: 20000}}` |
 | `catalog.quota_defaults` | `PUT /api/v1/settings/resource-quotas` | `{vector_stores_per_key: 50}` |
@@ -101,11 +104,11 @@ values 的 `policy.groups` 渲染成策略文件 `policy.yaml`（`{version: 1, g
 - `initial`：只在该组从未被修改过时写入，之后以管理后台为准，下次部署不会覆盖后台的修改。对已锁定的组声明 `initial` 会解除锁定。
 - `managed`：由 Git 管理。每次部署都用文件值覆盖所列字段，并锁定整组：后台设置页只读，接口写请求返回 409 `policy_managed_externally`。
 
-`values` 可以只写部分字段，没写的字段保持数据库现值；文件里没有的组不受影响。单个集群和单个企业的覆盖值属于运行时数据，在后台或接口中维护，不进文件。`policy.groups` 为空时不渲染导入 Job。`policy.dryRun: true` 只在 Job 日志中输出将会发生的变化，不写入。
+`values` 可以只写部分字段，没写的字段保持数据库现值；文件里没有的组不受影响。发信和 Turnstile 的密钥字段只接受引用（`{file: 路径}` 或 `{env: 变量名}`），在导入 Job 里解析后加密存入数据库，写明文会使整个文件被拒绝，所以 values 可以放进 Git。单个集群和单个企业的覆盖值属于运行时数据，在后台或接口中维护，不进文件。`policy.groups` 为空时不渲染导入 Job。`policy.dryRun: true` 只在 Job 日志中输出将会发生的变化，不写入。
 
 ### 环境变量归属
 
-与[三层配置](development.md#三层配置)一致，每个变量只有一个来源。业务策略不再有环境变量。“派生”指 chart 自动生成，不需要配置。
+与[三层配置](development.md#三层配置)一致，每个变量只有一个来源。业务策略不再有环境变量：发信服务商、Turnstile 和 API 的公开地址（支付通知）也在数据库里，见[发信与 Turnstile 配置](identity-api.md#发信与-turnstile-配置)和[站点策略](identity-api.md#站点策略)。“派生”指 chart 自动生成，不需要配置。
 
 | 变量 | 层 | 说明 |
 | --- | --- | --- |
@@ -115,7 +118,6 @@ values 的 `policy.groups` 渲染成策略文件 `policy.yaml`（`{version: 1, g
 | `NEXUS_REDIS_URL` | 密钥 | `rediss://`，口令来自 `nexus-redis`，`ssl_ca_certs` 指向挂载的 CA |
 | `NEXUS_ENCRYPTION_KEY`、`NEXUS_PREVIOUS_ENCRYPTION_KEYS` | 密钥 | `nexus-encryption` |
 | `NEXUS_AUTH_PROXY_SECRET` | 密钥 | API 与管理后台共用 |
-| `NEXUS_SMTP_PASSWORD`、`NEXUS_RESEND_API_KEY`、`NEXUS_CLOUDFLARE_EMAIL_API_TOKEN`、`NEXUS_TURNSTILE_SECRET_KEY` | 密钥 | `nexus-integrations`，均可选 |
 | `NEXUS_ENCRYPTION_KEY_VERSION` | 启动参数 | `config.controlPlane`，与 `nexus-encryption` 中的当前密钥对应，轮换时两者在同一次发布中修改 |
 | `NEXUS_ENVIRONMENT`、`NEXUS_LOG_LEVEL`、`NEXUS_REDIS_NAMESPACE`、`NEXUS_DEPENDENCY_TIMEOUT`、`NEXUS_SHUTDOWN_TIMEOUT` | 启动参数 | `config.controlPlane` |
 | `NEXUS_PROCESS_ROLE` | — | 由 `nexus api` / `nexus worker` 命令决定，不需要设置 |
@@ -125,9 +127,6 @@ values 的 `policy.groups` 渲染成策略文件 `policy.yaml`（`{version: 1, g
 | `NEXUS_AUTH_PROXY_PEERS` | 启动参数 | 默认 k3s Pod 网段 `["10.42.0.0/16"]`，见[客户端 IP](#真实客户端-ip) |
 | `NEXUS_WORKER_ID` | 派生 | Worker 的 Pod 名 |
 | `NEXUS_WORKER_INTERVAL`、`NEXUS_WORKER_HEARTBEAT_TTL`、`NEXUS_AUTO_PUBLISH_POLL_SECONDS` | 启动参数 | Worker。自动发布的静默时间和最长延迟是 `publication.cluster_defaults` 策略 |
-| `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM`、`NEXUS_SMTP_HOST`、`NEXUS_SMTP_PORT`、`NEXUS_SMTP_SECURITY`、`NEXUS_SMTP_USERNAME`、`NEXUS_CLOUDFLARE_EMAIL_ACCOUNT_ID` | 启动参数 | 发信服务商的非密钥参数 |
-| `NEXUS_TURNSTILE_SITE_KEY`、`NEXUS_TURNSTILE_HOSTNAME` | 启动参数 | 是否启用 Turnstile 是 `identity.auth_policy` 策略 |
-| `NEXUS_PAYMENT_PUBLIC_BASE_URL` | 启动参数 | API 的公开地址，用于支付通知，生产环境必须是 HTTPS。充值完成后的返回页是站点策略的控制台地址（`identity.site_policy.console_url`），不是环境变量 |
 | `NEXUS_MOCK_PAYMENT_URL` | — | 生产环境禁止设置 |
 | `NEXUS_MIGRATION_LOCK_TIMEOUT_MS`、`NEXUS_MIGRATION_STATEMENT_TIMEOUT_MS` | 启动参数 | `config.migrate`，只进迁移 Job |
 | `NEXUS_OBJECT_STORAGE_ENDPOINT_URL`、`NEXUS_OBJECT_STORAGE_BUCKET`、`NEXUS_OBJECT_STORAGE_REGION` | 派生 | 来自 `objectStorage.*`，API、Worker 和策略导入 Job 都必需；`objectStorage.endpointURL` 没有默认值，不填时 chart 渲染失败。见[对象存储](#对象存储cloudflare-r2) |
@@ -377,7 +376,7 @@ Secret 的变化不会触发 checksum 重启（checksum 只跟踪 ConfigMap）�
 
 | 密钥 | 步骤 |
 | --- | --- |
-| 应用加密密钥 | 以当前版本 1 换成版本 2 为例。1. 在 `nexus-encryption` 中设置 `previous-encryption-keys` 为 `{"2":"<新密钥>"}`，重启 API 和 Worker，让所有实例都能解密版本 2；2. 把 `encryption-key` 改为新密钥、`previous-encryption-keys` 改为 `{"1":"<旧密钥>"}`，同时把 values 的 `config.controlPlane.NEXUS_ENCRYPTION_KEY_VERSION` 改为 `"2"`，执行 `helm upgrade`（ConfigMap 变化会滚动 API 和 Worker）。旧记录不会自动重新加密：仍有密文引用旧版本时，旧密钥必须保留。按[凭据轮换](catalog-api.md#凭据加密与轮换)重建上游凭据之后，才能删除旧版本 |
+| 应用加密密钥 | 以当前版本 1 换成版本 2 为例。1. 在 `nexus-encryption` 中设置 `previous-encryption-keys` 为 `{"2":"<新密钥>"}`，重启 API 和 Worker，让所有实例都能解密版本 2；2. 把 `encryption-key` 改为新密钥、`previous-encryption-keys` 改为 `{"1":"<旧密钥>"}`，同时把 values 的 `config.controlPlane.NEXUS_ENCRYPTION_KEY_VERSION` 改为 `"2"`，执行 `helm upgrade`（ConfigMap 变化会滚动 API 和 Worker）。旧记录不会自动重新加密：仍有密文引用旧版本时，旧密钥必须保留。按[凭据轮换](catalog-api.md#凭据加密与轮换)重建上游凭据，并在“平台 → 设置”的邮件、人机验证标签各保存一次（或重新导入策略文件中的这两组）把发信和 Turnstile 密钥重新加密到新版本（`GET /settings/mail`、`GET /settings/turnstile` 的 `key_version` 可以确认）之后，才能删除旧版本 |
 | 数据库口令 | 更新 basic-auth Secret。带 `cnpg.io/reload` 标签时 CloudNativePG 会立即修改角色口令，之后马上执行 `kubectl rollout restart deploy/nexus-api deploy/nexus-worker`。已建立的连接不受影响，旧 Pod 新建连接会失败，直到重启完成。外部数据库模式下，执行 `helm upgrade` 由建库 Job 修改口令 |
 | Relay 节点口令 | 修改 `nexus-relay-node-<n>` 的 `password`，执行 `helm upgrade`（登记 Job 会把登录口令改成 Secret 中的值），再 `kubectl rollout restart statefulset/nexus-relay` |
 | 集群私钥 | 生成新密钥对，用 `PATCH /gateway-clusters/{id}` 提交新公钥并设置 `key_grace_seconds`，然后更新 `nexus-relay-cluster`，并在宽限期内滚动重启 Relay |
@@ -386,6 +385,7 @@ Secret 的变化不会触发 checksum 重启（checksum 只跟踪 ConfigMap）�
 | k3s Secret 加密密钥 | `k3s secrets-encrypt rotate-keys`，完成后用 `k3s secrets-encrypt status` 确认 |
 | TLS 证书 | cert-manager 自动续期。Redis 不会重新加载证书文件，内部证书有效期为 1 年、提前 30 天续期，续期后要重启 Redis |
 | 部署账号 | 在后台修改 `deployer` 的密码，并同步更新 `nexus-deployer` |
+| 发信与 Turnstile 密钥 | 在后台“平台 → 设置 → 邮件 / 人机验证”填写新值，保存后几秒内所有 API 和 Worker 生效，不需要重启。由策略文件 `managed` 管理时，更新 `policy.secrets` 引用的 Secret 后执行 `helm upgrade`，导入 Job 会写入新值 |
 
 ### 重置内置管理员
 
@@ -483,7 +483,8 @@ etcd 快照里本来就有后两样，但它们必须独立保存一份：只有
 - [ ] ACME 证书签发成功；HTTP 跳转到 HTTPS；HSTS 已生效。
 - [ ] NetworkPolicy 生效：管理后台连不上 5432/6379，入口访问不到 Relay 的 9464、`/live`、`/ready` 和 API 的 `/internal`；Prometheus 能抓取指标。
 - [ ] 告警已配置：Relay 指标（[建议告警](operations.md#指标)）、API `/internal/metrics/prometheus`、CloudNativePG、证书到期、etcd 快照失败。
-- [ ] `NEXUS_ENVIRONMENT=production`，没有设置 `NEXUS_MOCK_PAYMENT_URL`，发信和 Turnstile 已配置。
+- [ ] `NEXUS_ENVIRONMENT=production`，没有设置 `NEXUS_MOCK_PAYMENT_URL`。
+- [ ] 发信和 Turnstile 已在“平台 → 设置”配置且显示可用，测试邮件已送达；站点策略的控制台地址和 API 地址已填写（支付通知需要 API 地址）。
 - [ ] `policy.groups` 中每组的模式（`initial` 或 `managed`）已确定，`billing.policy.currency` 已按业务设定，策略导入 Job 成功。
 
 **业务**

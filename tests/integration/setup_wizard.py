@@ -16,6 +16,8 @@ ADMIN_EMAIL = "root-admin@corp.internal"
 SITE = {
     "site_name": "Nexus",
     "console_url": "https://console.nexus.test",
+    # Payment providers notify this address; payments are unavailable without it.
+    "api_url": "https://control.nexus.test",
     "contact_email": "operators@corp.internal",
 }
 
@@ -32,7 +34,7 @@ def restore_builtin_admin(admin):
         (BUILTIN_ADMIN_ID,),
     )
     admin.execute(
-        "UPDATE identity.site_policy SET site_name=DEFAULT,console_url=DEFAULT,"
+        "UPDATE identity.site_policy SET site_name=DEFAULT,console_url=DEFAULT,api_url=DEFAULT,"
         "contact_email=DEFAULT,setup_completed_at=NULL,version=1,managed_sha256=NULL,"
         "managed_at=NULL"
     )

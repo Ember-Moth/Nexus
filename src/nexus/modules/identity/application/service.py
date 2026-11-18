@@ -10,7 +10,9 @@ from ..domain.errors import IdentityError, forbidden, missing, unauthorized
 from ..domain.logins import canonical_login, new_login
 from ..domain.tokens import digest_token
 from .authorization import AccessControl
+from .delivery import ProviderSettings
 from .email_auth import EmailAuthentication
+from .imports import PolicyImports
 from .ports import AuthLimits, Cursor, MailLimits, Passwords, TransactionFactory
 from .schemas import (
     CurrentUser,
@@ -36,7 +38,7 @@ def email_spelling(value: str) -> str | None:
         return None
 
 
-class IdentityService(EmailAuthentication, SiteSetup):
+class IdentityService(EmailAuthentication, SiteSetup, ProviderSettings, PolicyImports):
     async def platform_roles(self, token, user_id):
         async with self._access.authenticated(token) as (tx, actor):
             self._access.platform_admin(actor)
@@ -192,6 +194,7 @@ class IdentityService(EmailAuthentication, SiteSetup):
         *,
         providers,
         mail_cipher,
+        provider_cipher,
         mail_limits: MailLimits,
         login_hash_slots: int = 2,
         account_hash_slots: int = 1,
@@ -203,11 +206,15 @@ class IdentityService(EmailAuthentication, SiteSetup):
         self._auth_limits = auth_limits
         self.providers = providers
         self.cipher = mail_cipher
+        # Secrets of the mail provider and of Turnstile, stored in their policy rows.
+        self._provider_cipher = provider_cipher
         self._mail_limits = mail_limits
         # Limits, lifetimes and reserved logins; the switches are always read fresh.
         self._settings = CachedPolicy(self._read_policy)
         # Site description and whether the setup wizard has been completed.
         self._site = CachedPolicy(self._read_site)
+        # The mail provider and Turnstile keys, decrypted.
+        self._providers = CachedPolicy(self._load_providers)
         # Sign-in has its own Argon2 slots: a flood of sign-ups, resets or mailbox proofs can
         # only queue behind each other.
         self._login_slots = asyncio.Semaphore(login_hash_slots)

@@ -37,15 +37,18 @@ def create_service(
     *,
     settings,
     mail_cipher,
+    provider_cipher,
     mail_limits: MailLimits,
 ) -> IdentityService:
+    """``mail_cipher`` seals queued mail tokens, ``provider_cipher`` the provider secrets."""
     database.require_module(ModuleName.IDENTITY)
     return IdentityService(
         lambda: IdentityUnitOfWork(database),
         Argon2Passwords(),
         auth_limits,
-        providers=AuthProviders(settings),
+        providers=AuthProviders(),
         mail_cipher=mail_cipher,
+        provider_cipher=provider_cipher,
         mail_limits=mail_limits,
         login_hash_slots=settings.login_hash_concurrency,
         account_hash_slots=settings.account_hash_concurrency,

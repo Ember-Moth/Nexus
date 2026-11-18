@@ -11,6 +11,7 @@ from test_billing import account_amounts, balance, finance_role, headers
 from test_identity_api import auth, create_org, login
 
 from nexus.api import create_app
+from nexus.shared.policy import POLICY_TTL_SECONDS
 from scripts.mock_payment_provider import MockPaymentProvider
 
 pytestmark = pytest.mark.integration
@@ -29,7 +30,6 @@ async def payments(runtime_settings):
     settings = runtime_settings.model_copy(
         update={
             "mock_payment_url": provider.url,
-            "payment_public_base_url": "https://control.nexus.test",
             "redis_namespace": "nexus:payments-test:" + uuid4().hex,
         }
     )
@@ -120,6 +120,20 @@ async def test_payment_end_to_end_uses_gross_amount_and_one_funding_record(payme
 
     await publish_discount(p.client, p.root, org, "0.5")
     chan = await channel(p)
+    # Without the API address of the site, providers could not notify us: no order starts.
+    admin.execute("UPDATE identity.site_policy SET api_url=NULL,version=version+1")
+    await asyncio.sleep(POLICY_TTL_SECONDS + 0.1)
+    refused = await p.client.post(
+        f"/api/v1/organizations/{org['id']}/payment-orders",
+        headers=headers(p.root, uuid4().hex),
+        json={"channel_id": chan["id"], "amount": "10", "currency": "USD"},
+    )
+    assert refused.status_code == 503, refused.text
+    assert refused.json()["error"]["code"] == "payment_endpoints_unconfigured"
+    admin.execute(
+        "UPDATE identity.site_policy SET api_url='https://control.nexus.test',version=version+1"
+    )
+    await asyncio.sleep(POLICY_TTL_SECONDS + 0.1)
     item = await order(p, org, chan, key="new-payment")
     assert item["credit_state"] == "uncredited" and item["checkout"] is None
     # The payer returns to the organization's recharge page at the site's console address.
@@ -845,7 +859,6 @@ async def test_worker_process_recovers_payment_without_a_callback(
             os.environ,
             NEXUS_ENVIRONMENT="test",
             NEXUS_MOCK_PAYMENT_URL=p.provider.url,
-            NEXUS_PAYMENT_PUBLIC_BASE_URL="https://control.nexus.test",
             NEXUS_WORKER_ID="payment-integration-worker",
         ),
         stdout=asyncio.subprocess.DEVNULL,

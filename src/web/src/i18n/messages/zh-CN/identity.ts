@@ -100,7 +100,8 @@ const id = {
   wizard: {
     title: "初始化",
     subtitle: "首次使用前，请填写站点信息，并把内置管理员的默认邮箱和密码换成你自己的。完成前，管理 API 只接受登录和本向导。",
-    steps: { site: "站点信息", email: "管理员邮箱", password: "新密码" },
+    steps: { site: "站点信息", mail: "邮件", email: "管理员邮箱", password: "新密码" },
+    skip: "跳过",
     stepOf: "第 {current} / {total} 步",
     next: "下一步",
     back: "上一步",
@@ -117,10 +118,18 @@ const id = {
       consoleUrl: "控制台地址（可选）",
       consoleUrlHint: "用户访问本控制台的公开地址，支付完成后会回到这里。除本机地址外必须是 HTTPS。",
       consoleUrlInvalid: "请填写 https:// 开头的地址（本机可用 http://），不含账号、查询参数或 #",
+      apiUrl: "API 地址（可选）",
+      apiUrlHint: "支付服务商访问本 API 的公开地址，用于充值通知；不填则支付渠道不可用，之后可在“平台 → 设置 → 站点”补填。",
+      apiUrlInvalid: "请填写 https:// 开头的地址（本机可用 http://），不含账号、查询参数或 #",
       contactEmail: "联系邮箱（可选）",
       contactEmailHint: "用户联系运营方的邮箱",
       managedTitle: "由策略文件管理",
       managedBody: "站点信息已由 nexus settings import 锁定，这里只读。要修改请提交策略文件。",
+    },
+    mail: {
+      intro: "配置发送身份邮件（注册、绑定邮箱、找回密码）的服务商，可以先发一封测试邮件确认能收到。也可以跳过，之后在“平台 → 设置 → 邮件”配置。",
+      configured: "发信已配置。下一步会给管理员的新邮箱发送验证令牌。",
+      skipped: "跳过后，管理员邮箱会记为未验证。",
     },
     email: {
       current: "内置管理员的默认邮箱 {email} 是公开的，请换成你能收信的邮箱。完成后可以用新邮箱或登录名 admin 登录。",

@@ -120,6 +120,15 @@ def reset_identity(admin):
         f"turnstile=false,{unlocked}," + ",".join(f"{c}=DEFAULT" for c in IDENTITY_POLICY)
     )
     admin.execute(
+        "UPDATE identity.mail_policy SET provider=NULL,sender=NULL,smtp_host=NULL,"
+        "smtp_port=DEFAULT,smtp_security=DEFAULT,smtp_username=NULL,"
+        f"cloudflare_account_id=NULL,credential=NULL,key_version=NULL,{unlocked}"
+    )
+    admin.execute(
+        "UPDATE identity.turnstile_policy SET site_key=NULL,hostname=NULL,credential=NULL,"
+        f"key_version=NULL,{unlocked}"
+    )
+    admin.execute(
         "UPDATE billing.settings SET currency=DEFAULT,vector_storage_prepaid_days=DEFAULT,"
         "vector_storage_lapse_policy=DEFAULT,payment_requests_per_merchant_per_minute=DEFAULT,"
         "payment_notification_per_channel=DEFAULT,payment_notification_per_ip=DEFAULT,"
@@ -162,10 +171,10 @@ async def http(runtime_settings):
 
 
 @pytest.fixture
-def delivery(http):
+async def delivery(http):
     client, root, app, settings = http
     mail = app.state.identity_service
-    messages, challenges = install_mail(mail, settings)
+    messages, challenges = await install_mail(client, root, mail)
     return client, root, mail, messages, challenges
 
 

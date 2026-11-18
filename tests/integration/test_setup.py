@@ -101,6 +101,7 @@ async def test_reinstall_state_signs_in_with_the_default_account(fresh, admin):
         "site": {
             "site_name": "Nexus",
             "console_url": None,
+            "api_url": None,
             "contact_email": None,
             "setup_completed_at": None,
             "managed": None,
@@ -219,6 +220,7 @@ async def test_wizard_without_mail_replaces_the_default_credentials(fresh, admin
         "email_verified": False,
         "site": {
             "console_url": [None, SITE["console_url"]],
+            "api_url": [None, SITE["api_url"]],
             "contact_email": [None, SITE["contact_email"]],
         },
     }
@@ -271,8 +273,9 @@ async def test_racing_sessions_leave_exactly_one_administrator(fresh, admin):
 async def test_wizard_with_mail_requires_a_verified_address(fresh, admin):
     client, app, settings = fresh
     service = app.state.identity_service
-    messages, _ = install_mail(service, settings)
     token = await sign_in(client)
+    # The wizard's optional mail step: the mail settings are open before setup is complete.
+    messages, _ = await install_mail(client, token, service, turnstile=False)
     assert (await client.get(API + "/setup", headers=auth(token))).json()[
         "email_delivery_available"
     ] is True

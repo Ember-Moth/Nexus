@@ -34,8 +34,8 @@ def missing(resource_id: UUID) -> IdentityError:
 class MailRejected(Exception):
     """The provider refused this message for good; sending it again cannot succeed."""
 
-    def __init__(self, status: int | str | None) -> None:
-        super().__init__("message rejected by the mail provider")
+    def __init__(self, status: int | str | None, detail: str | None = None) -> None:
+        super().__init__(detail or "message rejected by the mail provider")
         self.status = status
 
 

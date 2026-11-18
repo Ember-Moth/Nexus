@@ -58,8 +58,6 @@ secrets:
   redis: nexus-redis
   # Key "private-key": base64 of the gateway cluster's 32-byte Curve25519 private key.
   relayCluster: nexus-relay-cluster
-  # Optional keys: smtp-password, resend-api-key, cloudflare-email-api-token, turnstile-secret-key.
-  integrations: nexus-integrations
   # Platform administrator the relay-node Job signs in as to register principals.
   # Keys: login, password. Not needed while relay.replicas is 0.
   deployer: nexus-deployer
@@ -143,19 +141,6 @@ config:
     NEXUS_ENCRYPTION_KEY_VERSION: "1"
     NEXUS_DEPENDENCY_TIMEOUT: "3"
     NEXUS_SHUTDOWN_TIMEOUT: "10"
-    # Identity mail transport (credentials are in secrets.integrations).
-    # NEXUS_MAIL_PROVIDER: smtp
-    # NEXUS_MAIL_FROM: nexus@example.com
-    # NEXUS_SMTP_HOST: smtp.example.com
-    # NEXUS_SMTP_PORT: "587"
-    # NEXUS_SMTP_SECURITY: starttls
-    # NEXUS_SMTP_USERNAME: nexus
-    # NEXUS_CLOUDFLARE_EMAIL_ACCOUNT_ID: ""
-    # NEXUS_TURNSTILE_SITE_KEY: ""
-    # NEXUS_TURNSTILE_HOSTNAME: console.example.com
-    # Public API origin for payment notifications (HTTPS in production). Payers return to the
-    # console URL of the site policy (identity.site_policy), set in the setup wizard.
-    # NEXUS_PAYMENT_PUBLIC_BASE_URL: https://api.example.com
   api:
     NEXUS_DB_POOL_SIZE: "5"
     NEXUS_DB_MAX_OVERFLOW: "0"
@@ -217,15 +202,23 @@ config:
 #            is authoritative and later deploys do not overwrite it. Also unlocks the group.
 #   managed  written on every deploy and locked: the console shows the group read-only and the
 #            API answers 409 policy_managed_externally.
-# Groups: identity.site_policy, identity.auth_policy, billing.policy, reporting.export_policy,
-# catalog.quota_defaults, publication.cluster_defaults. identity.site_policy holds the site name,
-# console URL and contact email; whether setup is complete cannot be imported. Per-cluster and per-organization overrides are runtime data and
-# are not part of the file.
+# Groups: identity.site_policy, identity.auth_policy, identity.mail_policy,
+# identity.turnstile_policy, billing.policy, reporting.export_policy, catalog.quota_defaults,
+# publication.cluster_defaults. identity.site_policy holds the site name, the console and API
+# URLs and the contact email; whether setup is complete cannot be imported. identity.mail_policy
+# and identity.turnstile_policy hold the mail provider and the Turnstile keys; their secrets are
+# never values here, only references to keys of policy.secrets. Per-cluster and
+# per-organization overrides are runtime data and are not part of the file.
 # ---------------------------------------------------------------------------------------------
 policy:
   enabled: true
   # Report the changes without writing them (the Job log shows the plan).
   dryRun: false
+  # Optional Secret mounted read-only into the import Job only (never into the API or Worker) at
+  # /etc/nexus/policy-secrets. A secret field refers to one of its keys:
+  #   {file: /etc/nexus/policy-secrets/<key>}
+  # The importer encrypts the value into the database; the API and Worker read it from there.
+  secrets: ""
   groups: {}
   # Example:
   #   billing.policy:
@@ -234,6 +227,15 @@ policy:
   #   publication.cluster_defaults:
   #     mode: managed
   #     values: {relay: {max_attempts: 3}}
+  #   identity.mail_policy:
+  #     mode: managed
+  #     values:
+  #       provider: smtp
+  #       sender: nexus@example.com
+  #       smtp:
+  #         host: smtp.example.com
+  #         username: nexus
+  #         password: {file: /etc/nexus/policy-secrets/smtp-password}
 
 # ---------------------------------------------------------------------------------------------
 # Workloads

@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState, type ReactNode } from "react";
 
 import { EmptyState, ErrorAlert } from "@/components/feedback";
 import { PageContainer, PageHeader } from "@/components/page";
+import { MailSettingsCard, TurnstileSettingsCard } from "@/components/provider-settings";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -38,6 +40,14 @@ const SITE: PolicyGroup[] = [
         path: "console_url",
         label: "st.site.fields.console_url",
         hint: "st.site.hints.console_url",
+        kind: "text",
+        max: 2048,
+        optional: true,
+      },
+      {
+        path: "api_url",
+        label: "st.site.fields.api_url",
+        hint: "st.site.hints.api_url",
         kind: "text",
         max: 2048,
         optional: true,
@@ -241,20 +251,42 @@ function Note({ children }: { children: ReactNode }) {
   return <p className="text-xs text-muted-foreground">{children}</p>;
 }
 
+const TABS = ["site", "identity", "mail", "turnstile", "billing", "reporting", "quotas", "clusters"] as const;
+type Tab = (typeof TABS)[number];
+
 /**
  * Platform settings by module. Each card is one policy resource with its own version and audit
  * trail; API and worker processes apply a change within seconds, gateway nodes from the next
- * release of their cluster.
+ * release of their cluster. `?tab=` opens a tab directly (the users page links to mail and
+ * turnstile).
  */
 export default function PlatformSettingsPage() {
+  return (
+    <Suspense>
+      <PlatformSettings />
+    </Suspense>
+  );
+}
+
+function PlatformSettings() {
   const t = useT();
+  const router = useRouter();
+  const params = useSearchParams();
+  const requested = params.get("tab");
+  const tab: Tab = TABS.includes(requested as Tab) ? (requested as Tab) : "site";
   return (
     <PageContainer>
       <PageHeader title={t("st.title")} description={t("st.description")} />
-      <Tabs defaultValue="site" className="gap-4">
-        <TabsList>
+      <Tabs
+        value={tab}
+        onValueChange={(next) => router.replace(`/platform/settings?tab=${next}`, { scroll: false })}
+        className="gap-4"
+      >
+        <TabsList className="flex-wrap">
           <TabsTrigger value="site">{t("st.tabs.site")}</TabsTrigger>
           <TabsTrigger value="identity">{t("st.tabs.identity")}</TabsTrigger>
+          <TabsTrigger value="mail">{t("st.tabs.mail")}</TabsTrigger>
+          <TabsTrigger value="turnstile">{t("st.tabs.turnstile")}</TabsTrigger>
           <TabsTrigger value="billing">{t("st.tabs.billing")}</TabsTrigger>
           <TabsTrigger value="reporting">{t("st.tabs.reporting")}</TabsTrigger>
           <TabsTrigger value="quotas">{t("st.tabs.quotas")}</TabsTrigger>
@@ -276,11 +308,16 @@ export default function PlatformSettingsPage() {
             }
             groups={SITE}
             facts={(policy) => (
-              <Note>
-                {policy.setup_completed_at
-                  ? t("st.site.completed", { at: formatDateTime(policy.setup_completed_at) })
-                  : t("st.site.pending")}
-              </Note>
+              <>
+                <Note>
+                  {policy.setup_completed_at
+                    ? t("st.site.completed", { at: formatDateTime(policy.setup_completed_at) })
+                    : t("st.site.pending")}
+                </Note>
+                {!policy.console_url || !policy.api_url ? (
+                  <p className="text-xs text-amber-700">{t("st.site.paymentsBlocked")}</p>
+                ) : null}
+              </>
             )}
           />
         </TabsContent>
@@ -302,6 +339,12 @@ export default function PlatformSettingsPage() {
             groups={IDENTITY}
             footer={<Note>{t("st.identity.switches")}</Note>}
           />
+        </TabsContent>
+        <TabsContent value="mail">
+          <MailSettingsCard />
+        </TabsContent>
+        <TabsContent value="turnstile">
+          <TurnstileSettingsCard />
         </TabsContent>
         <TabsContent value="billing">
           <BillingCard />

@@ -26,6 +26,10 @@ from ..application.schemas import (
     InvitationIssued,
     InvitationView,
     Login,
+    MailPolicyView,
+    MailSettings,
+    MailTest,
+    MailTestResult,
     MemberCreate,
     MemberListItem,
     MemberPatch,
@@ -48,6 +52,8 @@ from ..application.schemas import (
     SetupStatus,
     SiteInfo,
     SitePolicyView,
+    TurnstilePolicyView,
+    TurnstileSettings,
     UserCreate,
     UserView,
     VerificationPending,
@@ -255,6 +261,7 @@ def create_router(
             "email_verification_required",
             "invalid_verification_token",
             "policy_managed_externally",
+            "turnstile_in_use",
             "authentication_unavailable",
         ),
     )
@@ -277,12 +284,95 @@ def create_router(
     @router.put(
         "/settings/site",
         response_model=SitePolicyView,
-        responses=business_errors("version_conflict", "policy_managed_externally"),
+        responses=business_errors(
+            "version_conflict", "policy_managed_externally", "turnstile_in_use"
+        ),
     )
     async def update_site_policy(
         body: SiteInfo, service: Service, token: Token, version: Version, response: Response
     ):
         result = await service.update_site_policy(token, body, version)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.get("/settings/mail", response_model=MailPolicyView)
+    async def mail_policy(service: Service, token: Token, response: Response):
+        """The identity mail provider without its secret; platform administrators only.
+
+        Open while setup is pending, for the wizard's optional mail step.
+        """
+        result = await service.mail_policy(token)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.put(
+        "/settings/mail",
+        response_model=MailPolicyView,
+        responses=business_errors(
+            "invalid_mail_settings",
+            "mail_in_use",
+            "credential_unavailable",
+            "policy_managed_externally",
+        ),
+    )
+    async def update_mail_policy(
+        body: MailSettings, service: Service, token: Token, version: Version, response: Response
+    ):
+        """Replace the identity mail provider; omitted secrets keep their stored value.
+
+        Removing the provider is refused with mail_in_use while email verification is on. API
+        and Worker processes use the change within seconds, without a restart.
+        """
+        result = await service.update_mail_policy(token, body, version)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.post(
+        "/settings/mail/test",
+        response_model=MailTestResult,
+        responses=business_errors(
+            "invalid_email", "mail_unavailable", "rate_limited", "authentication_unavailable"
+        ),
+    )
+    async def test_mail(body: MailTest, service: Service, token: Token, request: Request):
+        """Send a test message with the stored settings and report the provider's answer.
+
+        Counts against the identity mail budgets and is audited. A refusal or an unreachable
+        provider is reported in the result, with the provider's error summarized.
+        """
+        return await service.send_test_mail(token, body.recipient, peer(request))
+
+    @router.get("/settings/turnstile", response_model=TurnstilePolicyView)
+    async def turnstile_policy(service: Service, token: Token, response: Response):
+        """Turnstile keys without the secret; platform administrators only."""
+        result = await service.turnstile_policy(token)
+        response.headers["ETag"] = f'"{result.version}"'
+        return result
+
+    @router.put(
+        "/settings/turnstile",
+        response_model=TurnstilePolicyView,
+        responses=business_errors(
+            "invalid_turnstile_settings",
+            "invalid_turnstile_secret",
+            "turnstile_in_use",
+            "turnstile_unavailable",
+            "credential_unavailable",
+            "policy_managed_externally",
+        ),
+    )
+    async def update_turnstile_policy(
+        body: TurnstileSettings,
+        service: Service,
+        token: Token,
+        version: Version,
+        response: Response,
+    ):
+        """Replace the Turnstile keys; a new secret key is checked with Siteverify first.
+
+        Removing the keys is refused with turnstile_in_use while Turnstile is on.
+        """
+        result = await service.update_turnstile_policy(token, body, version)
         response.headers["ETag"] = f'"{result.version}"'
         return result
 

@@ -12,6 +12,7 @@ import { Field } from "@/components/platform-catalog/form";
 import { useSignOut } from "@/components/shell/user-menu";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { MailSettingsForm, useMailPolicy } from "@/components/provider-settings";
 import { Input } from "@/components/ui/input";
 import { useT } from "@/i18n/provider";
 import { call, nexus } from "@/lib/api/client";
@@ -25,8 +26,9 @@ const DEFAULT_PASSWORD = "password";
 // Documentation domains the server refuses for the administrator (RFC 2606 and RFC 6761).
 const RESERVED_DOMAINS = ["example.com", "example.net", "example.org", "example", "test", "invalid", "localhost", "local"];
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const STEPS = ["site", "email", "password"] as const;
-type Step = 0 | 1 | 2;
+const STEPS = ["site", "mail", "email", "password"] as const;
+type Step = 0 | 1 | 2 | 3;
+const LAST: Step = 3;
 
 const isEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
@@ -37,7 +39,7 @@ function reservedEmail(value: string) {
 }
 
 /** Mirrors the API: HTTPS, or HTTP on a loopback host; no credentials, query or fragment. */
-function consoleUrlValid(value: string) {
+function publicUrlValid(value: string) {
   try {
     const url = new URL(value);
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return false;
@@ -50,14 +52,14 @@ function consoleUrlValid(value: string) {
 /** The step a rejected submission belongs to, from its error code or field location. */
 function stepOf(error: ApiError): Step | null {
   if (["email_reserved", "invalid_email", "email_in_use", "email_verification_required", "invalid_verification_token"].includes(error.code)) {
-    return 1;
+    return 2;
   }
-  if (error.code === "policy_managed_externally") return 0;
-  if (error.code === "invalid_password") return 2;
+  if (error.code === "policy_managed_externally" || error.code === "turnstile_in_use") return 0;
+  if (error.code === "invalid_password") return 3;
   const field = error.fields?.[0]?.location[1];
   if (field === "site") return 0;
-  if (field === "email" || field === "email_token") return 1;
-  if (field === "password") return 2;
+  if (field === "email" || field === "email_token") return 2;
+  if (field === "password") return 3;
   return null;
 }
 
@@ -116,7 +118,7 @@ export function SetupWizard() {
 function Steps({ current }: { current: Step }) {
   const t = useT();
   return (
-    <ol className="grid grid-cols-3 gap-2" aria-label={t("id.wizard.stepOf", { current: current + 1, total: STEPS.length })}>
+    <ol className="grid grid-cols-4 gap-2" aria-label={t("id.wizard.stepOf", { current: current + 1, total: STEPS.length })}>
       {STEPS.map((name, index) => {
         const done = index < current;
         const active = index === current;
@@ -146,6 +148,7 @@ function WizardForm({ status }: { status: SetupStatus }) {
     site_name: status.site.site_name,
     // A first visit proposes the address the browser is using right now.
     console_url: status.site.console_url ?? (managed ? "" : window.location.origin),
+    api_url: status.site.api_url ?? "",
     contact_email: status.site.contact_email ?? "",
   });
   const [email, setEmail] = useState("");
@@ -160,7 +163,8 @@ function WizardForm({ status }: { status: SetupStatus }) {
   const address = email.trim();
   const problems = {
     site_name: !site.site_name.trim() || site.site_name.trim().length > 100,
-    console_url: site.console_url.trim() !== "" && !consoleUrlValid(site.console_url.trim()),
+    console_url: site.console_url.trim() !== "" && !publicUrlValid(site.console_url.trim()),
+    api_url: site.api_url.trim() !== "" && !publicUrlValid(site.api_url.trim()),
     contact_email: site.contact_email.trim() !== "" && !isEmail(site.contact_email.trim()),
     email: !isEmail(address) ? "id.shared.emailInvalid" : reservedEmail(address) ? "id.wizard.email.reserved" : null,
     token: mailed && (sentTo !== address || !token.trim()),
@@ -173,7 +177,9 @@ function WizardForm({ status }: { status: SetupStatus }) {
     confirm: confirm !== password,
   } as const;
   const stepValid = [
-    managed || !(problems.site_name || problems.console_url || problems.contact_email),
+    managed || !(problems.site_name || problems.console_url || problems.api_url || problems.contact_email),
+    // Mail is optional: skipping it keeps the address unverified.
+    true,
     !problems.email && !problems.token,
     !problems.password && !problems.confirm,
   ];
@@ -181,6 +187,7 @@ function WizardForm({ status }: { status: SetupStatus }) {
   const siteBody = (): SiteInfo => ({
     site_name: site.site_name.trim(),
     console_url: site.console_url.trim() || null,
+    api_url: site.api_url.trim() || null,
     contact_email: site.contact_email.trim() || null,
   });
 
@@ -216,7 +223,12 @@ function WizardForm({ status }: { status: SetupStatus }) {
             body: {
               // A managed site description is sent back exactly as the policy file set it.
               site: managed
-                ? { site_name: status.site.site_name, console_url: status.site.console_url, contact_email: status.site.contact_email }
+                ? {
+                    site_name: status.site.site_name,
+                    console_url: status.site.console_url,
+                    api_url: status.site.api_url,
+                    contact_email: status.site.contact_email,
+                  }
                 : siteBody(),
               email: address,
               email_token: mailed ? token.trim() : null,
@@ -248,7 +260,7 @@ function WizardForm({ status }: { status: SetupStatus }) {
     event.preventDefault();
     setTouched(true);
     if (!stepValid[step]) return;
-    if (step < 2) go((step + 1) as Step);
+    if (step < LAST) go((step + 1) as Step);
     else void finish();
   };
 
@@ -300,6 +312,23 @@ function WizardForm({ status }: { status: SetupStatus }) {
             />
           </Field>
           <Field
+            id="api-url"
+            label={t("id.wizard.site.apiUrl")}
+            hint={t("id.wizard.site.apiUrlHint")}
+            error={touched && problems.api_url && !managed ? t("id.wizard.site.apiUrlInvalid") : undefined}
+          >
+            <Input
+              id="api-url"
+              type="url"
+              inputMode="url"
+              disabled={managed}
+              placeholder="https://api.example.com"
+              value={site.api_url}
+              aria-invalid={(touched && problems.api_url && !managed) || undefined}
+              onChange={(event) => setSite({ ...site, api_url: event.target.value })}
+            />
+          </Field>
+          <Field
             id="contact-email"
             label={t("id.wizard.site.contactEmail")}
             hint={t("id.wizard.site.contactEmailHint")}
@@ -318,7 +347,9 @@ function WizardForm({ status }: { status: SetupStatus }) {
         </div>
       ) : null}
 
-      {step === 1 ? (
+      {step === 1 ? <WizardMail mailed={mailed} /> : null}
+
+      {step === 2 ? (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">{t("id.wizard.email.current", { email: DEFAULT_EMAIL })}</p>
           <Field
@@ -378,7 +409,7 @@ function WizardForm({ status }: { status: SetupStatus }) {
         </div>
       ) : null}
 
-      {step === 2 ? (
+      {step === 3 ? (
         <div className="flex flex-col gap-4">
           <Field
             id="new-password"
@@ -420,9 +451,44 @@ function WizardForm({ status }: { status: SetupStatus }) {
         </Button>
         <Button type="submit" disabled={submitting}>
           {submitting ? <Spinner /> : null}
-          {step < 2 ? t("id.wizard.next") : submitting ? t("id.wizard.submitting") : t("id.wizard.submit")}
+          {step === 1 && !mailed
+            ? t("id.wizard.skip")
+            : step < LAST
+              ? t("id.wizard.next")
+              : submitting
+                ? t("id.wizard.submitting")
+                : t("id.wizard.submit")}
         </Button>
       </div>
     </form>
+  );
+}
+
+/** The optional mail step: the same mail settings as Platform → Settings → Mail. */
+function WizardMail({ mailed }: { mailed: boolean }) {
+  const t = useT();
+  const query = useMailPolicy();
+  const view = query.data?.data;
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-muted-foreground">{t("id.wizard.mail.intro")}</p>
+      {query.error && !view ? (
+        <ErrorAlert error={query.error} onRetry={() => void query.refetch()} />
+      ) : view ? (
+        <MailSettingsForm
+          key={view.version}
+          view={view}
+          etag={query.data?.etag ?? `"${view.version}"`}
+          reloading={query.isFetching}
+          onReload={() => void query.refetch()}
+          compact
+        />
+      ) : (
+        <div className="flex justify-center py-6 text-muted-foreground">
+          <Spinner />
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground">{mailed ? t("id.wizard.mail.configured") : t("id.wizard.mail.skipped")}</p>
+    </div>
   );
 }

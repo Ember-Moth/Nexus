@@ -61,26 +61,54 @@
 平台管理员读取 `GET /settings/authentication`，用返回的 ETag 作为 `If-Match` 调用 `PUT /settings/authentication`，提交包含 `"registration":true,"email_verification":true,"turnstile":false` 的完整策略。三项默认关闭，省略 `registration` 视为关闭。同一资源还包含下文的限额、有效期和保留登录名，PUT 时一并提交，见[身份策略](#身份策略)。
 
 - `registration` 控制自助注册，只能与 `email_verification` 同时开启，否则返回 422 `registration_requires_email_verification`；数据库约束同样禁止这种组合。不验证就开放注册时，注册响应必然暴露登录名是否已存在，任何人也能不拥有邮箱就批量开户，因此不再允许。关闭注册后，尚未确认的注册也无法完成。
-- `email_verification` 需要已配置发信渠道。
-- Turnstile 需在 API 进程配置 `NEXUS_TURNSTILE_SITE_KEY`、`NEXUS_TURNSTILE_SECRET_KEY` 和实际展示组件的 `NEXUS_TURNSTILE_HOSTNAME`。
+- `email_verification` 需要可用的发信配置，打开时未配置返回 503 `mail_unavailable`。
+- `turnstile` 需要可用的 Turnstile 配置，打开时未配置返回 409 `turnstile_not_configured`。
 
-API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所选渠道凭据。邮箱验证或密码找回需要运行 Worker。[配置示例](../.env.example)
+只在开关从关到开时检查对应配置；开关保持开启时修改限额等其他字段不受影响。
 
-| 渠道 | `NEXUS_MAIL_PROVIDER` | 渠道配置 |
+### 发信与 Turnstile 配置
+
+发信服务商和 Turnstile 密钥保存在数据库的 `identity.mail_policy` 和 `identity.turnstile_policy`（各一行，带版本号），平台管理员在管理后台“平台 → 设置 → 邮件 / 人机验证”或通过下面的接口修改，不需要环境变量，也不需要重启。
+
+| 接口 | 行为 |
+| --- | --- |
+| `GET /settings/mail` | 发信配置，不含密钥原文：每个密钥只给出是否已设置（`password_set`、`api_key_set`、`api_token_set`）。另有 `available`（已配置且密钥能用当前密钥环解密）、`required_by`（正在依赖它的开关）、`key_version`、`managed`、`version`，ETag 为版本号 |
+| `PUT /settings/mail` | 带 `If-Match` 整体替换，见下文的密钥写法 |
+| `POST /settings/mail/test` | 提交 `{"recipient": ...}`，用已保存的配置同步发送一封测试邮件，返回 `accepted`、`provider_status` 和服务商错误摘要 `detail`（不含密钥）。计入[发信限额](#发信限额)，写审计 `mail_policy.test_sent` |
+| `GET /settings/turnstile` | `site_key`、`secret_key_set`、`hostname`、`effective_hostname`（实际校验的主机名）、`available`、`required_by` 等 |
+| `PUT /settings/turnstile` | 带 `If-Match` 整体替换；提交了新的 `secret_key` 时先调用 Siteverify 校验 |
+
+`PUT /settings/mail` 的请求体是 `provider`（`smtp`、`resend`、`cloudflare` 或 null）、`sender`（发件地址）和所选服务商的一节，只保存所选服务商的参数，换服务商时原来那一节连同密钥一起删除：
+
+| 服务商 | 请求体 | 说明 |
 | --- | --- | --- |
-| SMTP | `smtp` | 设置 `NEXUS_SMTP_HOST`。默认端口 587、`NEXUS_SMTP_SECURITY=starttls`。隐式 TLS 使用 `tls` 并设置相应端口。需要认证时同时设置 `NEXUS_SMTP_USERNAME` 和 `NEXUS_SMTP_PASSWORD` |
-| Resend | `resend` | 设置 `NEXUS_RESEND_API_KEY` 并使用可发信的地址。Worker 按发送任务 ID 传递幂等键。[Resend Send Email](https://resend.com/docs/api-reference/emails/send-email) |
-| Cloudflare Email Service | `cloudflare` | 设置 `NEXUS_CLOUDFLARE_EMAIL_ACCOUNT_ID` 和 `NEXUS_CLOUDFLARE_EMAIL_API_TOKEN`，使用已开通 Email Sending 的发件域。[Cloudflare Email Service REST API](https://developers.cloudflare.com/email-service/api/send-emails/rest-api/) |
+| SMTP | `"smtp": {"host", "port", "security", "username", "password"}` | 默认端口 587、`security` 为 `starttls`；隐式 TLS 用 `tls` 并设置相应端口。`username` 为空表示不认证，此时不保存密码；填写 `username` 时必须有密码 |
+| Resend | `"resend": {"api_key"}` | 使用可发信的地址。Worker 按发送任务 ID 传递幂等键。[Resend Send Email](https://resend.com/docs/api-reference/emails/send-email) |
+| Cloudflare Email Service | `"cloudflare": {"account_id", "api_token"}` | 使用已开通 Email Sending 的发件域，令牌需要 Email Sending 权限。[Cloudflare Email Service REST API](https://developers.cloudflare.com/email-service/api/send-emails/rest-api/) |
+
+密钥字段（`password`、`api_key`、`api_token`、Turnstile 的 `secret_key`）只写不读：省略表示保留已保存的值，提交新值表示替换，显式写 `null` 表示删除。缺少必需的密钥返回 422 `invalid_mail_settings` 或 `invalid_turnstile_settings`。`provider: null` 删除整个发信配置，`site_key: null` 删除 Turnstile 配置。
+
+- 邮箱验证或注册开着时不能删除发信配置，返回 409 `mail_in_use`；Turnstile 开着时不能删除其配置，返回 409 `turnstile_in_use`。先关开关，再删配置。
+- `hostname` 为空时，Turnstile 使用站点策略控制台地址（`console_url`）的主机名；两者都没有时返回 422 `invalid_turnstile_settings`。Turnstile 开着并依赖控制台地址时，修改或清空 `console_url` 而使其失效的站点更新返回 409 `turnstile_in_use`。
+- 新的 Turnstile 密钥用一个不可能有效的令牌调用 Siteverify：返回 `invalid-input-response` 说明密钥有效（Cloudflare 的测试密钥直接返回成功），返回 `invalid-input-secret` 或 `missing-input-secret` 时拒绝保存（422 `invalid_turnstile_secret`），Siteverify 不可达时返回 503 `turnstile_unavailable`。只提交站点密钥或主机名时不调用。
+- 密钥用应用加密密钥（`NEXUS_ENCRYPTION_KEY`）派生的专用密钥以 AES-256-GCM 加密，绑定所属策略和服务商，并记录密钥版本。每次保存都会用当前密钥重新加密已保存的密钥，所以[轮换应用加密密钥](deployment.md#密钥轮换)之后，在后台保存一次即可迁到新版本；旧版本无法解密时，配置显示为不可用，保存时要重新填写密钥。
+- 写入和测试发送都记审计（`mail_policy.updated`、`turnstile_policy.updated`、`mail_policy.test_sent`），密钥只记录“已设置 / 已替换 / 已删除”。
+
+API 和 Worker 进程各自缓存解密后的配置，最长 2 秒后重新读取，所以修改在几秒内对所有进程生效；发起修改的进程立即生效。身份邮件（注册、绑定、找回）由 Worker 发送：API 只把带加密令牌的任务写入 `identity.email_challenges`，邮箱验证或密码找回需要运行 Worker。测试邮件由收到请求的 API 进程直接发送，以便返回服务商的结果。
+
+策略文件也可以设置这两组（`identity.mail_policy`、`identity.turnstile_policy`），见[策略文件导入](operations.md#策略文件导入)；`managed` 锁定后后台只读。
 
 ## 初始化向导
 
-迁移创建内置管理员：登录名 `admin`、邮箱 `admin@example.com`、密码 `password`，持有 `platform_admin`。默认账号是公开的，所以完成初始化之前，管理 API 只放行健康检查、`GET /error-codes`、`GET /auth/options`、`POST /auth/sessions`、`DELETE /auth/sessions/current`、`GET /me` 和下表三个接口，其余接口（包括自助注册、找回与重置密码、兑换凭据和接受邀请）一律在鉴权之前返回 409 `setup_required`。这段时间 `GET /auth/options` 的 `registration` 总是 false。支付服务商通知（`/webhooks/...`）不是管理接口，照常处理。部署方式和重置命令见[初始管理员](development.md#初始管理员)。
+迁移创建内置管理员：登录名 `admin`、邮箱 `admin@example.com`、密码 `password`，持有 `platform_admin`。默认账号是公开的，所以完成初始化之前，管理 API 只放行健康检查、`GET /error-codes`、`GET /auth/options`、`POST /auth/sessions`、`DELETE /auth/sessions/current`、`GET /me`、下表三个接口，以及向导可选的“邮件”步骤使用的 `GET/PUT /settings/mail` 和 `POST /settings/mail/test`，其余接口（包括自助注册、找回与重置密码、兑换凭据和接受邀请）一律在鉴权之前返回 409 `setup_required`。这段时间 `GET /auth/options` 的 `registration` 总是 false。支付服务商通知（`/webhooks/...`）不是管理接口，照常处理。部署方式和重置命令见[初始管理员](development.md#初始管理员)。
 
 | 接口 | 行为 |
 | --- | --- |
 | `GET /setup` | 任何已登录账号可读：`required`（是否还需初始化）、`builtin_admin`（调用者是否为内置管理员）、`email_delivery_available`，以及站点策略 `site` |
 | `POST /setup/email-verification` | 仅内置管理员。提交 `{"email": ...}`，向新邮箱发送验证令牌，返回 202；未配置发信时返回 503 `mail_unavailable`。再次请求会使旧令牌失效 |
-| `POST /setup` | 仅内置管理员（其他账号 403 `forbidden`）。提交 `site`（`site_name`、`console_url`、`contact_email`）、`email`、`password`，配置了发信时还要提交 `email_token`。成功返回 200 和新的 `GET /setup` 结果 |
+| `POST /setup` | 仅内置管理员（其他账号 403 `forbidden`）。提交 `site`（`site_name`、`console_url`、`api_url`、`contact_email`）、`email`、`password`，配置了发信时还要提交 `email_token`。成功返回 200 和新的 `GET /setup` 结果 |
+
+向导的步骤依次是站点、邮件（可跳过）、管理员邮箱、密码。邮件步骤保存发信配置并可发送测试邮件；配好之后 `email_delivery_available` 为 true，管理员邮箱那一步要先用 `POST /setup/email-verification` 收取验证码再提交。跳过时邮箱按未验证保存，之后可以在“平台 → 设置 → 邮件”补配。
 
 `POST /setup` 的校验：
 
@@ -168,20 +196,22 @@ API 与 Worker 配置相同的 `NEXUS_MAIL_PROVIDER`、`NEXUS_MAIL_FROM` 和所�
 | `NEXUS_ACCOUNT_HASH_CONCURRENCY` | 1，注册、找回等其他操作的 Argon2 并发 |
 | `NEXUS_HASH_QUEUE_TIMEOUT_SECONDS` | 5 |
 | `NEXUS_AUTH_PROXY_PEERS` / `NEXUS_AUTH_PROXY_SECRET` | 未设置 |
-| 发信服务商与 Turnstile 的连接参数和密钥 | 见 `.env.example` |
+
+发信服务商和 Turnstile 不是环境变量，见[发信与 Turnstile 配置](#发信与-turnstile-配置)。
 
 ### 站点策略
 
-站点名称、控制台的公开地址和联系邮箱保存在 `identity.site_policy`，与初始化完成时间共用一行和一个版本号。平台管理员通过 `GET/PUT /api/v1/settings/site` 或管理后台“平台 → 设置 → 站点”修改，PUT 提交完整的 `site_name`、`console_url`、`contact_email`，带 `If-Match`。
+站点名称、控制台和 API 的公开地址以及联系邮箱保存在 `identity.site_policy`，与初始化完成时间共用一行和一个版本号。平台管理员通过 `GET/PUT /api/v1/settings/site` 或管理后台“平台 → 设置 → 站点”修改，PUT 提交完整的 `site_name`、`console_url`、`api_url`、`contact_email`，带 `If-Match`。
 
 | 字段 | 默认值 | 用途与约束 |
 | --- | --- | --- |
 | `site_name` | `Nexus` | 显示在控制台和身份邮件的标题里；1–100 个字符，去掉首尾空格，不能含控制字符 |
 | `console_url` | 空 | 控制台的公开地址。充值订单的返回地址是 `{console_url}/o/{organization_id}/recharge`，为空时无法创建充值订单（503 `payment_endpoints_unconfigured`）。必须是 HTTPS，只有 `localhost`、`127.0.0.1`、`[::1]` 和 `*.localhost` 可以用 HTTP；不能带账号、查询参数或片段，末尾的 `/` 会去掉 |
+| `api_url` | 空 | 本 API 的公开地址。支付服务商的通知发到 `{api_url}/webhooks/payments/{channel_id}`（Antom 另带订单路径），为空时同样无法创建充值订单（503 `payment_endpoints_unconfigured`），后台的支付渠道页会提示。格式要求与 `console_url` 相同 |
 | `contact_email` | 空 | 运营方的联系邮箱，可为空 |
 | `setup_completed_at` | 空 | 只读，初始化完成时间。只由向导写入、由 `nexus setup reset` 清除 |
 
-策略文件可以用 `identity.site_policy` 组导入前三个字段（`initial` 或 `managed`），写入 `setup_completed_at` 等其他字段会使整个文件被拒绝。`initial` 只在该组从未改过时生效，所以要在完成向导之前导入，向导会以导入的值作为初始值；`managed` 锁定后向导只能原样提交。
+策略文件可以用 `identity.site_policy` 组导入前四个字段（`initial` 或 `managed`），写入 `setup_completed_at` 等其他字段会使整个文件被拒绝。`initial` 只在该组从未改过时生效，所以要在完成向导之前导入，向导会以导入的值作为初始值；`managed` 锁定后向导只能原样提交。
 
 ### 身份策略
 

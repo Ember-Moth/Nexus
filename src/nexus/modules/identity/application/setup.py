@@ -10,7 +10,7 @@ defaults and locks the API again.
 
 from uuid import UUID
 
-from nexus.shared.policy import ImportPlan, changes, plan
+from nexus.shared.policy import changes
 
 from ..domain.email import mailbox
 from ..domain.errors import IdentityError, forbidden
@@ -86,7 +86,7 @@ class SiteSetup:
         return SetupStatus(
             required=site.setup_completed_at is None,
             builtin_admin=actor.user.id == BUILTIN_ADMIN_ID,
-            email_delivery_available=self.providers.mail_ready,
+            email_delivery_available=await self.mail_transport() is not None,
             site=site,
         )
 
@@ -100,7 +100,7 @@ class SiteSetup:
     async def request_setup_email(self, token: str, email: str, peer: str) -> None:
         """Mail a one-time token that proves the administrator's new address."""
         address = check_admin_email(mailbox(email))
-        self.require_mail()
+        await self.require_mail()
         await self._throttle("bind:" + peer, peer)
         async with self._access.authenticated(token) as (tx, actor):
             self._wizard(actor, await tx.site.policy())
@@ -110,7 +110,7 @@ class SiteSetup:
             if await tx.directory.email_taken(address, actor.user.id):
                 raise IdentityError("email_in_use", "Email is already bound to an account", 409)
             job = await self.queue(tx, "bind", address, user_id=actor.user.id)
-        self.log_queued(job, "bind")
+        await self.log_queued(job, "bind")
 
     async def complete_setup(self, token: str, body) -> SetupStatus:
         address = check_admin_email(mailbox(body.email))
@@ -121,11 +121,14 @@ class SiteSetup:
         password_hash = await self._hash(password)
         async with self._access.authenticated(token) as (tx, actor):
             # The row lock serializes concurrent submissions; the later one finds it completed.
-            site = await tx.site.policy(lock=True)
+            await tx.providers.lock_policies("site_policy")
+            site = await tx.site.policy()
             self._wizard(actor, site)
             if site.managed is not None and body.site.model_dump(mode="json") != site_values(site):
                 raise managed_externally()
-            verified = self.providers.mail_ready
+            await self._check_console(tx, body.site.console_url)
+            # Configured mail (the wizard's optional mail step) means the address is proven.
+            verified = (await tx.providers.mail()).provider is not None
             if verified:
                 if body.email_token is None:
                     raise IdentityError(
@@ -160,10 +163,11 @@ class SiteSetup:
                 },
             )
         self._site.put(completed)
+        self._providers.invalidate()
         return SetupStatus(
             required=False,
             builtin_admin=True,
-            email_delivery_available=self.providers.mail_ready,
+            email_delivery_available=await self.mail_transport() is not None,
             site=completed,
         )
 
@@ -194,10 +198,15 @@ class SiteSetup:
     async def update_site_policy(self, token: str, body: SiteInfo, version: int) -> SitePolicyView:
         async with self._access.authenticated(token) as (tx, actor):
             self._access.platform_admin(actor)
-            current = await tx.site.policy(lock=True)
+            await tx.providers.lock_policies("site_policy")
+            current = await tx.site.policy()
             if current.managed is not None:
                 raise managed_externally()
-            result = await tx.site.set_info(body, version) if current.version == version else None
+            if current.version != version:
+                raise IdentityError("version_conflict", "Site policy has changed", 412)
+            if body.console_url != current.console_url:
+                await self._check_console(tx, body.console_url)
+            result = await tx.site.set_info(body, version)
             if result is None:
                 raise IdentityError("version_conflict", "Site policy has changed", 412)
             await tx.audit.record(
@@ -207,38 +216,5 @@ class SiteSetup:
                 details=changes(site_values(current), site_values(result)),
             )
         self._site.put(result)
+        self._providers.invalidate()
         return result
-
-    async def plan_site_import(self, mode, values, file_sha256) -> ImportPlan:
-        """Plan the ``identity.site_policy`` group of a policy file; nothing is written yet.
-
-        Only the site description is importable: setup completion belongs to the wizard and to
-        ``nexus setup reset``, so a file naming it is rejected as an unknown field.
-        """
-        current = await self._read_site()
-        target, found, skipped = plan(
-            SITE_GROUP,
-            mode,
-            site_values(current),
-            current.version,
-            current.managed is not None,
-            values,
-            SiteInfo,
-        )
-        info = SiteInfo.model_validate(target)
-
-        async def write(details):
-            async with self._transactions() as tx:
-                result = await tx.site.set_info(
-                    info, current.version, managed=file_sha256 if mode == "managed" else None
-                )
-                if result is None:
-                    raise IdentityError("version_conflict", "Site policy has changed", 412)
-                await tx.audit.record_system(
-                    "site_policy.updated", SITE_RESOURCE, {**details, **found}
-                )
-            self._site.put(result)
-
-        return ImportPlan(
-            SITE_GROUP, mode, mode == "managed", found, skipped, write if found else None
-        )

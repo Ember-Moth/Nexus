@@ -34,8 +34,7 @@ class PaymentService:
         limits,
         *,
         policy,
-        public_base_url,
-        console_url,
+        site_addresses,
     ):
         self._transactions, self._access, self._cipher, self._registry, self._limits = (
             transactions,
@@ -44,7 +43,7 @@ class PaymentService:
             registry,
             limits,
         )
-        self._public_base_url, self._console_url = public_base_url, console_url
+        self._site_addresses = site_addresses
         self._policy = policy
 
     async def gateway_types(self, token):
@@ -272,11 +271,11 @@ class PaymentService:
 
     async def create_order(self, token, org_id, body, key):
         scope = await self._access.authorize(token, org_id, operation="payment")
-        console = await self._console_url()
-        if not self._public_base_url or not console:
+        console, api = await self._site_addresses()
+        if not api or not console:
             raise ServiceError(
                 "payment_endpoints_unconfigured",
-                "Configure the payment callback base URL and the console URL of the site",
+                "Set the console and API addresses of the site policy before taking payments",
                 503,
             )
         # The payer comes back to this organization's recharge page in the console.
@@ -310,7 +309,7 @@ class PaymentService:
                 gateway, body.amount, body.currency
             )
             order_id = uuid4()
-            callback_url = self._public_base_url + "/webhooks/payments/" + str(channel.id)
+            callback_url = api + "/webhooks/payments/" + str(channel.id)
             if channel.adapter_type == "antom":
                 callback_url += f"/orders/{order_id}"
             row = await repo.create(

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import yaml
@@ -78,15 +79,61 @@ async def worker_health(settings: RuntimeSettings) -> bool:
         await application.close()
 
 
-# Policy groups a policy file can address, and the planner of each one.
-POLICY_GROUPS = {
-    "identity.auth_policy": lambda app: app.identity.plan_import,
-    "identity.site_policy": lambda app: app.identity.plan_site_import,
+# The identity policy groups depend on each other (a switch needs its provider), so the identity
+# module plans and writes the ones a file names together.
+IDENTITY_GROUPS = (
+    "identity.site_policy",
+    "identity.auth_policy",
+    "identity.mail_policy",
+    "identity.turnstile_policy",
+)
+# The other policy groups a policy file can address, and the planner of each one.
+MODULE_GROUPS = {
     "billing.policy": lambda app: app.billing_settings.plan_import,
     "reporting.export_policy": lambda app: app.reports.plan_import,
     "catalog.quota_defaults": lambda app: app.routing.plan_import,
     "publication.cluster_defaults": lambda app: app.publication.plan_import,
 }
+POLICY_GROUPS = (*IDENTITY_GROUPS, *MODULE_GROUPS)
+# Longest secret a reference may name; provider keys and passwords are far shorter.
+SECRET_BYTES = 4096
+
+
+def resolve_secret(group: str, path: str, reference) -> str:
+    """The secret a policy file names by reference, read on the host running the import.
+
+    A reference is ``{"env": "NAME"}`` (an environment variable) or ``{"file": "/path"}`` (a
+    file, such as a mounted Kubernetes Secret; one trailing newline is dropped). Secrets in clear
+    are refused, so a policy file can be kept in Git. Errors name the field, never a value.
+    """
+    if not isinstance(reference, dict) or len(reference) != 1:
+        raise PolicyRejected(
+            group, f"{path} must be a reference {{env: NAME}} or {{file: PATH}}, not a secret"
+        )
+    ((kind, name),) = reference.items()
+    if kind not in {"env", "file"} or not isinstance(name, str) or not name:
+        raise PolicyRejected(group, f"{path} must be a reference {{env: NAME}} or {{file: PATH}}")
+    if kind == "env":
+        value = os.environ.get(name)
+        if value is None:
+            raise PolicyRejected(group, f"{path}: environment variable {name} is not set")
+    else:
+        try:
+            with open(name, "rb") as handle:
+                raw = handle.read(SECRET_BYTES + 1)
+            if len(raw) > SECRET_BYTES:
+                raise PolicyRejected(group, f"{path}: {name} is larger than a secret can be")
+            value = raw.decode()
+        except UnicodeDecodeError:
+            raise PolicyRejected(group, f"{path}: {name} is not UTF-8 text") from None
+        except OSError as error:
+            raise PolicyRejected(
+                group, f"{path}: cannot read {name} ({type(error).__name__})"
+            ) from None
+        value = value.removesuffix("\n").removesuffix("\r")
+    if not value:
+        raise PolicyRejected(group, f"{path}: the referenced secret is empty")
+    return value
 
 
 def read_policy_file(path: str) -> tuple[dict, str]:
@@ -123,16 +170,24 @@ def read_policy_file(path: str) -> tuple[dict, str]:
 async def import_policies(settings: RuntimeSettings, path: str, *, dry_run: bool = False) -> dict:
     """Apply a policy file: plan every group, then write the groups that change.
 
-    Nothing is written unless every group is valid. Each written group gets a new version and an
+    Nothing is written unless every group is valid. Secret references are resolved here, on the
+    host running the import. Each written group gets a new version and an
     audit record in its own module with ``details.actor = "config-import"`` and the file digest.
     """
     groups, digest = read_policy_file(path)
     application = Application(settings)
     try:
         await application.database.check_revision()
-        plans = [
-            await POLICY_GROUPS[name](application)(entry["mode"], entry.get("values") or {}, digest)
+        identity = {name: entry for name, entry in groups.items() if name in IDENTITY_GROUPS}
+        plans = (
+            await application.identity.plan_imports(identity, digest, resolve_secret)
+            if identity
+            else []
+        )
+        plans += [
+            await MODULE_GROUPS[name](application)(entry["mode"], entry.get("values") or {}, digest)
             for name, entry in groups.items()
+            if name in MODULE_GROUPS
         ]
         if not dry_run:
             for plan in plans:

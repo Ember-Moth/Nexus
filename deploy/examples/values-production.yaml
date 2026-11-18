@@ -9,16 +9,6 @@ hosts:
   relay: relay.nexus.example.com
 ingress:
   clusterIssuer: letsencrypt
-config:
-  controlPlane:
-    NEXUS_MAIL_PROVIDER: smtp
-    NEXUS_MAIL_FROM: nexus@example.com
-    NEXUS_SMTP_HOST: smtp.example.com
-    NEXUS_SMTP_PORT: "587"
-    NEXUS_SMTP_USERNAME: nexus
-    NEXUS_TURNSTILE_SITE_KEY: 0x4AAAAAAA...
-    NEXUS_TURNSTILE_HOSTNAME: console.nexus.example.com
-    NEXUS_PAYMENT_PUBLIC_BASE_URL: https://api.nexus.example.com
 # Export files; credentials in the nexus-app-r2 Secret (docs/deployment.md#对象存储cloudflare-r2).
 objectStorage:
   endpointURL: https://ACCOUNT_ID.r2.cloudflarestorage.com
@@ -27,11 +17,35 @@ relay:
   clusterId: ""
   replicas: 0
 policy:
+  # Mounted into the import Job only; the files below are its keys (deploy/examples/*secrets*).
+  secrets: nexus-policy-secrets
   groups:
     # Initial values for the setup wizard; it must run after this import to pick them up.
+    # Payment providers notify api_url; payments stay unavailable without it.
     identity.site_policy:
       mode: initial
-      values: {site_name: Nexus, console_url: "https://console.nexus.example.com"}
+      values:
+        site_name: Nexus
+        console_url: "https://console.nexus.example.com"
+        api_url: "https://api.nexus.example.com"
+    # Managed: the console shows these read-only. Secrets are references, never values.
+    identity.mail_policy:
+      mode: managed
+      values:
+        provider: smtp
+        sender: nexus@example.com
+        smtp:
+          host: smtp.example.com
+          port: 587
+          security: starttls
+          username: nexus
+          password: {file: /etc/nexus/policy-secrets/smtp-password}
+    # The hostname defaults to the console host.
+    identity.turnstile_policy:
+      mode: managed
+      values:
+        site_key: 0x4AAAAAAA...
+        secret_key: {file: /etc/nexus/policy-secrets/turnstile-secret-key}
     # Chosen before the first account, price or channel exists; later changes return 409.
     billing.policy:
       mode: initial

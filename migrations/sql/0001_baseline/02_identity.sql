@@ -173,6 +173,36 @@ CREATE TABLE identity.inbox (
     CONSTRAINT inbox_pkey PRIMARY KEY (consumer, event_id)
 );
 
+CREATE TABLE identity.mail_policy (
+    singleton boolean DEFAULT true NOT NULL,
+    provider text,
+    sender varchar(254),
+    smtp_host varchar(253),
+    smtp_port integer DEFAULT 587 NOT NULL,
+    smtp_security text DEFAULT 'starttls' NOT NULL,
+    smtp_username varchar(254),
+    cloudflare_account_id text,
+    credential bytea,
+    key_version integer,
+    version integer DEFAULT 1 NOT NULL,
+    managed_sha256 text,
+    managed_at timestamptz,
+    CONSTRAINT mail_policy_check CHECK (((managed_sha256 IS NULL) = (managed_at IS NULL))),
+    CONSTRAINT mail_policy_cloudflare_account_id_check CHECK ((cloudflare_account_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT mail_policy_cloudflare_check CHECK (((provider IS NOT DISTINCT FROM 'cloudflare'::text) = (cloudflare_account_id IS NOT NULL))),
+    CONSTRAINT mail_policy_credential_check CHECK ((((credential IS NULL) = (key_version IS NULL)) AND CASE provider WHEN 'smtp'::text THEN ((smtp_username IS NULL) = (credential IS NULL)) WHEN 'resend'::text THEN (credential IS NOT NULL) WHEN 'cloudflare'::text THEN (credential IS NOT NULL) ELSE (credential IS NULL) END)),
+    CONSTRAINT mail_policy_key_version_check CHECK ((key_version > 0)),
+    CONSTRAINT mail_policy_managed_sha256_check CHECK ((managed_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT mail_policy_provider_check CHECK ((provider = ANY (ARRAY['smtp'::text, 'resend'::text, 'cloudflare'::text]))),
+    CONSTRAINT mail_policy_sender_check CHECK (((provider IS NULL) = (sender IS NULL))),
+    CONSTRAINT mail_policy_singleton_check CHECK (singleton),
+    CONSTRAINT mail_policy_smtp_check CHECK ((((provider IS NOT DISTINCT FROM 'smtp'::text) = (smtp_host IS NOT NULL)) AND ((provider IS NOT DISTINCT FROM 'smtp'::text) OR (smtp_username IS NULL)))),
+    CONSTRAINT mail_policy_smtp_port_check CHECK (((smtp_port >= 1) AND (smtp_port <= 65535))),
+    CONSTRAINT mail_policy_smtp_security_check CHECK ((smtp_security = ANY (ARRAY['starttls'::text, 'tls'::text]))),
+    CONSTRAINT mail_policy_version_check CHECK ((version > 0)),
+    CONSTRAINT mail_policy_pkey PRIMARY KEY (singleton)
+);
+
 CREATE TABLE identity.memberships (
     id uuid NOT NULL,
     organization_id uuid NOT NULL,
@@ -311,12 +341,14 @@ CREATE TABLE identity.site_policy (
     singleton boolean DEFAULT true NOT NULL,
     site_name text DEFAULT 'Nexus' NOT NULL,
     console_url text,
+    api_url text,
     contact_email varchar(254),
     setup_completed_at timestamptz,
     version integer DEFAULT 1 NOT NULL,
     managed_sha256 text,
     managed_at timestamptz,
     CONSTRAINT site_policy_check CHECK (((managed_sha256 IS NULL) = (managed_at IS NULL))),
+    CONSTRAINT site_policy_api_url_check CHECK (((api_url ~ '^https?://'::text) AND (char_length(api_url) <= 2048))),
     CONSTRAINT site_policy_console_url_check CHECK (((console_url ~ '^https?://'::text) AND (char_length(console_url) <= 2048))),
     CONSTRAINT site_policy_managed_sha256_check CHECK ((managed_sha256 ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT site_policy_singleton_check CHECK (singleton),
@@ -330,6 +362,24 @@ CREATE TABLE identity.source_revision (
     revision bigint NOT NULL,
     CONSTRAINT source_revision_id_check CHECK ((id = 1)),
     CONSTRAINT source_revision_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE identity.turnstile_policy (
+    singleton boolean DEFAULT true NOT NULL,
+    site_key varchar(255),
+    hostname varchar(253),
+    credential bytea,
+    key_version integer,
+    version integer DEFAULT 1 NOT NULL,
+    managed_sha256 text,
+    managed_at timestamptz,
+    CONSTRAINT turnstile_policy_check CHECK (((managed_sha256 IS NULL) = (managed_at IS NULL))),
+    CONSTRAINT turnstile_policy_credential_check CHECK ((((credential IS NULL) = (key_version IS NULL)) AND ((credential IS NULL) = (site_key IS NULL)) AND ((site_key IS NOT NULL) OR (hostname IS NULL)))),
+    CONSTRAINT turnstile_policy_key_version_check CHECK ((key_version > 0)),
+    CONSTRAINT turnstile_policy_managed_sha256_check CHECK ((managed_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT turnstile_policy_singleton_check CHECK (singleton),
+    CONSTRAINT turnstile_policy_version_check CHECK ((version > 0)),
+    CONSTRAINT turnstile_policy_pkey PRIMARY KEY (singleton)
 );
 
 CREATE TABLE identity.users (

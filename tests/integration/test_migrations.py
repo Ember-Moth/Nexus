@@ -120,9 +120,14 @@ def test_reinstall_returns_to_the_initial_state(migration_settings, admin):
         "JOIN identity.memberships m ON m.organization_id=o.id"
     ).fetchall() == [("Personal's Organisation", "provisioning", "org_owner")]
     assert admin.execute(
-        "SELECT site_name,console_url,contact_email,setup_completed_at,version,managed_sha256 "
-        "FROM identity.site_policy"
-    ).fetchall() == [("Nexus", None, None, None, 1, None)]
+        "SELECT site_name,console_url,api_url,contact_email,setup_completed_at,version,"
+        "managed_sha256 FROM identity.site_policy"
+    ).fetchall() == [("Nexus", None, None, None, None, 1, None)]
+    # Identity mail and Turnstile start unconfigured, without any secret.
+    assert admin.execute(
+        "SELECT m.provider,m.credential,t.site_key,t.credential,m.version,t.version "
+        "FROM identity.mail_policy m, identity.turnstile_policy t"
+    ).fetchall() == [(None, None, None, None, 1, 1)]
     assert admin.execute(
         "SELECT login_window_seconds,login_per_account,login_per_ip,mail_window_seconds,"
         "mail_per_recipient,mail_per_recipient_total,mail_per_account,mail_per_ip,mail_global,"
@@ -162,6 +167,12 @@ def test_reinstall_returns_to_the_initial_state(migration_settings, admin):
         "UPDATE identity.auth_policy SET mail_per_recipient=11,mail_per_recipient_total=10",
         "UPDATE identity.site_policy SET site_name=''",
         "UPDATE identity.site_policy SET console_url='ftp://x'",
+        "UPDATE identity.site_policy SET api_url='ftp://x'",
+        "UPDATE identity.mail_policy SET provider='resend',sender='a@b.co'",
+        "UPDATE identity.mail_policy SET provider='smtp',sender='a@b.co'",
+        "UPDATE identity.mail_policy SET smtp_host='smtp.test'",
+        "UPDATE identity.turnstile_policy SET site_key='k'",
+        "UPDATE identity.turnstile_policy SET hostname='console.test'",
         f"UPDATE identity.users SET verified_email='a@corp.internal' WHERE id='{BUILTIN_ADMIN_ID}'",
         "UPDATE billing.settings SET currency='usd'",
         "UPDATE reporting.export_policy SET max_rows=100001",

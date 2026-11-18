@@ -98,7 +98,6 @@ async def test_restore_snapshot_and_resume(plane, payments, http, admin, service
                 _env_file=dest.root / ".env.api",
                 environment="test",
                 mock_payment_url=payments.provider.url,
-                payment_public_base_url="https://control.nexus.test",
             )
             api = create_app(restored)
             async with (

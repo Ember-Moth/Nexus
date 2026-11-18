@@ -1918,6 +1918,58 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/mail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Mail Policy
+         * @description The identity mail provider without its secret; platform administrators only.
+         *
+         *     Open while setup is pending, for the wizard's optional mail step.
+         */
+        get: operations["mail_policy_api_v1_settings_mail_get"];
+        /**
+         * Update Mail Policy
+         * @description Replace the identity mail provider; omitted secrets keep their stored value.
+         *
+         *     Removing the provider is refused with mail_in_use while email verification is on. API
+         *     and Worker processes use the change within seconds, without a restart.
+         */
+        put: operations["update_mail_policy_api_v1_settings_mail_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/mail/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Mail
+         * @description Send a test message with the stored settings and report the provider's answer.
+         *
+         *     Counts against the identity mail budgets and is audited. A refusal or an unreachable
+         *     provider is reported in the result, with the provider's error summarized.
+         */
+        post: operations["test_mail_api_v1_settings_mail_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/reporting": {
         parameters: {
             query?: never;
@@ -1980,6 +2032,32 @@ export type paths = {
         get: operations["site_policy_api_v1_settings_site_get"];
         /** Update Site Policy */
         put: operations["update_site_policy_api_v1_settings_site_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/turnstile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Turnstile Policy
+         * @description Turnstile keys without the secret; platform administrators only.
+         */
+        get: operations["turnstile_policy_api_v1_settings_turnstile_get"];
+        /**
+         * Update Turnstile Policy
+         * @description Replace the Turnstile keys; a new secret key is checked with Siteverify first.
+         *
+         *     Removing the keys is refused with turnstile_in_use while Turnstile is on.
+         */
+        put: operations["update_turnstile_policy_api_v1_settings_turnstile_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -3040,6 +3118,26 @@ export type components = {
              */
             kind: "redirect" | "qr_code";
         };
+        /** CloudflareMailSettings */
+        CloudflareMailSettings: {
+            /**
+             * Account Id
+             * @description Cloudflare account ID
+             */
+            account_id: string;
+            /**
+             * Api Token
+             * @description API token with Email Sending permission. Write-only. Omit to keep the stored value, send a new value to replace it, or null to remove it.
+             */
+            api_token?: string | null;
+        };
+        /** CloudflareMailView */
+        CloudflareMailView: {
+            /** Account Id */
+            account_id: string;
+            /** Api Token Set */
+            api_token_set: boolean;
+        };
         /** Cluster */
         Cluster: {
             /**
@@ -4039,6 +4137,82 @@ export type components = {
             queue_ttl_seconds: number;
             /** Window Seconds */
             window_seconds: number;
+        };
+        /** MailPolicyView */
+        MailPolicyView: {
+            /**
+             * Available
+             * @description Configured, and the stored secret can be decrypted with the current keys
+             */
+            available: boolean;
+            cloudflare: components["schemas"]["CloudflareMailView"] | null;
+            /**
+             * Key Version
+             * @description Encryption key version of the stored secret; every save re-encrypts it with the current key
+             */
+            key_version: number | null;
+            /** @description The policy file that locked this policy; writes are refused while set */
+            managed: components["schemas"]["ManagedSource"] | null;
+            provider: components["schemas"]["MailProvider"] | null;
+            /**
+             * Required By
+             * @description Authentication switches that are on and need identity mail; the configuration cannot be removed while any is on
+             */
+            required_by: ("registration" | "email_verification")[];
+            resend: components["schemas"]["ResendView"] | null;
+            /** Sender */
+            sender: string | null;
+            smtp: components["schemas"]["SmtpView"] | null;
+            /** Version */
+            version: number;
+        };
+        /** @enum {string} */
+        MailProvider: "smtp" | "resend" | "cloudflare";
+        /**
+         * MailSettings
+         * @description The identity mail provider; a PUT replaces it.
+         *
+         *     Only the selected provider's section is stored; choosing another provider discards the
+         *     previous one together with its secret.
+         */
+        MailSettings: {
+            /** @description Required with provider cloudflare */
+            cloudflare?: components["schemas"]["CloudflareMailSettings"] | null;
+            /** @description null removes the configuration: identity mail is then unavailable */
+            provider: components["schemas"]["MailProvider"] | null;
+            /** @description With provider resend; omit to keep the stored API key */
+            resend?: components["schemas"]["ResendSettings"] | null;
+            /**
+             * Sender
+             * @description From address; required with a provider
+             */
+            sender?: string | null;
+            /** @description Required with provider smtp */
+            smtp?: components["schemas"]["SmtpSettings"] | null;
+        };
+        /** MailTest */
+        MailTest: {
+            /** Recipient */
+            recipient: string;
+        };
+        /** MailTestResult */
+        MailTestResult: {
+            /**
+             * Accepted
+             * @description The provider accepted the message for delivery
+             */
+            accepted: boolean;
+            /**
+             * Detail
+             * @description Summary of the provider's error; never contains credentials
+             */
+            detail: string | null;
+            provider: components["schemas"]["MailProvider"];
+            /**
+             * Provider Status
+             * @description HTTP or SMTP status of the provider's answer, when there was one
+             */
+            provider_status: number | string | null;
         };
         /**
          * ManagedSource
@@ -5640,6 +5814,19 @@ export type components = {
              */
             web_search_limit: number;
         };
+        /** ResendSettings */
+        ResendSettings: {
+            /**
+             * Api Key
+             * @description Write-only. Omit to keep the stored value, send a new value to replace it, or null to remove it.
+             */
+            api_key?: string | null;
+        };
+        /** ResendView */
+        ResendView: {
+            /** Api Key Set */
+            api_key_set: boolean;
+        };
         /** Resolution */
         Resolution: {
             /**
@@ -5985,6 +6172,11 @@ export type components = {
          */
         SiteInfo: {
             /**
+             * Api Url
+             * @description Public address of this API; HTTPS except on loopback hosts. Payment providers send notifications to it; payments are unavailable until it is set.
+             */
+            api_url?: string | null;
+            /**
              * Console Url
              * @description Public address of the management console; HTTPS except on loopback hosts. Payment checkouts return to it.
              */
@@ -6002,6 +6194,8 @@ export type components = {
         };
         /** SitePolicyView */
         SitePolicyView: {
+            /** Api Url */
+            api_url: string | null;
             /** Console Url */
             console_url: string | null;
             /** Contact Email */
@@ -6020,6 +6214,52 @@ export type components = {
             site_name: string;
             /** Version */
             version: number;
+        };
+        /** SmtpSettings */
+        SmtpSettings: {
+            /**
+             * Host
+             * @description SMTP server host name or address
+             */
+            host: string;
+            /**
+             * Password
+             * @description Write-only. Omit to keep the stored value, send a new value to replace it, or null to remove it.
+             */
+            password?: string | null;
+            /**
+             * Port
+             * @default 587
+             */
+            port: number;
+            /**
+             * Security
+             * @description starttls upgrades a plain connection (usually port 587); tls connects with TLS from the start (usually port 465)
+             * @default starttls
+             * @enum {string}
+             */
+            security: "starttls" | "tls";
+            /**
+             * Username
+             * @description Empty for a server that accepts mail without authentication
+             */
+            username?: string | null;
+        };
+        /** SmtpView */
+        SmtpView: {
+            /** Host */
+            host: string;
+            /** Password Set */
+            password_set: boolean;
+            /** Port */
+            port: number;
+            /**
+             * Security
+             * @enum {string}
+             */
+            security: "starttls" | "tls";
+            /** Username */
+            username: string | null;
         };
         /** Statement */
         Statement: {
@@ -6055,6 +6295,60 @@ export type components = {
         Timestamp: string;
         /** @enum {string} */
         ToolDimension: "guardrail_content_units" | "guardrail_image_units" | "guardrail_topic_units" | "guardrail_sensitive_units" | "guardrail_grounding_units" | "guardrail_reasoning_units" | "web_search_requests" | "file_search_calls" | "vector_storage_byte_seconds" | "code_execution_seconds" | "container_1g_minutes" | "container_4g_minutes" | "container_16g_minutes" | "container_64g_minutes";
+        /** TurnstilePolicyView */
+        TurnstilePolicyView: {
+            /**
+             * Available
+             * @description Configured, and the stored secret can be decrypted with the current keys
+             */
+            available: boolean;
+            /**
+             * Effective Hostname
+             * @description The hostname Siteverify must report: the configured one, else the host of the console URL
+             */
+            effective_hostname: string | null;
+            /** Hostname */
+            hostname: string | null;
+            /**
+             * Key Version
+             * @description Encryption key version of the stored secret; every save re-encrypts it with the current key
+             */
+            key_version: number | null;
+            /** @description The policy file that locked this policy; writes are refused while set */
+            managed: components["schemas"]["ManagedSource"] | null;
+            /**
+             * Required By
+             * @description Authentication switches that are on and need Turnstile; the configuration cannot be removed while any is on
+             */
+            required_by: "turnstile"[];
+            /** Secret Key Set */
+            secret_key_set: boolean;
+            /** Site Key */
+            site_key: string | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * TurnstileSettings
+         * @description Cloudflare Turnstile keys; a PUT replaces them. A new secret is checked with Siteverify.
+         */
+        TurnstileSettings: {
+            /**
+             * Hostname
+             * @description Host name Siteverify must report; empty uses the host of the console URL in the site policy
+             */
+            hostname?: string | null;
+            /**
+             * Secret Key
+             * @description Write-only. Omit to keep the stored value, send a new value to replace it, or null to remove it.
+             */
+            secret_key?: string | null;
+            /**
+             * Site Key
+             * @description Public site key; null removes the configuration
+             */
+            site_key: string | null;
+        };
         /** UpstreamCreate */
         UpstreamCreate: {
             /** Base Url */
@@ -19767,6 +20061,240 @@ export interface operations {
             };
         };
     };
+    mail_policy_api_v1_settings_mail_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailPolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_mail_policy_api_v1_settings_mail_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MailSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailPolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    test_mail_api_v1_settings_mail_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MailTest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailTestResult"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description Rate limit reached; retry later */
+            429: {
+                headers: {
+                    /** @description When supplied, seconds to wait before retrying */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     reporting_policy_api_v1_settings_reporting_get: {
         parameters: {
             query?: never;
@@ -20180,6 +20708,169 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SitePolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description If-Match does not match the current resource version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request is malformed or violates a business rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorResponse"];
+                };
+            };
+            /** @description A required If-Match or Idempotency-Key header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    turnstile_policy_api_v1_settings_turnstile_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TurnstilePolicyView"];
+                };
+            };
+            /** @description Session is missing, expired or revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Caller may not perform this operation */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Idempotency key reuse, state transition, resource conflict or setup not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A storage or coordination dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_turnstile_policy_api_v1_settings_turnstile_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TurnstileSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TurnstilePolicyView"];
                 };
             };
             /** @description Session is missing, expired or revoked */

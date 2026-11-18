@@ -4,14 +4,14 @@ import logging
 import secrets
 from uuid import UUID, uuid4
 
-from nexus.shared.policy import ImportPlan, PolicyRejected, changes, plan
+from nexus.shared.policy import changes
 from nexus.shared.telemetry import event, request_id
 
 from ..domain.email import mailbox
 from ..domain.errors import IdentityError, MailRejected, registration_unavailable, unauthorized
 from ..domain.logins import new_login
 from ..domain.tokens import digest_token
-from .schemas import AuthPolicy, PublicAuthOptions, RegistrationCreated, VerificationPending
+from .schemas import PublicAuthOptions, RegistrationCreated, VerificationPending
 
 logger = logging.getLogger("nexus.mail")
 
@@ -29,12 +29,15 @@ class EmailAuthentication:
         policy = await self._read_policy()
         # Self-service registration stays closed until setup is complete.
         site = await self.site()
+        providers = await self._providers.get()
         return PublicAuthOptions(
             registration=policy.registration and site.setup_completed_at is not None,
             email_verification=policy.email_verification,
             turnstile=policy.turnstile,
-            turnstile_site_key=self.providers.site_key if policy.turnstile else None,
-            email_delivery_available=self.providers.mail_ready,
+            turnstile_site_key=providers.turnstile.site_key
+            if policy.turnstile and providers.turnstile
+            else None,
+            email_delivery_available=providers.mail is not None,
         )
 
     async def policy(self, session):
@@ -42,27 +45,12 @@ class EmailAuthentication:
             self._access.platform_admin(actor)
             return await tx.email.policy()
 
-    def require_mail(self):
-        if not self.providers.mail_ready:
-            raise IdentityError("mail_unavailable", "Email delivery is not configured", 503)
-
-    def _check_policy(self, policy, error):
-        # Without verification the registration response would have to say whether a login
-        # exists, and anyone could open accounts in bulk without owning a mailbox.
-        if policy.registration and not policy.email_verification:
-            raise error(
-                "registration_requires_email_verification",
-                "Enable email verification before opening registration",
-                422,
-            )
-        if policy.email_verification and not self.providers.mail_ready:
-            raise error("mail_unavailable", "Email delivery is not configured", 503)
-        if policy.turnstile and not self.providers.turnstile_ready:
-            raise error("turnstile_not_configured", "Configure Turnstile before enabling it", 409)
-
     async def update_policy(self, session, body, version):
         async with self._access.authenticated(session) as (tx, actor):
             self._access.platform_admin(actor)
+            # Locked with the other identity policies: the providers checked below stay as
+            # they are until this change commits.
+            await tx.providers.lock_policies("auth_policy")
             current = await tx.email.policy()
             if current.managed is not None:
                 raise IdentityError(
@@ -72,7 +60,23 @@ class EmailAuthentication:
                 )
             if current.version != version:
                 raise IdentityError("version_conflict", "Authentication policy has changed", 412)
-            self._check_policy(body, IdentityError)
+            # Without verification the registration response would have to say whether a login
+            # exists, and anyone could open accounts in bulk without owning a mailbox.
+            if body.registration and not body.email_verification:
+                raise IdentityError(
+                    "registration_requires_email_verification",
+                    "Enable email verification before opening registration",
+                    422,
+                )
+            if body.email_verification and not current.email_verification:
+                if self._mail_transport(await tx.providers.mail()) is None:
+                    raise IdentityError("mail_unavailable", "Email delivery is not configured", 503)
+            if body.turnstile and not current.turnstile:
+                site = await tx.site.policy()
+                if self._turnstile_keys(await tx.providers.turnstile(), site.console_url) is None:
+                    raise IdentityError(
+                        "turnstile_not_configured", "Configure Turnstile before enabling it", 409
+                    )
             result = await tx.email.set_policy(body, version)
             if not result:
                 raise IdentityError("version_conflict", "Authentication policy has changed", 412)
@@ -88,49 +92,13 @@ class EmailAuthentication:
         self._settings.put(result)
         return result
 
-    async def plan_import(self, mode, values, file_sha256):
-        """Plan the ``identity.auth_policy`` group of a policy file; nothing is written yet."""
-        group = "identity.auth_policy"
-        current = await self._read_policy()
-        target, found, skipped = plan(
-            group,
-            mode,
-            current.model_dump(mode="json", exclude={"version", "managed"}),
-            current.version,
-            current.managed is not None,
-            values,
-            AuthPolicy,
-        )
-        policy = AuthPolicy.model_validate(target)
-
-        def rejected(code, message, status):
-            return PolicyRejected(group, message)
-
-        self._check_policy(policy, rejected)
-
-        async def write(details):
-            async with self._transactions() as tx:
-                result = await tx.email.set_policy(
-                    policy, current.version, managed=file_sha256 if mode == "managed" else None
-                )
-                if not result:
-                    raise IdentityError(
-                        "version_conflict", "Authentication policy has changed", 412
-                    )
-                await tx.audit.record_system(
-                    "auth_policy.updated", POLICY_RESOURCE, {**details, **found}
-                )
-            self._settings.put(result)
-
-        return ImportPlan(group, mode, mode == "managed", found, skipped, write if found else None)
-
     async def _read_policy(self):
         async with self._transactions() as tx:
             return await tx.email.policy()
 
     async def _challenge(self, policy, action, token):
         if policy.turnstile:
-            await self.providers.verify(token, action)
+            await self.providers.verify(await self.turnstile_keys(), token, action)
 
     async def guard(self, action, token):
         policy = await self._read_policy()
@@ -164,7 +132,7 @@ class EmailAuthentication:
             raise IdentityError("rate_limited", "Too many email requests", 429, retry_after=wait)
 
     async def queue(self, tx, purpose, email, *, user_id=None, login=None, password_hash=None):
-        self.require_mail()
+        """Store a message for the Worker; callers check that mail is configured first."""
         delivery_id = uuid4()
         prefix = PREFIXES[purpose]
         token = prefix + secrets.token_urlsafe(32)
@@ -188,7 +156,8 @@ class EmailAuthentication:
 
         return delivery_id
 
-    def log_queued(self, job, purpose):
+    async def log_queued(self, job, purpose):
+        transport = await self.mail_transport()
         event(
             logger,
             logging.INFO,
@@ -196,7 +165,7 @@ class EmailAuthentication:
             request_id=request_id.get(),
             job_id=job,
             purpose=purpose,
-            provider=self.providers.name,
+            provider=transport and transport.provider,
         )
 
     async def register(self, body, peer):
@@ -208,7 +177,7 @@ class EmailAuthentication:
         await self._throttle("register:" + peer, peer)
         login = new_login(body.login, frozenset(policy.reserved_logins))
         address = mailbox(body.email if body.email is not None else login)
-        self.require_mail()
+        await self.require_mail()
         await self._challenge(policy, "register", body.turnstile_token)
         await self._mail_budget(address, peer, "login:" + login)
         password_hash = await self._hash(body.password.get_secret_value())
@@ -224,7 +193,7 @@ class EmailAuthentication:
                 job = await self.queue(
                     tx, purpose, address, login=login, password_hash=password_hash
                 )
-        self.log_queued(job, purpose)
+        await self.log_queued(job, purpose)
         return VerificationPending()
 
     async def finish_registration(self, tx, login, password_hash, email):
@@ -261,7 +230,7 @@ class EmailAuthentication:
         address = mailbox(body.email)
         await self._throttle("bind:" + peer, peer)
         version = await self.guard("bind_email", body.turnstile_token)
-        self.require_mail()
+        await self.require_mail()
         async with self._access.authenticated(session) as (tx, actor):
             credentials = await tx.directory.credentials(actor.user.login)
         password_hash = credentials[1]
@@ -274,7 +243,7 @@ class EmailAuthentication:
             if not await tx.directory.password_matches(actor.user.id, password_hash):
                 raise unauthorized()
             job = await self.queue(tx, "bind", address, user_id=actor.user.id)
-        self.log_queued(job, "bind")
+        await self.log_queued(job, "bind")
 
     async def confirm_binding(self, session, body, peer):
         digest = digest_token(body.token.get_secret_value(), "nxb_")
@@ -295,7 +264,7 @@ class EmailAuthentication:
         address = mailbox(body.email)
         await self._throttle("forgot:" + peer, peer)
         version = await self.guard("forgot_password", body.turnstile_token)
-        self.require_mail()
+        await self.require_mail()
         # Spent before the lookup, so the answer and the limits are the same for unknown
         # addresses and for accounts that may not recover by email.
         await self._mail_budget(address, peer)
@@ -307,7 +276,7 @@ class EmailAuthentication:
             if not user_id:
                 return
             job = await self.queue(tx, "reset", address, user_id=user_id)
-        self.log_queued(job, "reset")
+        await self.log_queued(job, "reset")
 
     async def reset(self, body, peer):
         digest = digest_token(body.token.get_secret_value(), "nxr_")
@@ -351,11 +320,12 @@ class EmailAuthentication:
             )
         if not job:
             return 0
+        transport = await self.mail_transport()
         fields = dict(
             request_id=job["trace_id"],
             job_id=job["id"],
             purpose=job["purpose"],
-            provider=self.providers.name,
+            provider=transport and transport.provider,
             attempt=job["attempts"],
         )
         event(logger, logging.INFO, "mail.attempt", **fields)
@@ -365,7 +335,7 @@ class EmailAuthentication:
             )
             site_name = (await self.site()).site_name
             status = await self.providers.send(
-                job["email"], job["purpose"], token, job["id"], site_name=site_name
+                transport, job["email"], job["purpose"], token, job["id"], site_name=site_name
             )
         except MailRejected as error:
             # The provider answered and refused this message. Retrying cannot help, and the

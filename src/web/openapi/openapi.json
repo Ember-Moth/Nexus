@@ -9201,7 +9201,8 @@
             "x-error-codes": [
               "email_in_use",
               "policy_managed_externally",
-              "setup_completed"
+              "setup_completed",
+              "turnstile_in_use"
             ]
           },
           "422": {
@@ -9570,7 +9571,8 @@
             "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
             "x-error-codes": [
               "policy_managed_externally",
-              "setup_required"
+              "setup_required",
+              "turnstile_in_use"
             ],
             "content": {
               "application/json": {
@@ -9637,6 +9639,629 @@
             "description": "A storage or coordination dependency is unavailable",
             "x-error-codes": [
               "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/mail": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Mail Policy",
+        "description": "The identity mail provider without its secret; platform administrators only.\n\nOpen while setup is pending, for the wizard's optional mail step.",
+        "operationId": "mail_policy_api_v1_settings_mail_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailPolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Update Mail Policy",
+        "description": "Replace the identity mail provider; omitted secrets keep their stored value.\n\nRemoving the provider is refused with mail_in_use while email verification is on. API\nand Worker processes use the change within seconds, without a restart.",
+        "operationId": "update_mail_policy_api_v1_settings_mail_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailPolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "mail_in_use",
+              "policy_managed_externally"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "If-Match does not match the current resource version",
+            "x-error-codes": [
+              "version_conflict"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "x-error-codes": [
+              "invalid_mail_settings",
+              "invalid_version",
+              "validation_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "A required If-Match or Idempotency-Key header is missing",
+            "x-error-codes": [
+              "precondition_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "credential_unavailable",
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/mail/test": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Test Mail",
+        "description": "Send a test message with the stored settings and report the provider's answer.\n\nCounts against the identity mail budgets and is audited. A refusal or an unreachable\nprovider is reported in the result, with the provider's error summarized.",
+        "operationId": "test_mail_api_v1_settings_mail_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailTest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailTestResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "invalid_email",
+              "validation_error"
+            ]
+          },
+          "429": {
+            "description": "Rate limit reached; retry later",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limited"
+            ],
+            "headers": {
+              "Retry-After": {
+                "description": "When supplied, seconds to wait before retrying",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "authentication_unavailable",
+              "mail_unavailable",
+              "storage_unavailable"
+            ]
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/settings/turnstile": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Turnstile Policy",
+        "description": "Turnstile keys without the secret; platform administrators only.",
+        "operationId": "turnstile_policy_api_v1_settings_turnstile_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnstilePolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "setup_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "storage_unavailable"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Update Turnstile Policy",
+        "description": "Replace the Turnstile keys; a new secret key is checked with Siteverify first.\n\nRemoving the keys is refused with turnstile_in_use while Turnstile is on.",
+        "operationId": "update_turnstile_policy_api_v1_settings_turnstile_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TurnstileSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnstilePolicyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing, expired or revoked",
+            "x-error-codes": [
+              "unauthorized"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller may not perform this operation",
+            "x-error-codes": [
+              "forbidden"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key reuse, state transition, resource conflict or setup not completed",
+            "x-error-codes": [
+              "policy_managed_externally",
+              "setup_required",
+              "turnstile_in_use"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "If-Match does not match the current resource version",
+            "x-error-codes": [
+              "version_conflict"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request is malformed or violates a business rule",
+            "x-error-codes": [
+              "invalid_turnstile_secret",
+              "invalid_turnstile_settings",
+              "invalid_version",
+              "validation_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "A required If-Match or Idempotency-Key header is missing",
+            "x-error-codes": [
+              "precondition_required"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "x-error-codes": [
+              "internal_error"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A storage or coordination dependency is unavailable",
+            "x-error-codes": [
+              "credential_unavailable",
+              "storage_unavailable",
+              "turnstile_unavailable"
             ],
             "content": {
               "application/json": {
@@ -28836,6 +29461,57 @@
         ],
         "title": "CheckoutData"
       },
+      "CloudflareMailSettings": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{32}$",
+            "title": "Account Id",
+            "description": "Cloudflare account ID"
+          },
+          "api_token": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024,
+                "minLength": 1,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Token",
+            "description": "API token with Email Sending permission. Write-only. Omit to keep the stored value, send a new value to replace it, or null to remove it."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "account_id"
+        ],
+        "title": "CloudflareMailSettings"
+      },
+      "CloudflareMailView": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "title": "Account Id"
+          },
+          "api_token_set": {
+            "type": "boolean",
+            "title": "Api Token Set"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "account_id",
+          "api_token_set"
+        ],
+        "title": "CloudflareMailView"
+      },
       "Cluster": {
         "properties": {
           "name": {
@@ -31342,6 +32018,261 @@
         ],
         "title": "MailBudgets",
         "description": "Identity mail per window, shared by registration, mailbox binding and recovery."
+      },
+      "MailPolicyView": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "description": "Configured, and the stored secret can be decrypted with the current keys"
+          },
+          "key_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Version",
+            "description": "Encryption key version of the stored secret; every save re-encrypts it with the current key"
+          },
+          "managed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManagedSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The policy file that locked this policy; writes are refused while set"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MailProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sender": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sender"
+          },
+          "smtp": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SmtpView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resend": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResendView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cloudflare": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CloudflareMailView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "required_by": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "registration",
+                "email_verification"
+              ]
+            },
+            "type": "array",
+            "title": "Required By",
+            "description": "Authentication switches that are on and need identity mail; the configuration cannot be removed while any is on"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "available",
+          "key_version",
+          "managed",
+          "version",
+          "provider",
+          "sender",
+          "smtp",
+          "resend",
+          "cloudflare",
+          "required_by"
+        ],
+        "title": "MailPolicyView"
+      },
+      "MailProvider": {
+        "type": "string",
+        "enum": [
+          "smtp",
+          "resend",
+          "cloudflare"
+        ]
+      },
+      "MailSettings": {
+        "properties": {
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MailProvider"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null removes the configuration: identity mail is then unavailable"
+          },
+          "sender": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 254,
+                "minLength": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sender",
+            "description": "From address; required with a provider"
+          },
+          "smtp": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SmtpSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required with provider smtp"
+          },
+          "resend": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResendSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With provider resend; omit to keep the stored API key"
+          },
+          "cloudflare": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CloudflareMailSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required with provider cloudflare"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider"
+        ],
+        "title": "MailSettings",
+        "description": "The identity mail provider; a PUT replaces it.\n\nOnly the selected provider's section is stored; choosing another provider discards the\nprevious one together with its secret."
+      },
+      "MailTest": {
+        "properties": {
+          "recipient": {
+            "type": "string",
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Recipient"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "recipient"
+        ],
+        "title": "MailTest"
+      },
+      "MailTestResult": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted",
+            "description": "The provider accepted the message for delivery"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/MailProvider"
+          },
+          "provider_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Status",
+            "description": "HTTP or SMTP status of the provider's answer, when there was one"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
+            "description": "Summary of the provider's error; never contains credentials"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "accepted",
+          "provider",
+          "provider_status",
+          "detail"
+        ],
+        "title": "MailTestResult"
       },
       "ManagedSource": {
         "properties": {
@@ -35754,6 +36685,43 @@
         ],
         "title": "RequestRecord"
       },
+      "ResendSettings": {
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024,
+                "minLength": 1,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "Write-only. Omit to keep the stored value, send a new value to replace it, or null to remove it."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ResendSettings"
+      },
+      "ResendView": {
+        "properties": {
+          "api_key_set": {
+            "type": "boolean",
+            "title": "Api Key Set"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "api_key_set"
+        ],
+        "title": "ResendView"
+      },
       "Resolution": {
         "properties": {
           "reason": {
@@ -36692,6 +37660,19 @@
             "title": "Console Url",
             "description": "Public address of the management console; HTTPS except on loopback hosts. Payment checkouts return to it."
           },
+          "api_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Url",
+            "description": "Public address of this API; HTTPS except on loopback hosts. Payment providers send notifications to it; payments are unavailable until it is set."
+          },
           "contact_email": {
             "anyOf": [
               {
@@ -36733,6 +37714,17 @@
               }
             ],
             "title": "Console Url"
+          },
+          "api_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Url"
           },
           "contact_email": {
             "anyOf": [
@@ -36779,12 +37771,122 @@
         "required": [
           "site_name",
           "console_url",
+          "api_url",
           "contact_email",
           "setup_completed_at",
           "managed",
           "version"
         ],
         "title": "SitePolicyView"
+      },
+      "SmtpSettings": {
+        "properties": {
+          "host": {
+            "type": "string",
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Host",
+            "description": "SMTP server host name or address"
+          },
+          "port": {
+            "type": "integer",
+            "maximum": 65535,
+            "minimum": 1,
+            "title": "Port",
+            "default": 587
+          },
+          "security": {
+            "type": "string",
+            "enum": [
+              "starttls",
+              "tls"
+            ],
+            "title": "Security",
+            "description": "starttls upgrades a plain connection (usually port 587); tls connects with TLS from the start (usually port 465)",
+            "default": "starttls"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 254,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "Empty for a server that accepts mail without authentication"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024,
+                "minLength": 1,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password",
+            "description": "Write-only. Omit to keep the stored value, send a new value to replace it, or null to remove it."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "host"
+        ],
+        "title": "SmtpSettings"
+      },
+      "SmtpView": {
+        "properties": {
+          "host": {
+            "type": "string",
+            "title": "Host"
+          },
+          "port": {
+            "type": "integer",
+            "title": "Port"
+          },
+          "security": {
+            "type": "string",
+            "enum": [
+              "starttls",
+              "tls"
+            ],
+            "title": "Security"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "password_set": {
+            "type": "boolean",
+            "title": "Password Set"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "host",
+          "port",
+          "security",
+          "username",
+          "password_set"
+        ],
+        "title": "SmtpView"
       },
       "Statement": {
         "properties": {
@@ -36877,6 +37979,158 @@
           "container_16g_minutes",
           "container_64g_minutes"
         ]
+      },
+      "TurnstilePolicyView": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "description": "Configured, and the stored secret can be decrypted with the current keys"
+          },
+          "key_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Version",
+            "description": "Encryption key version of the stored secret; every save re-encrypts it with the current key"
+          },
+          "managed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManagedSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The policy file that locked this policy; writes are refused while set"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "site_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Key"
+          },
+          "secret_key_set": {
+            "type": "boolean",
+            "title": "Secret Key Set"
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname"
+          },
+          "effective_hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Hostname",
+            "description": "The hostname Siteverify must report: the configured one, else the host of the console URL"
+          },
+          "required_by": {
+            "items": {
+              "type": "string",
+              "const": "turnstile"
+            },
+            "type": "array",
+            "title": "Required By",
+            "description": "Authentication switches that are on and need Turnstile; the configuration cannot be removed while any is on"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "available",
+          "key_version",
+          "managed",
+          "version",
+          "site_key",
+          "secret_key_set",
+          "hostname",
+          "effective_hostname",
+          "required_by"
+        ],
+        "title": "TurnstilePolicyView"
+      },
+      "TurnstileSettings": {
+        "properties": {
+          "site_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1,
+                "pattern": "^[0-9A-Za-z_-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Key",
+            "description": "Public site key; null removes the configuration"
+          },
+          "secret_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024,
+                "minLength": 1,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Key",
+            "description": "Write-only. Omit to keep the stored value, send a new value to replace it, or null to remove it."
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 253
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname",
+            "description": "Host name Siteverify must report; empty uses the host of the console URL in the site policy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "site_key"
+        ],
+        "title": "TurnstileSettings",
+        "description": "Cloudflare Turnstile keys; a PUT replaces them. A new secret is checked with Siteverify."
       },
       "UpstreamCreate": {
         "properties": {
@@ -38142,6 +39396,20 @@
         "retry": "after_correction"
       }
     ],
+    "mail_in_use": [
+      {
+        "status": 409,
+        "action": "turn_off_dependent_switch",
+        "retry": "after_correction"
+      }
+    ],
+    "turnstile_in_use": [
+      {
+        "status": 409,
+        "action": "turn_off_dependent_switch",
+        "retry": "after_correction"
+      }
+    ],
     "setup_required": [
       {
         "status": 409,
@@ -38408,6 +39676,13 @@
         "retry": "after_correction"
       }
     ],
+    "invalid_mail_settings": [
+      {
+        "status": 422,
+        "action": "correct_input",
+        "retry": "after_correction"
+      }
+    ],
     "invalid_models": [
       {
         "status": 422,
@@ -38472,6 +39747,20 @@
       }
     ],
     "invalid_snapshot": [
+      {
+        "status": 422,
+        "action": "correct_input",
+        "retry": "after_correction"
+      }
+    ],
+    "invalid_turnstile_secret": [
+      {
+        "status": 422,
+        "action": "correct_input",
+        "retry": "after_correction"
+      }
+    ],
+    "invalid_turnstile_settings": [
       {
         "status": 422,
         "action": "correct_input",

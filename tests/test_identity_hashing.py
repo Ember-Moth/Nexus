@@ -30,6 +30,7 @@ def service(passwords, **options):
         None,
         providers=None,
         mail_cipher=None,
+        provider_cipher=None,
         mail_limits=None,
         **options,
     )

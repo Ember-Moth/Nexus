@@ -105,10 +105,12 @@ def create_payment_services(
     policy,
     environment,
     provider_transport,
-    public_base_url,
-    console_url,
+    site_addresses,
 ):
-    """``console_url`` reads the console's public address; checkouts return to it."""
+    """``site_addresses`` reads the public console and API addresses of the site.
+
+    Checkouts return to the console; payment providers send notifications to the API.
+    """
     database.require_module(ModuleName.BILLING)
     registry = GatewayRegistry(production=environment == "production")
     registry.register(
@@ -134,8 +136,7 @@ def create_payment_services(
         registry,
         limits,
         policy=policy,
-        public_base_url=public_base_url,
-        console_url=console_url,
+        site_addresses=site_addresses,
     )
     processor = PaymentProcessor(transactions, cipher, registry)
     return service, processor

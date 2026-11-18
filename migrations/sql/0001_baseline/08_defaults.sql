@@ -9,6 +9,8 @@ INSERT INTO billing.source_revision (id, revision) VALUES (1, 1);
 
 INSERT INTO identity.auth_policy DEFAULT VALUES;
 INSERT INTO identity.site_policy DEFAULT VALUES;
+INSERT INTO identity.mail_policy DEFAULT VALUES;
+INSERT INTO identity.turnstile_policy DEFAULT VALUES;
 INSERT INTO catalog.resource_quota_defaults DEFAULT VALUES;
 INSERT INTO billing.settings (id) VALUES (1);
 INSERT INTO publication.cluster_policy_defaults DEFAULT VALUES;

@@ -5,8 +5,8 @@ API 提供查询和核对命令，Worker 维护报表投影、导出任务和周
 ## 凭请求 ID 排查
 
 - 管理 API 的 `X-Request-ID` 对应 `nexus.api` 的 `http.response` JSON 日志。日志记录方法、路由模板、状态、错误码与生成响应头所用的毫秒数。可以用 `GET /api/v1/audit-events?trace_id=<UUID>` 查该请求产生的审计事件，组织用户仍须提供组织 ID。独立后台操作的 `trace_id` 为空。
-- 注册、邮箱绑定和密码找回请求实际入队后会写 `mail.queued`，`purpose` 为 `register`、`bind`、`reset`，或表示“登录名已被使用”提示的 `exists`。按原 `request_id` 或 `job_id` 查 Worker 的 `mail.attempt`、`mail.failed`、`mail.accepted` 和 `mail.expired`。失败事件给出尝试次数、渠道、可用的供应商状态码和 `outcome`：`retry_scheduled` 表示服务商不可用、稍后重试；`rejected` 表示服务商同步拒收（例如永久退信或 4xx），任务已删除且不影响 Worker 就绪。`mail.expired` 表示任务在 `NEXUS_MAIL_QUEUE_TTL_SECONDS` 内没有发出。供应商受理后仍可能退信。本地 SMTP 成功以 SMTP 事务完成为准，日志不保存地址、邮件令牌、正文或供应商返回的自由文本。
-- Turnstile 不可用时匿名调用方只收到 `turnstile_unavailable`。`nexus.auth` 日志的 `turnstile.unavailable` 事件以 `outcome` 给出原因：`not_configured`（策略开启但 API 缺少 Turnstile 配置）、`invalid_secret`（Siteverify 报告 secret 缺失或失效）、`transport` 或 `malformed_response`。
+- 注册、邮箱绑定和密码找回请求实际入队后会写 `mail.queued`，`purpose` 为 `register`、`bind`、`reset`，或表示“登录名已被使用”提示的 `exists`。按原 `request_id` 或 `job_id` 查 Worker 的 `mail.attempt`、`mail.failed`、`mail.accepted` 和 `mail.expired`。失败事件给出尝试次数、渠道、可用的供应商状态码和 `outcome`：`retry_scheduled` 表示服务商不可用、稍后重试；`rejected` 表示服务商同步拒收（例如永久退信或 4xx），任务已删除且不影响 Worker 就绪。`mail.expired` 表示任务在身份策略的 `mail.queue_ttl_seconds` 内没有发出。后台“发送测试邮件”由 API 进程直接发送，写 `mail.test` 事件（`outcome` 为 `accepted` 或 `failed`），服务商的错误摘要只出现在接口结果和审计 `mail_policy.test_sent` 里。已保存的发信密钥无法用当前密钥环解密时写 `mail.credential_unavailable`，发信配置视为不可用。供应商受理后仍可能退信。本地 SMTP 成功以 SMTP 事务完成为准，日志不保存地址、邮件令牌、正文或供应商返回的自由文本。
+- Turnstile 不可用时匿名调用方只收到 `turnstile_unavailable`。`nexus.auth` 日志的 `turnstile.unavailable` 事件以 `outcome` 给出原因：`not_configured`（开关开着但没有可用的 Turnstile 配置，例如密钥无法用当前密钥环解密，此时还有 `turnstile.credential_unavailable` 事件）、`invalid_secret`（Siteverify 报告 secret 缺失或失效）、`transport` 或 `malformed_response`。
 - Relay 的两个生成接口在普通 HTTP、SSE 和早期拒绝响应中返回服务器生成的 `X-Request-ID`。请求成功预留时，该 UUID 就是计费请求 ID。WebSocket 握手的 ID 是会话 ID；会话内各轮拥有独立的计费请求 ID。HTTP 402 的 `insufficient_funds` 对应账户充值，`budget_exceeded` 对应调整预算。原先两个场景均返回 `insufficient_budget`。
 - 管理 API 与 Worker 的 Nexus 应用日志通过 stderr 输出 JSON，可由部署环境采集。日志级别受 `NEXUS_LOG_LEVEL` 控制。请求 ID 由服务端生成，原始请求路径、查询参数、认证头和请求体不写入请求事件。
 
@@ -324,14 +324,29 @@ Worker 日志事件：`publication.auto_published`，outcome 为 published 或 u
 ```yaml
 version: 1
 groups:
-  identity.site_policy:          # /api/v1/settings/site：站点名称、控制台地址、联系邮箱
+  identity.site_policy:          # /api/v1/settings/site：站点名称、控制台和 API 地址、联系邮箱
     mode: initial
-    values: {site_name: Acme AI, console_url: "https://console.example.com"}
+    values:
+      site_name: Acme AI
+      console_url: "https://console.example.com"
+      api_url: "https://api.example.com"
   identity.auth_policy:          # 与 PUT /api/v1/settings/authentication 的请求体同构
     mode: managed
     values:
+      email_verification: true
       sign_in: {per_ip: 100}
       sessions: {session_ttl_seconds: 43200}
+  identity.mail_policy:          # /api/v1/settings/mail；密钥只写引用
+    mode: managed
+    values:
+      provider: resend
+      sender: nexus@example.com
+      resend: {api_key: {file: /etc/nexus/policy-secrets/resend-api-key}}
+  identity.turnstile_policy:     # /api/v1/settings/turnstile
+    mode: managed
+    values:
+      site_key: 0x4AAAAAAA...
+      secret_key: {env: NEXUS_IMPORT_TURNSTILE_SECRET}
   billing.policy:                # /api/v1/settings/billing
     mode: initial
     values: {currency: CNY}
@@ -346,14 +361,29 @@ groups:
     values: {relay: {max_attempts: 3}, auto_publish: {quiet_seconds: 5}}
 ```
 
-`values` 可以只写部分字段，没写的字段保持数据库现值。不在文件里的组完全不受影响。`identity.site_policy` 只接受 `site_name`、`console_url`、`contact_email`：初始化是否完成只由初始化向导和 `nexus setup reset` 改变，文件里出现 `setup_completed_at` 之类的字段会使整个文件被拒绝。初始化向导会把站点信息改成管理员提交的值并推进版本，所以 `initial` 值要在完成向导之前导入（Helm 的导入 Job 在安装时就运行）。单个集群的覆盖值和单个企业的资源数量覆盖属于运行时数据，不进文件。
+`values` 可以只写部分字段，没写的字段保持数据库现值。不在文件里的组完全不受影响。`identity.site_policy` 只接受 `site_name`、`console_url`、`api_url`、`contact_email`：初始化是否完成只由初始化向导和 `nexus setup reset` 改变，文件里出现 `setup_completed_at` 之类的字段会使整个文件被拒绝。初始化向导会把站点信息改成管理员提交的值并推进版本，所以 `initial` 值要在完成向导之前导入（Helm 的导入 Job 在安装时就运行）。单个集群的覆盖值和单个企业的资源数量覆盖属于运行时数据，不进文件。
+
+### 密钥引用
+
+`identity.mail_policy` 的 `smtp.password`、`resend.api_key`、`cloudflare.api_token` 和 `identity.turnstile_policy` 的 `secret_key` 不接受明文，只接受在执行导入的机器上解析的引用，策略文件因此可以提交到 Git：
+
+| 写法 | 含义 |
+| --- | --- |
+| `{env: NAME}` | 导入进程的环境变量 `NAME` |
+| `{file: /path}` | 文件内容，去掉末尾一个换行，最大 4096 字节；Helm 部署用 `policy.secrets` 把 Secret 挂到导入 Job 的 `/etc/nexus/policy-secrets/` |
+| `null` | 删除已保存的密钥 |
+| 省略 | 保留已保存的密钥 |
+
+写明文、未知的引用类型、未设置的变量、读不到或为空的文件都会使整个文件被拒绝，错误只给出字段路径和引用名，不输出密钥。解析出的值用应用加密密钥加密后写入数据库；与已保存的值相同时该字段不算变化，再次导入同一文件为 `unchanged`。输出和审计里的密钥字段只记 `set`、`replaced` 或 `null`。导入不调用 Siteverify 校验 Turnstile 密钥（部署时不依赖外网），可以在后台“人机验证”标签重新保存一次来校验。
+
+身份模块的四组（站点、认证、邮件、Turnstile）互相依赖，按文件写完后的整体状态校验：例如同一个文件可以先配发信再打开邮箱验证，也可以关掉邮箱验证同时删除发信配置；只删配置而开关仍开着会被拒绝。这四组在一个事务里写入。
 
 | 模式 | 写入 | 锁定 |
 | --- | --- | --- |
 | `initial` | 只在该组从未被修改过（版本仍为 1）时写入文件值，之后由管理员在后台维护；同一文件或改过的文件再次导入都不覆盖 | 解除锁定。已锁定的组声明 `initial` 即解锁，值保持不变 |
 | `managed` | 每次导入都用文件值覆盖所列字段；值没变就不写，不产生新版本 | 锁定整组：管理接口的写请求返回 409 `policy_managed_externally`，后台设置页只读并显示文件摘要和导入时间 |
 
-命令先读取并校验文件里的所有组（结构、未知字段、取值范围、组合规则，例如开放注册需要邮箱验证、币种在已有账务数据后不能再改），任何一组不合法就整体拒绝、不写入任何组，退出码 1，stderr 只给出组名和字段路径。全部合法后逐组写入，每个有变化的组推进版本，并在所属模块写一条审计：`actor_id` 为空，`details` 含 `actor: "config-import"`、`file_sha256`、`mode` 和逐字段的 `[旧值, 新值]`。各模块分别提交事务；写入阶段遇到存储故障时，已写入的组保持写入，重新执行即可（幂等）。
+命令先读取并校验文件里的所有组（结构、未知字段、取值范围、组合规则，例如开放注册需要邮箱验证、币种在已有账务数据后不能再改），任何一组不合法就整体拒绝、不写入任何组，退出码 1，stderr 只给出组名和字段路径。全部合法后逐组写入，每个有变化的组推进版本，并在所属模块写一条审计：`actor_id` 为空，`details` 含 `actor: "config-import"`、`file_sha256`、`mode` 和逐字段的 `[旧值, 新值]`。各模块分别提交事务（身份模块的各组在同一个事务里）；写入阶段遇到存储故障时，已写入的组保持写入，重新执行即可（幂等）。
 
 stdout 是一行 JSON，`--dry-run` 只输出将会发生的变化：
 
@@ -398,7 +428,7 @@ spec:
           configMap: {name: nexus-policies}
 ```
 
-先用 `kubectl run` 或同一镜像加 `--dry-run` 检查差异，再升级。Job 失败时 Helm 升级中止，数据库保持原值。要把某组从 Git 移交给后台，在文件里把它改为 `initial` 并升级一次。
+chart 自带的导入 Job（`templates/policy.yaml`）就是这样运行的；发信和 Turnstile 的密钥放在 `policy.secrets` 指定的 Secret 里，只挂载到这个 Job，API 和 Worker 从数据库读取解密后的值。先用 `kubectl run` 或同一镜像加 `--dry-run` 检查差异，再升级。Job 失败时 Helm 升级中止，数据库保持原值。要把某组从 Git 移交给后台，在文件里把它改为 `initial` 并升级一次。
 
 ## 数据库迁移
 

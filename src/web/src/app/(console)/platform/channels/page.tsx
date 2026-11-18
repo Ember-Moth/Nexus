@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { EllipsisIcon, HistoryIcon, PencilIcon, PlugIcon, PlusIcon } from "lucide-react";
+import { EllipsisIcon, HistoryIcon, PencilIcon, PlugIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -15,6 +16,7 @@ import { DetailList } from "@/components/platform-finance/field";
 import { JsonDisclosure } from "@/components/platform-finance/json-view";
 import { ConfirmWriteDialog } from "@/components/platform-finance/write-dialog";
 import { StatusBadge, toneFor } from "@/components/status-badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -362,6 +364,7 @@ export default function ChannelsPage() {
           </Button>
         }
       />
+      <SiteAddressesAlert />
       {types.error ? <ErrorAlert error={types.error} onRetry={() => void types.refetch()} /> : null}
       {types.data ? (
         <p className="text-xs text-muted-foreground">
@@ -405,5 +408,31 @@ export default function ChannelsPage() {
       {editing ? <EditChannelDialog channelId={editing} types={typeList} onClose={() => setEditing(null)} /> : null}
       {versionsOf ? <VersionsSheet channelId={versionsOf} types={typeList} onClose={() => setVersionsOf(null)} /> : null}
     </PageContainer>
+  );
+}
+
+/** Payments need the public console and API addresses of the site; say which one is missing. */
+function SiteAddressesAlert() {
+  const { t } = useI18n();
+  const site = useQuery({
+    queryKey: ["settings", "site"],
+    queryFn: async () => call(() => nexus.GET("/api/v1/settings/site")),
+  });
+  const policy = site.data?.data;
+  if (!policy || (policy.api_url && policy.console_url)) return null;
+  const missing = [!policy.api_url ? t("pf.channels.apiUrl") : null, !policy.console_url ? t("pf.channels.consoleUrl") : null]
+    .filter(Boolean)
+    .join(t("pf.channels.addressSeparator"));
+  return (
+    <Alert className="border-amber-200 bg-amber-50 text-amber-900">
+      <TriangleAlertIcon />
+      <AlertTitle>{t("pf.channels.addressesMissingTitle")}</AlertTitle>
+      <AlertDescription className="text-amber-900">
+        <span>{t("pf.channels.addressesMissing", { missing })}</span>
+        <Link href="/platform/settings?tab=site" className="font-medium underline underline-offset-4">
+          {t("pf.channels.openSiteSettings")}
+        </Link>
+      </AlertDescription>
+    </Alert>
   );
 }

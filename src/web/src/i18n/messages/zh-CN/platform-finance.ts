@@ -327,6 +327,13 @@ const pf = {
   channels: {
     title: "支付渠道",
     subtitle: "管理在线充值渠道。凭据加密保存，接口不返回密钥；替换配置时必须重新提供全部凭据。",
+    addressesMissingTitle: "在线充值暂不可用",
+    addressesMissing:
+      "{missing}未填写：支付服务商需要站点的 API 地址发送通知，付款人完成后回到控制台地址。请在“平台 → 设置 → 站点”填写。",
+    apiUrl: "API 地址",
+    consoleUrl: "控制台地址",
+    addressSeparator: "和",
+    openSiteSettings: "填写站点地址",
     installed: "已安装的适配器：",
     create: "新建渠道",
     createTitle: "新建支付渠道",

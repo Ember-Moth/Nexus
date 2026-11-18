@@ -10,6 +10,7 @@ from policies import body_of, put_policy
 from test_identity_api import PASSWORD, auth, create_user, login
 
 from nexus.api import create_app
+from nexus.modules.identity.providers.authentication import ProviderFailure
 from nexus.worker import run_worker
 
 pytestmark = pytest.mark.integration
@@ -209,7 +210,7 @@ async def test_binding_rotation_retry_and_expiry(delivery, admin, caplog):
     assert queued.status_code == 202
     original = mail.providers.transport
     mail.providers.transport = httpx.MockTransport(lambda r: httpx.Response(503))
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(ProviderFailure):
         await mail.dispatch_email()
     assert await mail.dispatch_email() == 0
     admin.execute("UPDATE identity.email_challenges SET next_attempt=now()")
@@ -372,7 +373,7 @@ async def test_mail_budget_is_per_normalized_recipient_and_shared_by_every_kind(
 async def test_mail_budget_exhausted_by_one_requester_does_not_lock_out_others(http, admin):
     client, root, app, settings = http
     mail = app.state.identity_service
-    messages, _ = install_mail(mail, settings)
+    messages, _ = await install_mail(client, root, mail)
     await member(client, root, admin, "victim-member", "victim@example.com")
     async with peers(app, "198.51.100.10", "2001:db8:7:7::1", "2001:db8:7:7::2") as (
         attacker,
@@ -422,9 +423,9 @@ async def test_account_ip_and_global_mail_budgets(http, admin):
             third,
         ),
     ):
-        install_mail(app.state.identity_service, settings)
         # The http fixture already completed the setup wizard in this database.
         root = await login(first)
+        await install_mail(first, root, app.state.identity_service)
         await put_policy(
             first,
             root,
@@ -580,7 +581,7 @@ async def test_permanent_rejections_are_dropped_without_failing_the_worker(deliv
         headers=auth(session),
         json={"email": "outage@example.com", "password": PASSWORD},
     )
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(ProviderFailure):
         await mail.dispatch_email()
     assert admin.execute("SELECT count(*) FROM identity.email_challenges").fetchone() == (1,)
     mail.providers.transport = original

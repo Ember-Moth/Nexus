@@ -8,14 +8,14 @@ Nexus 为预付费账户提供两种资金入口：财务人工登记，以及�
 
 先执行 `uv run nexus --env-file .env.migrate migrate`，升级到当前迁移版本，再分别启动 API 与 Worker。
 
-API 与 Worker 使用相同的以下配置：
+支付用到站点策略（`identity.site_policy`）的两个地址，在初始化向导或“平台 → 设置 → 站点”中填写，客户端不能覆盖，修改后所有进程约 2 秒内生效：
 
-| 配置 | 用途 |
+| 字段 | 用途 |
 | --- | --- |
-| `NEXUS_PAYMENT_PUBLIC_BASE_URL` | 固定通知站点，例如 `https://control.example.com`；生成渠道通知地址，Antom 另带订单路径 |
-| `NEXUS_MOCK_PAYMENT_URL` | 仅 development/test 可用的模拟器地址，只接受 `http://127.0.0.1:{port}` |
+| `api_url` | 本 API 的公开地址，例如 `https://api.example.com`；渠道通知地址是 `{api_url}/webhooks/payments/{channel_id}`，Antom 另带订单路径 |
+| `console_url` | 付款人完成或放弃支付后回到 `{console_url}/o/{organization_id}/recharge` |
 
-付款人完成或放弃支付后回到 `{console_url}/o/{organization_id}/recharge`。`console_url` 是站点策略（`identity.site_policy`）的控制台地址，在初始化向导或“平台 → 设置 → 站点”中填写，客户端不能覆盖；它为空时创建订单返回 503 `payment_endpoints_unconfigured`。
+任一地址为空时，创建订单返回 503 `payment_endpoints_unconfigured`，后台的支付渠道页也会提示。只用于开发和测试的模拟器另有环境变量 `NEXUS_MOCK_PAYMENT_URL`（只接受 `http://127.0.0.1:{port}`）。
 
 限额保存在账务策略（`billing.settings`）中，平台管理员通过 `GET/PUT /api/v1/settings/billing` 的 `payments` 分组或管理后台“平台 → 设置 → 计费”修改，所有进程约 2 秒内生效：
 
@@ -25,7 +25,7 @@ API 与 Worker 使用相同的以下配置：
 | `notifications_per_ip_per_minute` | 每个来源每分钟通知上限，默认 120，范围 1–10000 |
 | `requests_per_merchant_per_minute` | 每商户环境固定 60 秒窗口的远端请求上限，默认 120，范围 1–10000；Worker 在每个处理事务中读取 |
 
-生产进程要求通知地址为 HTTPS（站点策略的控制台地址只有本机地址可以是 HTTP），拒绝 mock 传输和 test 渠道。支付配置沿用已有根密钥配置，但使用独立于上游模型凭据的密钥派生和记录绑定；仍在查询或验签窗口内使用的旧根密钥必须保留。
+站点策略的两个地址都要求 HTTPS，只有本机地址可以是 HTTP；生产进程拒绝 mock 传输和 test 渠道。支付配置沿用已有根密钥配置，但使用独立于上游模型凭据的密钥派生和记录绑定；仍在查询或验签窗口内使用的旧根密钥必须保留。
 
 以下路径相对于 `/api/v1`，管理调用使用 Bearer 会话。列表提供 limit（1–100，默认 50）和 cursor，注册类型列表由已安装适配器决定。
 
@@ -54,7 +54,7 @@ API 与 Worker 使用相同的以下配置：
 
 ## 托管收银台配置
 
-为 API 和 Worker 配置同一组数据库、加密密钥和 `NEXUS_PAYMENT_PUBLIC_BASE_URL`，并在站点策略里填写控制台地址。平台管理员调用 `GET /api/v1/payment-gateway-types` 可取得配置 schema，再调用 `POST /api/v1/payment-channels` 创建渠道。渠道外层填写 name、adapter_type、stable_merchant_id、environment、currency、min_amount、max_amount 与 configuration。三个适配器当前的充值币种均为 USD，金额字段传十进制字符串。
+为 API 和 Worker 配置同一组数据库和加密密钥，并在站点策略里填写控制台地址和 API 地址。平台管理员调用 `GET /api/v1/payment-gateway-types` 可取得配置 schema，再调用 `POST /api/v1/payment-channels` 创建渠道。渠道外层填写 name、adapter_type、stable_merchant_id、environment、currency、min_amount、max_amount 与 configuration。三个适配器当前的充值币种均为 USD，金额字段传十进制字符串。
 
 | adapter_type | stable_merchant_id | configuration 必填 | 可选 |
 | --- | --- | --- | --- |
@@ -96,7 +96,7 @@ API 与 Worker 使用相同的以下配置：
    uv run python scripts/mock_payment_provider.py --port 59090 --merchant mock-merchant
    ```
 
-2. 为 API 和 Worker 设置 `NEXUS_MOCK_PAYMENT_URL=http://127.0.0.1:59090` 及固定通知地址 `NEXUS_PAYMENT_PUBLIC_BASE_URL`，然后重启进程；站点策略的控制台地址填本机控制台，例如 `http://localhost:3000`。
+2. 为 API 和 Worker 设置 `NEXUS_MOCK_PAYMENT_URL=http://127.0.0.1:59090`，然后重启进程；站点策略的控制台地址填本机控制台，例如 `http://localhost:3000`，API 地址填本机 API，例如 `http://127.0.0.1:8000`。
 3. 管理员创建 adapter_type 为 mock、stable_merchant_id 为 mock-merchant、environment 为 test 的渠道，明确 USD 限额。configuration 中 api_key 与模拟器环境变量一致，另提供至少 32 字符的 webhook_secret；notification_mode 可选 raw_json（默认）或 form。
 4. 企业 owner 或财务创建订单，Worker 生成受控的模拟支付入口。使用模拟器的 `POST /control/paid`，携带模拟 api_key 的 Bearer 认证和 `{"merchant_order_ref":"订单返回的引用"}`，模拟实际收款。
 5. 模拟器不主动发送通知；Worker 的查单补偿可以取得收款结果，也可由平台财务调用订单 reconcile 立即排队。之后查看订单的 credit_state、流水关联及账户余额。

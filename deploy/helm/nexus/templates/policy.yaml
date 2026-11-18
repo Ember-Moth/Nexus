@@ -4,9 +4,12 @@ Layer 3: business policy. policy.groups becomes the policy file that `nexus sett
 pre-install / pre-upgrade hook right after the migration, so managed values are in place before
 any pod rolls. The importer validates every group first and writes nothing if one is invalid;
 the release then stops. The application never reads or writes Kubernetes objects.
+
+Secrets of the mail and Turnstile groups are references to files of policy.secrets, mounted into
+this Job only; the importer encrypts them into the database.
 */}}
 {{- if and .Values.policy.enabled .Values.policy.groups }}
-{{- $known := list "identity.auth_policy" "billing.policy" "reporting.export_policy" "catalog.quota_defaults" "publication.cluster_defaults" }}
+{{- $known := list "identity.site_policy" "identity.auth_policy" "identity.mail_policy" "identity.turnstile_policy" "billing.policy" "reporting.export_policy" "catalog.quota_defaults" "publication.cluster_defaults" }}
 {{- range $name, $group := .Values.policy.groups }}
 {{- if not (has $name $known) }}
 {{- fail (printf "policy.groups.%s: unknown policy group (one of %s)" $name (join ", " $known)) }}
@@ -85,12 +88,21 @@ spec:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             - {name: policy, mountPath: /etc/nexus/policy, readOnly: true}
+            {{- if .Values.policy.secrets }}
+            - {name: policy-secrets, mountPath: /etc/nexus/policy-secrets, readOnly: true}
+            {{- end }}
             {{- include "nexus.caMounts" . | nindent 12 }}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: policy
           configMap:
             name: {{ $fullname }}-policy
+        {{- if .Values.policy.secrets }}
+        - name: policy-secrets
+          secret:
+            secretName: {{ .Values.policy.secrets }}
+            defaultMode: 0400
+        {{- end }}
         {{- include "nexus.caVolumes" . | nindent 8 }}
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 64Mi}

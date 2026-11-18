@@ -131,7 +131,7 @@ Usage: include "nexus.databaseEnv" (list . "api" "NEXUS_DATABASE_URL")
 {{- end }}
 {{- end -}}
 
-{{/* API and Worker secrets: encryption key ring, BFF secret, mail, Turnstile and R2 credentials. */}}
+{{/* API and Worker secrets: encryption key ring, BFF secret and R2 credentials. */}}
 {{- define "nexus.controlPlaneSecretEnv" -}}
 {{- $root := index . 0 -}}
 - name: NEXUS_ENCRYPTION_KEY
@@ -145,18 +145,6 @@ Usage: include "nexus.databaseEnv" (list . "api" "NEXUS_DATABASE_URL")
   valueFrom:
     secretKeyRef: {name: {{ $root.Values.secrets.authProxy }}, key: secret}
 {{- end }}
-- name: NEXUS_SMTP_PASSWORD
-  valueFrom:
-    secretKeyRef: {name: {{ $root.Values.secrets.integrations }}, key: smtp-password, optional: true}
-- name: NEXUS_RESEND_API_KEY
-  valueFrom:
-    secretKeyRef: {name: {{ $root.Values.secrets.integrations }}, key: resend-api-key, optional: true}
-- name: NEXUS_CLOUDFLARE_EMAIL_API_TOKEN
-  valueFrom:
-    secretKeyRef: {name: {{ $root.Values.secrets.integrations }}, key: cloudflare-email-api-token, optional: true}
-- name: NEXUS_TURNSTILE_SECRET_KEY
-  valueFrom:
-    secretKeyRef: {name: {{ $root.Values.secrets.integrations }}, key: turnstile-secret-key, optional: true}
 - name: NEXUS_OBJECT_STORAGE_ACCESS_KEY_ID
   valueFrom:
     secretKeyRef: {name: {{ $root.Values.objectStorage.credentialsSecret }}, key: ACCESS_KEY_ID}

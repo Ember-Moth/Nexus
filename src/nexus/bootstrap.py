@@ -137,6 +137,9 @@ class Application:
             mail_cipher=CredentialCipher(
                 settings.encryption_key_version, roots, purpose="identity-mail"
             ),
+            provider_cipher=CredentialCipher(
+                settings.encryption_key_version, roots, purpose="identity-provider"
+            ),
             mail_limits=RedisMailLimits(
                 self.cache, base64.urlsafe_b64decode(settings.encryption_key.get_secret_value())
             ),
@@ -228,12 +231,12 @@ class Application:
             policy=self.billing_settings.cached,
             environment=settings.environment,
             provider_transport=ProviderHttp(),
-            public_base_url=settings.payment_public_base_url,
-            console_url=self._console_url,
+            site_addresses=self._site_addresses,
         )
 
-    async def _console_url(self):
-        return (await self.identity.site()).console_url
+    async def _site_addresses(self):
+        site = await self.identity.site()
+        return site.console_url, site.api_url
 
     async def metrics(self, token):
         await self.identity.require_platform_admin(token)
